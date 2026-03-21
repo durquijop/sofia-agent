@@ -12,6 +12,7 @@ from app.schemas.kapso import KapsoInboundRequest, KapsoInboundResponse
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/kapso", tags=["kapso"])
+DEFAULT_KAPSO_FALLBACK_AGENT_ID = 4
 
 
 def _build_system_prompt(agent: dict, inbound: KapsoInboundRequest) -> str:
@@ -93,16 +94,29 @@ async def kapso_inbound(
     x_kapso_internal_token: str | None = Header(default=None),
 ):
     settings = get_settings()
+    logger.info(
+        "Kapso inbound recibido phone_number_id=%s from=%s conversation_id=%s message_id=%s type=%s",
+        request.phone_number_id,
+        request.from_phone,
+        request.kapso_conversation_id,
+        request.message_id,
+        request.message_type,
+    )
     if settings.KAPSO_INTERNAL_TOKEN and x_kapso_internal_token != settings.KAPSO_INTERNAL_TOKEN:
         raise HTTPException(status_code=401, detail="Unauthorized Kapso bridge")
 
     numero = await db.get_numero_por_id_kapso(request.phone_number_id)
-    if not numero:
-        raise HTTPException(status_code=404, detail="No se encontró un canal activo para ese phone_number_id de Kapso")
-
-    agente_id = numero.get("agente_id")
-    if not agente_id:
-        raise HTTPException(status_code=400, detail="El canal Kapso no tiene agente asignado")
+    resolved_via_fallback = False
+    if numero and numero.get("agente_id"):
+        agente_id = numero.get("agente_id")
+    else:
+        agente_id = DEFAULT_KAPSO_FALLBACK_AGENT_ID
+        resolved_via_fallback = True
+        logger.warning(
+            "Kapso inbound usando fallback agent_id=%s para phone_number_id=%s",
+            agente_id,
+            request.phone_number_id,
+        )
 
     agent = await db.get_agente(int(agente_id))
     if not agent:
@@ -115,8 +129,9 @@ async def kapso_inbound(
     conversation_id = f"kapso:{request.kapso_conversation_id}"
 
     logger.info(
-        "Kapso inbound - agent_id=%s phone_number_id=%s from=%s message_type=%s",
+        "Kapso inbound procesando agent_id=%s fallback=%s phone_number_id=%s from=%s message_type=%s",
         agente_id,
+        resolved_via_fallback,
         request.phone_number_id,
         request.from_phone,
         request.message_type,
@@ -130,6 +145,14 @@ async def kapso_inbound(
             mcp_servers=mcp_servers,
             conversation_id=conversation_id,
         )
+    )
+
+    logger.info(
+        "Kapso inbound completado agent_id=%s conversation_id=%s model=%s response_chars=%s",
+        agente_id,
+        result.conversation_id,
+        result.model_used,
+        len(result.response or ""),
     )
 
     return KapsoInboundResponse(

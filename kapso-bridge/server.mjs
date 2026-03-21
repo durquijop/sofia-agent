@@ -15,7 +15,7 @@ const PORT = Number(process.env.PORT || process.env.KAPSO_BRIDGE_PORT || 3001);
 const KAPSO_API_KEY = process.env.KAPSO_API_KEY;
 const KAPSO_BASE_URL = process.env.KAPSO_BASE_URL || 'https://api.kapso.ai/meta/whatsapp';
 const KAPSO_WEBHOOK_SECRET = process.env.KAPSO_WEBHOOK_SECRET || '';
-const INTERNAL_AGENT_API_URL = process.env.INTERNAL_AGENT_API_URL || 'http://127.0.0.1:8080/api/v1/kapso/inbound';
+const INTERNAL_AGENT_API_URL = process.env.INTERNAL_AGENT_API_URL || 'http://127.0.0.1:8000/api/v1/kapso/inbound';
 const KAPSO_INTERNAL_TOKEN = process.env.KAPSO_INTERNAL_TOKEN || '';
 
 const client = new WhatsAppClient({
@@ -213,6 +213,10 @@ async function callInternalAgent(sqlPayload) {
     headers['x-kapso-internal-token'] = KAPSO_INTERNAL_TOKEN;
   }
 
+  console.log(
+    `[KapsoBridge] -> FastAPI phone_number_id=${sqlPayload.phone_number_id} from=${sqlPayload.from} message_id=${sqlPayload.message_id} type=${sqlPayload.message_type}`,
+  );
+
   const response = await fetch(INTERNAL_AGENT_API_URL, {
     method: 'POST',
     headers,
@@ -224,7 +228,11 @@ async function callInternalAgent(sqlPayload) {
     throw new Error(`Backend FastAPI respondió ${response.status}: ${body}`);
   }
 
-  return response.json();
+  const reply = await response.json();
+  console.log(
+    `[KapsoBridge] <- FastAPI agent_id=${reply.agent_id} conversation_id=${reply.conversation_id} reply_type=${reply.reply_type} chars=${String(reply.reply_text || '').length}`,
+  );
+  return reply;
 }
 
 async function sendKapsoText(recipientPhone, phoneNumberId, text) {
@@ -240,6 +248,10 @@ async function dispatchKapsoResponse(reply) {
   const recipientPhone = reply.recipient_phone;
   const phoneNumberId = reply.phone_number_id;
   const replyType = reply.reply_type || 'text';
+
+  console.log(
+    `[KapsoBridge] -> KapsoSend to=${recipientPhone} phone_number_id=${phoneNumberId} reply_type=${replyType}`,
+  );
 
   if (replyType === 'buttons' && Array.isArray(reply.buttons) && reply.buttons.length > 0) {
     return withKapsoRetry(
@@ -353,6 +365,7 @@ app.post('/webhook/kapso', async (req, res) => {
     if (!validateWebhook(req, res)) return;
 
     const dataArray = extractDataArray(req.body);
+    console.log(`[KapsoBridge] webhook recibido records=${dataArray.length}`);
     if (!dataArray.length) {
       res.status(400).json({ error: 'empty_batch' });
       return;
@@ -367,6 +380,8 @@ app.post('/webhook/kapso', async (req, res) => {
       res.status(400).json({ error: 'no_valid_messages' });
       return;
     }
+
+    console.log(`[KapsoBridge] webhook agrupado conversations=${groupedPayloads.size}`);
 
     res.status(200).json({ status: 'received', groups: groupedPayloads.size });
 
@@ -394,13 +409,19 @@ app.post('/webhook/kapso', async (req, res) => {
       const current = previous
         .catch(() => {})
         .then(async () => {
+          console.log(
+            `[KapsoBridge] procesando from=${sqlPayload.from} phone_number_id=${sqlPayload.phone_number_id} message_id=${sqlPayload.message_id}`,
+          );
           await markKapsoAsRead(sqlPayload.phone_number_id, sqlPayload.message_id);
           const reply = await withTimeout(callInternalAgent(sqlPayload), PROCESS_TIMEOUT_MS);
-          await dispatchKapsoResponse(reply);
+          const sendResult = await dispatchKapsoResponse(reply);
+          console.log(
+            `[KapsoBridge] mensaje enviado message_id=${sqlPayload.message_id} kapso_response=${JSON.stringify(sendResult ?? null)}`,
+          );
           processedOk = true;
         })
         .catch(error => {
-          console.error('[KapsoBridge] Error procesando mensaje:', error);
+          console.error('[KapsoBridge] Error procesando mensaje:', error?.stack || error);
         })
         .finally(() => {
           if (threadQueues.get(queueKey) === current) {
