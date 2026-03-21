@@ -26,6 +26,8 @@ const client = new WhatsAppClient({
 const app = express();
 const threadQueues = new Map();
 const processedMessageIds = new Map();
+const bridgeDebugEvents = [];
+const MAX_BRIDGE_DEBUG_EVENTS = 200;
 const PROCESSED_MESSAGE_TTL_MS = 10 * 60 * 1000;
 const PROCESS_TIMEOUT_MS = 180 * 1000;
 const PROCESSING_MESSAGE_TTL_MS = PROCESS_TIMEOUT_MS + 30 * 1000;
@@ -44,6 +46,134 @@ app.use(express.json({
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function addBridgeDebugEvent(stage, payload = {}) {
+  bridgeDebugEvents.unshift({
+    timestamp: new Date().toISOString(),
+    source: 'bridge',
+    stage,
+    payload,
+  });
+  if (bridgeDebugEvents.length > MAX_BRIDGE_DEBUG_EVENTS) {
+    bridgeDebugEvents.length = MAX_BRIDGE_DEBUG_EVENTS;
+  }
+}
+
+function maskSecret(value) {
+  if (!value) return null;
+  if (String(value).length <= 8) return '***';
+  return `${String(value).slice(0, 4)}...${String(value).slice(-4)}`;
+}
+
+function getBridgeDebugConfig() {
+  return {
+    port: PORT,
+    kapso_base_url: KAPSO_BASE_URL,
+    internal_agent_api_url: INTERNAL_AGENT_API_URL,
+    kapso_api_key: maskSecret(KAPSO_API_KEY),
+    kapso_webhook_secret: maskSecret(KAPSO_WEBHOOK_SECRET),
+    kapso_internal_token: maskSecret(KAPSO_INTERNAL_TOKEN),
+  };
+}
+
+async function fetchFastApiDebugJson(pathname) {
+  const targetUrl = new URL(pathname, INTERNAL_AGENT_API_URL).toString();
+  const response = await fetch(targetUrl, {
+    headers: KAPSO_INTERNAL_TOKEN ? { 'x-kapso-internal-token': KAPSO_INTERNAL_TOKEN } : {},
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`FastAPI debug respondió ${response.status}: ${body}`);
+  }
+  return response.json();
+}
+
+function renderKapsoDebugHtml() {
+  return `<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kapso Debug</title>
+  <style>
+    body { font-family: Arial, sans-serif; background: #111827; color: #e5e7eb; margin: 0; padding: 16px; }
+    h1, h2 { margin: 0 0 12px; }
+    .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+    .card { background: #1f2937; border: 1px solid #374151; border-radius: 10px; padding: 16px; }
+    pre { white-space: pre-wrap; word-break: break-word; background: #0b1220; border-radius: 8px; padding: 12px; overflow: auto; }
+    .muted { color: #9ca3af; font-size: 12px; }
+    .event { border-top: 1px solid #374151; padding: 10px 0; }
+    .event:first-child { border-top: 0; padding-top: 0; }
+    .stage { color: #93c5fd; font-weight: bold; }
+    .source { color: #86efac; }
+    .toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; }
+    button { background: #2563eb; color: white; border: 0; padding: 8px 12px; border-radius: 8px; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <h1>Kapso Debug Dashboard</h1>
+    <button onclick="loadData()">Refrescar</button>
+    <span class="muted" id="status">cargando...</span>
+  </div>
+  <div class="grid">
+    <section class="card">
+      <h2>Bridge config</h2>
+      <pre id="bridge-config"></pre>
+    </section>
+    <section class="card">
+      <h2>FastAPI config</h2>
+      <pre id="fastapi-config"></pre>
+    </section>
+  </div>
+  <div class="grid" style="margin-top: 16px;">
+    <section class="card">
+      <h2>Bridge events</h2>
+      <div id="bridge-events"></div>
+    </section>
+    <section class="card">
+      <h2>FastAPI events</h2>
+      <div id="fastapi-events"></div>
+    </section>
+  </div>
+  <script>
+    function renderEvents(containerId, events) {
+      const container = document.getElementById(containerId);
+      if (!events || !events.length) {
+        container.innerHTML = '<div class="muted">Sin eventos</div>';
+        return;
+      }
+      container.innerHTML = events.map(event => 
+        '<div class="event">' +
+          '<div><span class="source">' + (event.source || '') + '</span> · <span class="stage">' + (event.stage || '') + '</span></div>' +
+          '<div class="muted">' + (event.timestamp || '') + '</div>' +
+          '<pre>' + JSON.stringify(event.payload || {}, null, 2) + '</pre>' +
+        '</div>'
+      ).join('');
+    }
+
+    async function loadData() {
+      const status = document.getElementById('status');
+      status.textContent = 'cargando...';
+      try {
+        const response = await fetch('/debug/kapso/data');
+        const data = await response.json();
+        document.getElementById('bridge-config').textContent = JSON.stringify(data.bridge_config || {}, null, 2);
+        document.getElementById('fastapi-config').textContent = JSON.stringify(data.fastapi_config || {}, null, 2);
+        renderEvents('bridge-events', data.bridge_events || []);
+        renderEvents('fastapi-events', data.fastapi_events || []);
+        status.textContent = 'actualizado ' + new Date().toLocaleTimeString();
+      } catch (error) {
+        status.textContent = 'error cargando datos';
+      }
+    }
+
+    loadData();
+    setInterval(loadData, 3000);
+  </script>
+</body>
+</html>`;
 }
 
 function normalizeTimestamp(raw) {
@@ -213,6 +343,12 @@ async function callInternalAgent(sqlPayload) {
     headers['x-kapso-internal-token'] = KAPSO_INTERNAL_TOKEN;
   }
 
+  addBridgeDebugEvent('call_fastapi_start', {
+    phone_number_id: sqlPayload.phone_number_id,
+    from: sqlPayload.from,
+    message_id: sqlPayload.message_id,
+    message_type: sqlPayload.message_type,
+  });
   console.log(
     `[KapsoBridge] -> FastAPI phone_number_id=${sqlPayload.phone_number_id} from=${sqlPayload.from} message_id=${sqlPayload.message_id} type=${sqlPayload.message_type}`,
   );
@@ -229,6 +365,12 @@ async function callInternalAgent(sqlPayload) {
   }
 
   const reply = await response.json();
+  addBridgeDebugEvent('call_fastapi_done', {
+    agent_id: reply.agent_id,
+    conversation_id: reply.conversation_id,
+    reply_type: reply.reply_type,
+    message_id: sqlPayload.message_id,
+  });
   console.log(
     `[KapsoBridge] <- FastAPI agent_id=${reply.agent_id} conversation_id=${reply.conversation_id} reply_type=${reply.reply_type} chars=${String(reply.reply_text || '').length}`,
   );
@@ -249,6 +391,12 @@ async function dispatchKapsoResponse(reply) {
   const phoneNumberId = reply.phone_number_id;
   const replyType = reply.reply_type || 'text';
 
+  addBridgeDebugEvent('kapso_send_start', {
+    to: recipientPhone,
+    phone_number_id: phoneNumberId,
+    reply_type: replyType,
+    message_id: reply.message_id,
+  });
   console.log(
     `[KapsoBridge] -> KapsoSend to=${recipientPhone} phone_number_id=${phoneNumberId} reply_type=${replyType}`,
   );
@@ -360,11 +508,39 @@ app.get('/health', (_req, res) => {
   res.status(200).json({ status: 'ok', bridge: 'kapso', timestamp: new Date().toISOString() });
 });
 
+app.get('/debug/kapso', (_req, res) => {
+  res.status(200).type('html').send(renderKapsoDebugHtml());
+});
+
+app.get('/debug/kapso/data', async (_req, res) => {
+  try {
+    const [fastapiEventsResult, fastapiConfigResult] = await Promise.allSettled([
+      fetchFastApiDebugJson('/api/v1/kapso/debug/events?limit=100'),
+      fetchFastApiDebugJson('/api/v1/kapso/debug/config'),
+    ]);
+
+    res.status(200).json({
+      bridge_config: getBridgeDebugConfig(),
+      bridge_events: bridgeDebugEvents,
+      fastapi_config: fastapiConfigResult.status === 'fulfilled' ? fastapiConfigResult.value : { error: String(fastapiConfigResult.reason) },
+      fastapi_events: fastapiEventsResult.status === 'fulfilled' ? fastapiEventsResult.value.events : [{
+        timestamp: new Date().toISOString(),
+        source: 'bridge',
+        stage: 'fastapi_debug_error',
+        payload: { error: String(fastapiEventsResult.reason) },
+      }],
+    });
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
 app.post('/webhook/kapso', async (req, res) => {
   try {
     if (!validateWebhook(req, res)) return;
 
     const dataArray = extractDataArray(req.body);
+    addBridgeDebugEvent('webhook_received', { records: dataArray.length });
     console.log(`[KapsoBridge] webhook recibido records=${dataArray.length}`);
     if (!dataArray.length) {
       res.status(400).json({ error: 'empty_batch' });
@@ -381,6 +557,7 @@ app.post('/webhook/kapso', async (req, res) => {
       return;
     }
 
+    addBridgeDebugEvent('webhook_grouped', { conversations: groupedPayloads.size });
     console.log(`[KapsoBridge] webhook agrupado conversations=${groupedPayloads.size}`);
 
     res.status(200).json({ status: 'received', groups: groupedPayloads.size });
@@ -409,18 +586,35 @@ app.post('/webhook/kapso', async (req, res) => {
       const current = previous
         .catch(() => {})
         .then(async () => {
+          addBridgeDebugEvent('message_processing_start', {
+            from: sqlPayload.from,
+            phone_number_id: sqlPayload.phone_number_id,
+            message_id: sqlPayload.message_id,
+          });
           console.log(
             `[KapsoBridge] procesando from=${sqlPayload.from} phone_number_id=${sqlPayload.phone_number_id} message_id=${sqlPayload.message_id}`,
           );
           await markKapsoAsRead(sqlPayload.phone_number_id, sqlPayload.message_id);
           const reply = await withTimeout(callInternalAgent(sqlPayload), PROCESS_TIMEOUT_MS);
           const sendResult = await dispatchKapsoResponse(reply);
+          addBridgeDebugEvent('message_processing_done', {
+            from: sqlPayload.from,
+            phone_number_id: sqlPayload.phone_number_id,
+            message_id: sqlPayload.message_id,
+            send_result: sendResult ?? null,
+          });
           console.log(
             `[KapsoBridge] mensaje enviado message_id=${sqlPayload.message_id} kapso_response=${JSON.stringify(sendResult ?? null)}`,
           );
           processedOk = true;
         })
         .catch(error => {
+          addBridgeDebugEvent('message_processing_error', {
+            from: sqlPayload.from,
+            phone_number_id: sqlPayload.phone_number_id,
+            message_id: sqlPayload.message_id,
+            error: String(error?.message || error),
+          });
           console.error('[KapsoBridge] Error procesando mensaje:', error?.stack || error);
         })
         .finally(() => {

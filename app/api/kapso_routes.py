@@ -1,10 +1,12 @@
 import json
 import logging
+import os
 
 from fastapi import APIRouter, Header, HTTPException
 
 from app.agents.conversational import run_agent
 from app.core.config import get_settings
+from app.core.kapso_debug import add_kapso_debug_event, get_kapso_debug_events, mask_secret
 from app.db import queries as db
 from app.schemas.chat import ChatRequest, MCPServerConfig
 from app.schemas.kapso import KapsoInboundRequest, KapsoInboundResponse
@@ -88,12 +90,46 @@ def _build_mcp_servers(agent: dict) -> list[MCPServerConfig]:
     return []
 
 
+def _get_debug_config() -> dict:
+    settings = get_settings()
+    return {
+        "app_name": settings.APP_NAME,
+        "default_model": settings.DEFAULT_MODEL,
+        "python_service_port": os.getenv("PYTHON_SERVICE_PORT", "8000"),
+        "internal_agent_api_url": os.getenv("INTERNAL_AGENT_API_URL", "http://127.0.0.1:8000/api/v1/kapso/inbound"),
+        "kapso_internal_token": mask_secret(settings.KAPSO_INTERNAL_TOKEN),
+        "supabase_url": mask_secret(settings.SUPABASE_URL),
+        "fallback_agent_id": DEFAULT_KAPSO_FALLBACK_AGENT_ID,
+    }
+
+
+@router.get("/debug/events")
+async def kapso_debug_events(limit: int = 100):
+    return {"events": get_kapso_debug_events(limit)}
+
+
+@router.get("/debug/config")
+async def kapso_debug_config():
+    return _get_debug_config()
+
+
 @router.post("/inbound", response_model=KapsoInboundResponse)
 async def kapso_inbound(
     request: KapsoInboundRequest,
     x_kapso_internal_token: str | None = Header(default=None),
 ):
     settings = get_settings()
+    add_kapso_debug_event(
+        "fastapi",
+        "inbound_received",
+        {
+            "phone_number_id": request.phone_number_id,
+            "from": request.from_phone,
+            "conversation_id": request.kapso_conversation_id,
+            "message_id": request.message_id,
+            "message_type": request.message_type,
+        },
+    )
     logger.info(
         "Kapso inbound recibido phone_number_id=%s from=%s conversation_id=%s message_id=%s type=%s",
         request.phone_number_id,
@@ -103,67 +139,116 @@ async def kapso_inbound(
         request.message_type,
     )
     if settings.KAPSO_INTERNAL_TOKEN and x_kapso_internal_token != settings.KAPSO_INTERNAL_TOKEN:
+        add_kapso_debug_event(
+            "fastapi",
+            "unauthorized",
+            {"phone_number_id": request.phone_number_id, "message_id": request.message_id},
+        )
         raise HTTPException(status_code=401, detail="Unauthorized Kapso bridge")
+    try:
+        numero = await db.get_numero_por_id_kapso(request.phone_number_id)
+        resolved_via_fallback = False
+        if numero and numero.get("agente_id"):
+            agente_id = numero.get("agente_id")
+        else:
+            agente_id = DEFAULT_KAPSO_FALLBACK_AGENT_ID
+            resolved_via_fallback = True
+            add_kapso_debug_event(
+                "fastapi",
+                "fallback_agent",
+                {"agent_id": agente_id, "phone_number_id": request.phone_number_id, "message_id": request.message_id},
+            )
+            logger.warning(
+                "Kapso inbound usando fallback agent_id=%s para phone_number_id=%s",
+                agente_id,
+                request.phone_number_id,
+            )
 
-    numero = await db.get_numero_por_id_kapso(request.phone_number_id)
-    resolved_via_fallback = False
-    if numero and numero.get("agente_id"):
-        agente_id = numero.get("agente_id")
-    else:
-        agente_id = DEFAULT_KAPSO_FALLBACK_AGENT_ID
-        resolved_via_fallback = True
-        logger.warning(
-            "Kapso inbound usando fallback agent_id=%s para phone_number_id=%s",
+        agent = await db.get_agente(int(agente_id))
+        if not agent:
+            raise HTTPException(status_code=404, detail="No se encontró el agente configurado para este canal")
+
+        system_prompt = _build_system_prompt(agent, request)
+        user_message = _build_user_message(request)
+        mcp_servers = _build_mcp_servers(agent)
+        model = agent.get("llm") or None
+        conversation_id = f"kapso:{request.kapso_conversation_id}"
+
+        add_kapso_debug_event(
+            "fastapi",
+            "run_agent_start",
+            {
+                "agent_id": int(agente_id),
+                "fallback": resolved_via_fallback,
+                "phone_number_id": request.phone_number_id,
+                "message_id": request.message_id,
+                "conversation_id": conversation_id,
+                "model": model,
+                "mcp_servers": len(mcp_servers),
+            },
+        )
+        logger.info(
+            "Kapso inbound procesando agent_id=%s fallback=%s phone_number_id=%s from=%s message_type=%s",
             agente_id,
+            resolved_via_fallback,
             request.phone_number_id,
+            request.from_phone,
+            request.message_type,
         )
 
-    agent = await db.get_agente(int(agente_id))
-    if not agent:
-        raise HTTPException(status_code=404, detail="No se encontró el agente configurado para este canal")
-
-    system_prompt = _build_system_prompt(agent, request)
-    user_message = _build_user_message(request)
-    mcp_servers = _build_mcp_servers(agent)
-    model = agent.get("llm") or None
-    conversation_id = f"kapso:{request.kapso_conversation_id}"
-
-    logger.info(
-        "Kapso inbound procesando agent_id=%s fallback=%s phone_number_id=%s from=%s message_type=%s",
-        agente_id,
-        resolved_via_fallback,
-        request.phone_number_id,
-        request.from_phone,
-        request.message_type,
-    )
-
-    result = await run_agent(
-        ChatRequest(
-            system_prompt=system_prompt,
-            message=user_message,
-            model=model,
-            mcp_servers=mcp_servers,
-            conversation_id=conversation_id,
+        result = await run_agent(
+            ChatRequest(
+                system_prompt=system_prompt,
+                message=user_message,
+                model=model,
+                mcp_servers=mcp_servers,
+                conversation_id=conversation_id,
+            )
         )
-    )
 
-    logger.info(
-        "Kapso inbound completado agent_id=%s conversation_id=%s model=%s response_chars=%s",
-        agente_id,
-        result.conversation_id,
-        result.model_used,
-        len(result.response or ""),
-    )
+        add_kapso_debug_event(
+            "fastapi",
+            "run_agent_done",
+            {
+                "agent_id": int(agente_id),
+                "conversation_id": result.conversation_id,
+                "model_used": result.model_used,
+                "response_chars": len(result.response or ""),
+                "message_id": request.message_id,
+            },
+        )
+        logger.info(
+            "Kapso inbound completado agent_id=%s conversation_id=%s model=%s response_chars=%s",
+            agente_id,
+            result.conversation_id,
+            result.model_used,
+            len(result.response or ""),
+        )
 
-    return KapsoInboundResponse(
-        reply_type="text",
-        reply_text=result.response,
-        recipient_phone=request.from_phone,
-        phone_number_id=request.phone_number_id,
-        message_id=request.message_id,
-        conversation_id=result.conversation_id,
-        agent_id=int(agente_id),
-        agent_name=agent.get("nombre_agente") or str(agente_id),
-        model_used=result.model_used,
-        timing=result.timing,
-    )
+        return KapsoInboundResponse(
+            reply_type="text",
+            reply_text=result.response,
+            recipient_phone=request.from_phone,
+            phone_number_id=request.phone_number_id,
+            message_id=request.message_id,
+            conversation_id=result.conversation_id,
+            agent_id=int(agente_id),
+            agent_name=agent.get("nombre_agente") or str(agente_id),
+            model_used=result.model_used,
+            timing=result.timing,
+        )
+    except HTTPException as exc:
+        add_kapso_debug_event(
+            "fastapi",
+            "http_error",
+            {"status_code": exc.status_code, "detail": str(exc.detail), "message_id": request.message_id},
+        )
+        raise
+    except Exception as exc:
+        add_kapso_debug_event(
+            "fastapi",
+            "exception",
+            {"error": str(exc), "message_id": request.message_id, "phone_number_id": request.phone_number_id},
+        )
+        logger.error("Kapso inbound error: %s", exc, exc_info=True)
+        raise
