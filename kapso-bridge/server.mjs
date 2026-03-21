@@ -330,9 +330,42 @@ function normalizeWhatsAppText(input) {
 }
 
 async function markKapsoAsRead(phoneNumberId, messageId) {
-  void phoneNumberId;
-  void messageId;
-  return null;
+  if (!phoneNumberId || !messageId) return null;
+
+  addBridgeDebugEvent('kapso_presence_start', {
+    phone_number_id: phoneNumberId,
+    message_id: messageId,
+    seen: true,
+    typing: true,
+  });
+  console.log(
+    `[KapsoBridge] -> KapsoPresence phone_number_id=${phoneNumberId} message_id=${messageId} seen=true typing=true`,
+  );
+
+  try {
+    const result = await withKapsoRetry(
+      () => client.messages.markRead({
+        phoneNumberId,
+        messageId,
+        typingIndicator: { type: 'text' },
+      }),
+      `markRead(${messageId})`,
+    );
+    addBridgeDebugEvent('kapso_presence_done', {
+      phone_number_id: phoneNumberId,
+      message_id: messageId,
+      result: result ?? null,
+    });
+    return result;
+  } catch (error) {
+    addBridgeDebugEvent('kapso_presence_error', {
+      phone_number_id: phoneNumberId,
+      message_id: messageId,
+      error: String(error?.message || error),
+    });
+    console.error('[KapsoBridge] Error enviando seen/typing:', error?.stack || error);
+    return null;
+  }
 }
 
 async function callInternalAgent(sqlPayload) {
