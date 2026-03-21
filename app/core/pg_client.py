@@ -15,13 +15,14 @@ async def get_pg_pool() -> asyncpg.Pool | None:
         return _pool
 
     settings = get_settings()
-    if not settings.DATABASE_URL:
-        logger.warning("DATABASE_URL no configurada — debug interactions deshabilitado en Postgres")
+    dsn = settings.get_pg_dsn()
+    if not dsn:
+        logger.warning("Postgres DSN no configurado (faltan PGHOST, PGUSER, etc) — debug interactions deshabilitado")
         return None
 
     try:
         _pool = await asyncpg.create_pool(
-            dsn=settings.DATABASE_URL,
+            dsn=dsn,
             min_size=1,
             max_size=5,
             command_timeout=10,
