@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-export PYTHON_SERVICE_PORT="${PYTHON_SERVICE_PORT:-8000}"
+export PYTHON_SERVICE_PORT="8000"
+export INTERNAL_AGENT_API_URL="http://127.0.0.1:${PYTHON_SERVICE_PORT}/api/v1/kapso/inbound"
 export DEBUG="${DEBUG:-false}"
 
 python main.py &
