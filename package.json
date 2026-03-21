@@ -1,0 +1,23 @@
+{
+  "name": "urpe-ai-lab-project-utils",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "kapso:bridge": "node kapso-bridge/server.mjs",
+    "bench:langgraph:parallel": "python scripts/benchmark_parallel_langgraph.py",
+    "bench:langgraph:documented": "python scripts/documented_real_flow_langgraph.py",
+    "bench:compare:vercel:baseline": "node benchmarks/vercel-ai-sdk-compare.mjs",
+    "bench:compare:vercel:embudo": "node benchmarks/vercel-ai-sdk-embudo-agent.mjs",
+    "bench:compare:vercel:parallel": "node benchmarks/vercel-ai-sdk-parallel-agents.mjs",
+    "bench:compare:vercel:documented": "node benchmarks/vercel-ai-sdk-documented-real-flow.mjs"
+  },
+  "dependencies": {
+    "@kapso/whatsapp-cloud-api": "latest",
+    "ai": "latest",
+    "@openrouter/ai-sdk-provider": "2.3.1",
+    "dotenv": "latest",
+    "express": "latest",
+    "cors": "latest",
+    "zod": "latest"
+  }
+}

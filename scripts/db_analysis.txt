@@ -1,0 +1,2265 @@
+﻿TOTAL: 234 tablas + 10 vistas
+================================================================================
+
+## TABLAS (con conteo de filas)
+
+### aceptacion (0 rows) - Registro de aceptaci¾n de diagn¾sticos por paciente dentro del flujo clÝnico.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  id_diagnostico: integer -- Note:
+This is a Foreign Key to `diagnostico.id`.<fk table='diagnostico' column='id'/>
+  id_paciente: integer -- Note:
+This is a Foreign Key to `pacientes.id`.<fk table='pacientes' column='id'/>
+  generado: boolean
+  fecha_diagnos: string
+  fecha_creado: string
+  fecha_actualizado: string
+
+### agent_memory (937377 rows) - Memoria conversacional persistida por sesi¾n para el agente principal.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  session_id: string
+  message: jsonb
+
+### agent_memory_interno (222 rows) - Memoria interna de apoyo por sesi¾n usada por procesos auxiliares del agente.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  session_id: string
+  message: jsonb
+
+### aplicaciones_cliente (1 rows) - Aplicaciones o licencias asociadas a una empresa cliente.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  created_at: string
+  fecha_actualizado: string
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  aplicacion: string
+  codigo: string
+  estado: string
+  licencias: integer
+
+### aplicaciones_dispositivos (1 rows) - Vinculaci¾n de dispositivos e IPs a aplicaciones de cliente.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  created_at: string
+  id_control: integer
+  id_aplicacion: integer -- Note:
+This is a Foreign Key to `aplicaciones_cliente.id`.<fk table='aplicaciones_cliente' column='id'/>
+  ip: string
+  vinculado: boolean
+  fecha_vinculacion: string
+
+### artifact_stars (0 rows) - Marcadores o favoritos de usuarios sobre artifacts.
+  id: string -- Note:
+This is a Primary Key.<pk/>
+  user_id: string
+  artifact_id: string -- Note:
+This is a Foreign Key to `artifacts.id`.<fk table='artifacts' column='id'/>
+  created_at: string
+
+### artifact_versions (85 rows) - Historial versionado del contenido de cada artifact.
+  id: string -- Note:
+This is a Primary Key.<pk/>
+  artifact_id: string -- Note:
+This is a Foreign Key to `artifacts.id`.<fk table='artifacts' column='id'/>
+  content: string
+  title: string
+  description: string
+  version_number: integer
+  change_description: string
+  is_auto_save: boolean -- TRUE si fue guardado automßticamente, FALSE si fue guardado manualmente
+  created_at: string
+
+### artifacts (77 rows) - Artefactos generados por usuarios o por conversaciones de chat.
+  id: string -- Note:
+This is a Primary Key.<pk/>
+  user_id: string
+  session_id: string
+  message_id: string
+  title: string
+  content: string
+  type: string -- Tipo de artefacto: html, markdown, svg, mermaid, react, code
+  language: string
+  description: string
+  tags: array
+  is_pinned: boolean
+  is_public: boolean
+  public_slug: string -- URL slug para compartir p·blicamente
+  view_count: integer
+  fork_count: integer
+  forked_from: string -- Note:
+This is a Foreign Key to `artifacts.id`.<fk table='artifacts' column='id'/>
+  created_at: string
+  updated_at: string
+
+### auditoria_historial (7787 rows) - Bitßcora genÚrica de cambios a nivel tabla, columna y fila.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  tabla_nombre: string
+  columna_nombre: string
+  fila_id: integer
+  valor_anterior: string
+  valor_nuevo: string
+  operacion: string
+  usuario: string
+  fecha_hora: string
+  metadata: jsonb
+
+### dau_tracked_users (5 rows) - Usuarios externos monitoreados para analÝtica DAU o redes sociales.
+  id: string -- Note:
+This is a Primary Key.<pk/>
+  username: string
+  user_id: string
+  about_them: string
+  followers: integer
+  is_active: boolean
+  created_at: string
+  updated_at: string
+
+### dau_user_tweets (24 rows) - Tweets asociados a usuarios monitoreados para seguimiento analÝtico.
+  id: string -- Note:
+This is a Primary Key.<pk/>
+  user_id: string -- Note:
+This is a Foreign Key to `dau_tracked_users.user_id`.<fk table='dau_tracked_users' column='user_id'/>
+  status: string
+  tweet_id: string
+  tweet: string
+  time_posted: string
+  views: integer
+  favs: integer
+  conversation_id: string
+  created_at: string
+  updated_at: string
+
+### diagnostico (0 rows) - Diagn¾sticos clÝnicos asociados a pacientes.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  diagnostico: string
+  procedimiento: string
+  afectaciones: string
+  notas: string
+  id_paciente: integer -- Note:
+This is a Foreign Key to `pacientes.id`.<fk table='pacientes' column='id'/>
+  fecha_aceptado: string
+  fecha_diagnos: string
+  fecha_creado: string
+
+### drive_files (310 rows) - ═ndice de archivos provenientes de Google Drive vinculados a contactos o empresas.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  file_id: string
+  nombre: string
+  url: string
+  tipo_mime: string
+  tamano: string
+  fecha_modificacion: string
+  carpeta_origen: string
+  carpeta_id: string
+  metadata: jsonb
+  created_at: string
+  updated_at: string
+  traduccion: string
+  contacto_id: integer -- Note:
+This is a Foreign Key to `wp_contactos.id`.<fk table='wp_contactos' column='id'/>
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  carpeta_url: string
+  url_storage: string
+  descripccion: string
+  doc_url: string
+  contenido: string
+  estado: string
+
+### evaluaciones (21 rows) - Evaluaciones de desempe±o o calidad vinculadas a agentes y empresas.
+  id: string -- Note:
+This is a Primary Key.<pk/>
+  fecha_creada: string
+  evaluacion: string
+  puntuacion: integer
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  agente_id: integer -- Note:
+This is a Foreign Key to `wp_agentes.id`.<fk table='wp_agentes' column='id'/>
+  periodo_evaluado: jsonb
+  evaluacion_cruda: string
+
+### metricas (2995 rows) - MÚtricas de negocio o rendimiento almacenadas por fecha y empresa.
+  id: string -- Note:
+This is a Primary Key.<pk/>
+  metrica: string
+  valor: number
+  fecha: string
+  meta: jsonb
+  created_at: string
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  descripcion: string
+  comparativa: jsonb
+
+### minijuegos_jugadores (0 rows) - Jugadores del sistema de minijuegos o gamificaci¾n por organizaci¾n y empresa.
+  id: string -- Note:
+This is a Primary Key.<pk/>
+  team_member_id: integer -- Note:
+This is a Foreign Key to `wp_team_humano.id`.<fk table='wp_team_humano' column='id'/>
+  organizacion_id: string -- Note:
+This is a Foreign Key to `minijuegos_organizaciones.id`.<fk table='minijuegos_organizaciones' column='id'/>
+  nickname: string
+  avatar_url: string
+  xp: integer
+  nivel: integer
+  created_at: string
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+
+### minijuegos_organizaciones (0 rows) - Organizaciones o grupos base para dinßmicas de minijuegos.
+  id: string -- Note:
+This is a Primary Key.<pk/>
+  nombre: string
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  created_at: string
+  updated_at: string
+  is_active: boolean
+
+### monica_memories (14 rows) - Memorias semßnticas almacenadas para Monica AI.
+  id: string -- Note:
+This is a Primary Key.<pk/>
+  content: string
+  summary: string
+  category: string
+  importance: integer
+  metadata: jsonb
+  source: string
+  created_at: string
+  updated_at: string
+  embedding: string
+
+### monica_user_profile (1 rows) - Perfil estructurado de usuario para personalizaci¾n de Monica AI.
+  id: string -- Note:
+This is a Primary Key.<pk/>
+  key: string
+  value: string
+  confidence: number
+  source: string
+  created_at: string
+  updated_at: string
+
+### n18_autonomy (4 rows) - 
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  created_at: string
+  cron_name: string
+  cron_id: string
+  message_type: string
+  message_summary: string
+  diego_response: string
+  response_time_minutes: integer
+  responded_at: string
+  week_number: integer
+
+### n18_autonomy_rules (0 rows) - 
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  created_at: string
+  updated_at: string
+  cron_name: string
+  current_level: string
+  ignore_rate: number
+  act_rate: number
+  total_sent: integer
+  last_analysis_at: string
+  notes: string
+
+### n18_episodic (1 rows) - 
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  created_at: string
+  episode_date: string
+  summary: string
+  decisions: jsonb
+  people_mentioned: jsonb
+  projects_updated: jsonb
+  tasks_assigned: jsonb
+  mood_context: string
+  session_count: integer
+
+### n18_memory (52 rows) - 
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  created_at: string
+  updated_at: string
+  category: string
+  title: string
+  content: string
+  importance: integer
+  source: string
+  is_active: boolean
+  access_count: integer
+  last_accessed_at: string
+
+### n8n_chat_histories (7412 rows) - Historial conversacional persistido por flujos integrados con n8n.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  session_id: string
+  message: jsonb
+
+### numero18_alerts (26 rows) - 
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  created_at: string
+  source: string
+  event_type: string
+  priority: string
+  title: string
+  content: jsonb
+  status: string
+  processed_at: string
+  outcome: string
+
+### pacientes (8 rows) - Pacientes de empresas con datos personales e historia mÚdica.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  nombre: string
+  correo: string
+  telefono: string
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  created_at: string
+  fecha_nacimiento: string
+  historia_medica: jsonb
+
+### redaccion (3 rows) - Documentos o piezas de redacci¾n asociadas a tipos y contactos.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  nombre: string
+  url_doc: string
+  tipo_id: integer -- Note:
+This is a Foreign Key to `redaccion_tipos.id`.<fk table='redaccion_tipos' column='id'/>
+  contacto_id: integer -- Note:
+This is a Foreign Key to `wp_contactos.id`.<fk table='wp_contactos' column='id'/>
+  estado: string -- Estados: borrador, en_revision, publicado, archivado
+  descripcion: string
+  created_at: string
+  updated_at: string
+  contexto_structured: jsonb -- JSON organizado por IA con la data de contexto usada para generar el documento
+
+### redaccion_detalle_historial (0 rows) - Historial de cambios por secci¾n o detalle de una redacci¾n.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  detalle_id: integer -- Note:
+This is a Foreign Key to `redaccion_detalles.id`.<fk table='redaccion_detalles' column='id'/>
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  titulo: string
+  contenido: string
+  changed_by: string
+  change_type: string
+  change_summary: string
+  created_at: string
+
+### redaccion_detalles (29 rows) - Secciones, partes o bloques ordenados de una redacci¾n.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  titulo: string
+  contenido: string
+  orden: integer -- Orden de aparici¾n de la secci¾n
+  redaccion_id: integer -- Note:
+This is a Foreign Key to `redaccion.id`.<fk table='redaccion' column='id'/>
+  evaluacion: number -- Puntuaci¾n del 0 al 10
+  plan_seccion: string
+  created_at: string
+  updated_at: string
+
+### redaccion_tipos (1 rows) - Plantillas o tipos de redacci¾n configurables por empresa.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  nombre: string
+  partes: integer
+  instrucciones: string
+  longitud: integer
+  objetivo: string
+  created_at: string
+  updated_at: string
+  requerimientos: string
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+
+### reporte_preliminar (0 rows) - Captura preliminar de datos crudos por telÚfono para reportes rßpidos.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  created_at: string
+  telefono: string
+  data: string
+
+### rpc/accept_team_invitation (0 rows) - 
+
+### rpc/accept_team_invitation_v2 (0 rows) - 
+
+### rpc/actualizar_calificacion_existentes (0 rows) - 
+
+### rpc/asignar_contactos_vacios (0 rows) - 
+
+### rpc/calcular_tiempo_real_tarea (0 rows) - 
+
+### rpc/cancel_enrollment (0 rows) - 
+
+### rpc/check_origin (0 rows) - 
+
+### rpc/check_user_permission (0 rows) - 
+
+### rpc/clean_inactive_team_assignments (0 rows) - 
+
+### rpc/cleanup_expired_invitations (0 rows) - 
+
+### rpc/contar_mensajes_por_remitente (0 rows) - 
+
+### rpc/count_contacts_by_appointment_status (0 rows) - 
+
+### rpc/count_contacts_by_portfolio_status (0 rows) - 
+
+### rpc/count_dynamic_audience (0 rows) - 
+
+### rpc/create_team_invitation_v2 (0 rows) - 
+
+### rpc/dashboard_contact_appointment_trend (0 rows) - 
+
+### rpc/detectar_conversaciones_abandonadas (0 rows) - 
+
+### rpc/ejecutar_query_seguro (0 rows) - 
+
+### rpc/encolar_sync_drive_contacto_cliente (0 rows) - 
+
+### rpc/enroll_contacts_in_campaign (0 rows) - 
+
+### rpc/enviar_mensaje_respuesta (0 rows) - 
+
+### rpc/export_contactos_csv (1 rows) - 
+
+### rpc/fix_funnel_stage_orders (0 rows) - 
+
+### rpc/fn_cleanup_old_audit (0 rows) - 
+
+### rpc/fn_crear_etapas_genericas_empresa (0 rows) - 
+
+### rpc/fn_cron_activar_numeros (1 rows) - 
+
+### rpc/fn_cron_desactivar_numeros (1 rows) - 
+
+### rpc/fn_get_agent_history (0 rows) - 
+
+### rpc/fn_norm_es_calificado (0 rows) - 
+
+### rpc/fn_norm_estado_cita (0 rows) - 
+
+### rpc/fn_norm_text (0 rows) - 
+
+### rpc/fn_obtener_nombre_etapa (0 rows) - 
+
+### rpc/fn_restore_agent_field (0 rows) - 
+
+### rpc/fn_restore_enterprise_field (0 rows) - 
+
+### rpc/fork_artifact (0 rows) - 
+
+### rpc/generate_artifact_slug (0 rows) - 
+
+### rpc/generate_invoice_number (0 rows) - 
+
+### rpc/get_agent_context (0 rows) - 
+
+### rpc/get_contact_suggestions (0 rows) - 
+
+### rpc/get_contacto_asignaciones (0 rows) - 
+
+### rpc/get_contactos_campana_v2 (0 rows) - 
+
+### rpc/get_contacts_by_appointment_status (0 rows) - 
+
+### rpc/get_contacts_by_portfolio_status (0 rows) - 
+
+### rpc/get_current_team_member (0 rows) - 
+
+### rpc/get_current_user_empresa_id (1 rows) - 
+
+### rpc/get_current_user_team_id (1 rows) - 
+
+### rpc/get_dashboard_analytics (0 rows) - 
+
+### rpc/get_dashboard_kpis (0 rows) - 
+
+### rpc/get_dashboard_lists (0 rows) - 
+
+### rpc/get_email_marketing_stats (0 rows) - 
+
+### rpc/get_funnel_stage_counts (0 rows) - 
+
+### rpc/get_funnel_stage_counts_filtered (0 rows) - 
+
+### rpc/get_metrics_for_enterprise (0 rows) - 
+
+### rpc/get_module_usage_stats (12 rows) - 
+
+### rpc/get_next_funnel_order (0 rows) - 
+
+### rpc/get_notification_stats (0 rows) - 
+
+### rpc/get_pending_email_campaigns_v3 (0 rows) - 
+
+### rpc/get_retention_metrics (1 rows) - 
+
+### rpc/get_team_humano_for_user (0 rows) - 
+
+### rpc/get_user_empresa_id (1 rows) - 
+
+### rpc/get_user_empresa_ids (0 rows) - 
+
+### rpc/get_user_permissions (0 rows) - 
+
+### rpc/historial_de_correos (0 rows) - 
+
+### rpc/increment_clicks (0 rows) - 
+
+### rpc/insert_assistant_message (0 rows) - 
+
+### rpc/is_admin_for_empresa (0 rows) - 
+
+### rpc/is_dev_team_member (1 rows) - 
+
+### rpc/jsonb_merge (0 rows) - 
+
+### rpc/jsonb_set_nested (0 rows) - 
+
+### rpc/make_artifact_public (0 rows) - 
+
+### rpc/mark_all_notifications_read (0 rows) - 
+
+### rpc/mark_overdue_invoices (0 rows) - 
+
+### rpc/merge_contacts (0 rows) - 
+
+### rpc/merge_contacts_preview (0 rows) - 
+
+### rpc/monica_search_memories (0 rows) - 
+
+### rpc/nombre_de_tu_funcion (0 rows) - 
+
+### rpc/normalize_spanish_phonetic (0 rows) - 
+
+### rpc/notify_tasks_due_soon (0 rows) - 
+
+### rpc/obtener_bi_prospectiva (0 rows) - 
+
+### rpc/obtener_contactos_para_envio_v2 (100 rows) - 
+
+### rpc/obtener_contexto_analista (0 rows) - 
+
+### rpc/obtener_informe_equipo (0 rows) - 
+
+### rpc/obtener_metricas_mensajes (0 rows) - 
+
+### rpc/obtener_modelos_por_tipo (0 rows) - 
+
+### rpc/obtener_secreto_automatizacion (0 rows) - 
+
+### rpc/orquestador_mensajes_entrantes (0 rows) - 
+
+### rpc/preview_calificacion_existentes (0 rows) - 
+
+### rpc/preview_dynamic_audience (0 rows) - 
+
+### rpc/preview_transfer_contacts_between_team_members (0 rows) - 
+
+### rpc/reactivate_expired_pauses (0 rows) - 
+
+### rpc/reasignar_citas_asesores_sin_aceptar (0 rows) - 
+
+### rpc/reasignar_contacto_sin_grant_id (0 rows) - 
+
+### rpc/reasignar_contactos_sin_asesor (0 rows) - 
+
+### rpc/reconstruct_json_from_indexed (0 rows) - 
+
+### rpc/registrar_actividad (0 rows) - 
+
+### rpc/reintentar_contacto_drive_cliente (0 rows) - 
+
+### rpc/reintentar_contactos_cliente_sin_url_drive (0 rows) - 
+
+### rpc/relacionar_usuarios_contactos (0 rows) - 
+
+### rpc/reorder_funnel_stages (0 rows) - 
+
+### rpc/rpc_kapso_healthcheck (1 rows) - 
+
+### rpc/rpc_persist_kapso_message (0 rows) - 
+
+### rpc/rpc_prepare_kapso_context (0 rows) - 
+
+### rpc/search_contacts_by_metadata (0 rows) - 
+
+### rpc/search_contacts_fuzzy (0 rows) - 
+
+### rpc/search_contacts_optimized (0 rows) - 
+
+### rpc/show_limit (1 rows) - 
+
+### rpc/show_trgm (0 rows) - 
+
+### rpc/sync_campaign_enrollments (0 rows) - 
+
+### rpc/training_update_streak (0 rows) - 
+
+### rpc/transfer_contacts_between_team_members (0 rows) - 
+
+### rpc/unaccent (0 rows) - 
+
+### rpc/update_agent_direct (0 rows) - 
+
+### rpc/update_enrollment_after_send (0 rows) - 
+
+### shortened_links (29 rows) - Enlaces acortados con redirecci¾n, estado y contador de clics.
+  id: string -- Note:
+This is a Primary Key.<pk/>
+  type: string
+  uuid: string
+  redirect_url: string
+  created_at: string
+  updated_at: string
+  clicks: integer
+  is_active: boolean
+
+### sintetico_ejecuciones (1 rows) - Ejecuciones de pruebas sintÚticas por perfil y escenario.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  perfil_id: integer -- Note:
+This is a Foreign Key to `sintetico_perfiles.id`.<fk table='sintetico_perfiles' column='id'/>
+  escenario_id: integer -- Note:
+This is a Foreign Key to `sintetico_escenarios.id`.<fk table='sintetico_escenarios' column='id'/>
+  session_id: string
+  estado: string
+  total_mensajes: integer
+  resultado: jsonb
+  objetivo_logrado: boolean
+  started_at: string
+  completed_at: string
+  numero_sintetico: string -- Note:
+This is a Foreign Key to `sintetico_perfiles.numero_sintetico`.<fk table='sintetico_perfiles' column='numero_sintetico'/>
+
+### sintetico_escenarios (1 rows) - Escenarios de prueba sintÚtica asociados a empresa, agente y n·mero.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  nombre: string
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  agente_id: integer -- Note:
+This is a Foreign Key to `wp_agentes.id`.<fk table='wp_agentes' column='id'/>
+  numero_id: integer -- Note:
+This is a Foreign Key to `wp_numeros.id`.<fk table='wp_numeros' column='id'/>
+  servicio: jsonb
+  max_mensajes: integer
+  activo: boolean
+  created_at: string
+  id_perfil: integer -- Note:
+This is a Foreign Key to `sintetico_perfiles.id`.<fk table='sintetico_perfiles' column='id'/>
+  correo_informe: string
+
+### sintetico_perfiles (2768 rows) - Perfiles sintÚticos con personalidad para simulaciones automatizadas.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  nombre: string
+  numero_sintetico: string
+  personalidad: jsonb
+  activo: boolean
+  created_at: string
+  agente_id: integer
+
+### system_actions (7 rows) - Catßlogo maestro de acciones permitidas dentro del sistema de permisos.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  name: string
+  display_name: string
+  description: string
+  created_at: string
+
+### system_modules (20 rows) - Catßlogo maestro de m¾dulos funcionales del sistema.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  name: string
+  display_name: string
+  description: string
+  created_at: string
+  updated_at: string
+
+### system_permissions (66 rows) - Permisos por rol y m¾dulo con acciones serializadas en JSON.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  role_id: integer -- Note:
+This is a Foreign Key to `system_roles.id`.<fk table='system_roles' column='id'/>
+  module_id: integer -- Note:
+This is a Foreign Key to `system_modules.id`.<fk table='system_modules' column='id'/>
+  actions: jsonb -- Array JSON con las acciones permitidas
+  created_at: string
+  updated_at: string
+
+### system_roles (5 rows) - Roles del sistema por empresa para control de acceso y permisos.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  name: string
+  description: string
+  enterprise_id: integer -- ID de empresa (null para roles generales)
+
+Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  is_super_admin: boolean -- Indica si es un super administrador
+  created_at: string
+  updated_at: string
+  active: boolean
+
+### system_users (0 rows) - Usuarios del sistema vinculados a auth, empresa, rol y miembro humano.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  auth_uid: string
+  enterprise_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  name: string
+  created_at: string
+  team_humano_id: integer -- Note:
+This is a Foreign Key to `wp_team_humano.id`.<fk table='wp_team_humano' column='id'/>
+  phone: string
+  role_id: integer -- Note:
+This is a Foreign Key to `system_roles.id`.<fk table='system_roles' column='id'/>
+  role: string
+
+### team_groups (196 rows) - Grupos organizativos dinßmicos del equipo humano por empresa.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  name: string
+  slug: string
+  icon: string
+  color: string
+  sort_order: integer
+  is_active: boolean
+  created_at: string
+
+### team_invitations (0 rows) - Invitaciones de acceso para miembros de equipo basadas en token.
+  id: string -- Note:
+This is a Primary Key.<pk/>
+  email: string
+  team_humano_id: integer -- Note:
+This is a Foreign Key to `wp_team_humano.id`.<fk table='wp_team_humano' column='id'/>
+  invitation_token: string
+  status: string
+  invited_by: string
+  invited_at: string
+  expires_at: string
+  accepted_at: string
+  created_at: string
+  updated_at: string
+
+### temp_contactos_sin_citas (10009 rows) - Vista o tabla temporal de contactos sin citas para anßlisis operativo.
+  id: integer
+  telefono: string
+  nombre: string
+  apellido: string
+  email: string
+  fecha_registro: string
+  ultima_interaccion: string
+  origen: string
+  notas: string
+  is_active: boolean
+  created_at: string
+  updated_at: string
+  subscriber_id: string
+  avatar_url: string
+  metadata: jsonb
+  empresa_id: integer
+  etapa_emocional: string
+  timezone: string
+  es_calificado: string
+  estado: string
+  url_drive: string
+  link_stripe: string
+  team_humano_id: integer
+  etapa_embudo: integer
+  informe_gamma: string
+
+### test_escritura (256666 rows) - Registros de pruebas de escritura o transformaci¾n de texto.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  original: string
+  modificado: string
+  hora: string
+  id_ejecucion: integer
+  nombre_wf: string
+
+### test_respuestas_agente_evaluador (643 rows) - Resultados de pruebas donde un evaluador revisa respuestas de agentes.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  input_cliente: string
+  output_agente: string
+  decision_evaluador: string
+  nombre_agente: string
+  emrpesa: string
+  id_conversacion: integer -- Note:
+This is a Foreign Key to `wp_contactos.id`.<fk table='wp_contactos' column='id'/>
+  id_ejecucion: integer
+  motivo: string
+  hora: string
+
+### training_courses (2 rows) - Cursos de entrenamiento o academia interna por empresa.
+  id: string -- Note:
+This is a Primary Key.<pk/>
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  titulo: string
+  descripcion: string
+  categoria: string
+  dificultad: string
+  duracion_estimada_min: integer
+  portada_url: string
+  color_tema: string
+  is_public: boolean -- Si true, otras empresas pueden ver/usar el curso
+  is_active: boolean
+  orden: integer
+  created_by: string
+  created_at: string
+  updated_at: string
+
+### training_lessons (2 rows) - Lecciones ordenadas pertenecientes a cursos de entrenamiento.
+  id: string -- Note:
+This is a Primary Key.<pk/>
+  course_id: string -- Note:
+This is a Foreign Key to `training_courses.id`.<fk table='training_courses' column='id'/>
+  orden: integer
+  titulo: string
+  contenido_intro: string
+  imagen_url: string
+  tiempo_estimado_seg: integer
+  xp_reward: integer
+  xp_perfect_bonus: integer
+  max_hearts: integer
+  is_active: boolean
+  created_at: string
+  updated_at: string
+
+### training_questions (2 rows) - Preguntas de evaluaci¾n asociadas a lecciones de entrenamiento.
+  id: string -- Note:
+This is a Primary Key.<pk/>
+  lesson_id: string -- Note:
+This is a Foreign Key to `training_lessons.id`.<fk table='training_lessons' column='id'/>
+  tipo: string
+  pregunta: string
+  opciones: jsonb -- Array JSON: ["Opci¾n A", "Opci¾n B", "Opci¾n C", "Opci¾n D"]
+  respuesta_correcta: string -- ═ndice (0-3) o valor textual de la respuesta correcta
+  explicacion: string
+  hint: string
+  dificultad: integer
+  ai_generated: boolean
+  ai_context: jsonb
+  orden: integer
+  is_active: boolean
+  created_at: string
+
+### training_streaks (0 rows) - Rachas de actividad y constancia de aprendizaje por miembro del equipo.
+  id: string -- Note:
+This is a Primary Key.<pk/>
+  team_member_id: integer -- Note:
+This is a Foreign Key to `wp_team_humano.id`.<fk table='wp_team_humano' column='id'/>
+  current_streak: integer
+  longest_streak: integer
+  last_activity_date: string
+  streak_frozen_until: string
+  freeze_count_used: integer
+  created_at: string
+  updated_at: string
+
+### training_user_progress (0 rows) - Progreso individual de usuarios sobre lecciones de entrenamiento.
+  id: string -- Note:
+This is a Primary Key.<pk/>
+  team_member_id: integer -- Note:
+This is a Foreign Key to `wp_team_humano.id`.<fk table='wp_team_humano' column='id'/>
+  lesson_id: string -- Note:
+This is a Foreign Key to `training_lessons.id`.<fk table='training_lessons' column='id'/>
+  status: string
+  score: integer
+  attempts: integer
+  best_score: integer
+  time_spent_sec: integer
+  questions_correct: integer
+  questions_total: integer
+  local_checkpoint: jsonb -- JSON con estado de sesi¾n para recuperar si se cierra el navegador
+  last_sync_at: string
+  started_at: string
+  completed_at: string
+  created_at: string
+  updated_at: string
+
+### transcripciones (1262 rows) - Transcripciones y res·menes de reuniones o citas sincronizadas.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  created_at: string
+  grant_id: string
+  transcripcion: string
+  notetaker_id: string
+  duracion: number
+  resumen: string
+  cita_id: integer -- Note:
+This is a Foreign Key to `wp_citas.id`.<fk table='wp_citas' column='id'/>
+  resumen_cita: string
+  reunion_id: string
+
+### usuarios_consentimientos (2 rows) - Consentimientos clÝnicos y legales aceptados por usuarios o pacientes.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  session_id: string
+  timestamp: string
+  language: string
+  id_cliente: string
+  patient_dob: string
+  non_refund_ack: boolean
+  delivery_delay_terms_ack: boolean
+  cementation_change_8days_ack: boolean
+  punctuality_reschedule_ack: boolean
+  veneer_8days_ack: boolean
+  anesthesia_risks_ack: boolean
+  preop_fasting_6h_ack: boolean
+  patient_responsibilities_ack: boolean
+  no_guarantee_ack: boolean
+  extraction_irreversible_ack: boolean
+  cementation_satisfaction_ack: boolean
+  post_care_ack: boolean
+  diagnosis_teeth_non_restorable: array
+  diagnosis_missing_teeth: array
+  planned_procedures: array
+  graft_type: string
+  anesthesia_choice: string
+  not_satisfied_notes: string
+  missing_required: array
+  empresa_id: integer
+  patient_name: string
+  metadata: string
+
+### v_duplicados_conversaciones (5 rows) - 
+  fecha: string
+  contacto_id: integer -- Note:
+This is a Foreign Key to `wp_contactos.id`.<fk table='wp_contactos' column='id'/>
+  numero_id: integer -- Note:
+This is a Foreign Key to `wp_numeros.id`.<fk table='wp_numeros' column='id'/>
+  duplicados: integer
+  ids: string
+
+### wp_actividades_log (80836 rows) - Log centralizado de actividades del sistema, agentes, contactos y usuarios.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  tipo: string -- Tipo de actividad: sistema, usuario, agente, herramienta, tarea
+  accion: string -- Acci¾n realizada
+  descripcion: string
+  agente_id: integer -- Note:
+This is a Foreign Key to `wp_agentes.id`.<fk table='wp_agentes' column='id'/>
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  contacto_id: integer -- Note:
+This is a Foreign Key to `wp_contactos.id`.<fk table='wp_contactos' column='id'/>
+  entidad_tipo: string -- Tipo de entidad afectada
+  datos_antes: jsonb -- Estado de los datos antes de la acci¾n
+  datos_despues: jsonb -- Estado de los datos despuÚs de la acci¾n
+  fecha_creacion: string
+  usuario_id: string
+  entidad_id: string
+  ip_origen: string
+  user_agent: string
+  tipo_valido: string
+
+### wp_agente_roles (22 rows) - Roles funcionales o perfiles base para agentes de IA.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  nombre_rol: string
+  instrucciones_rol: string
+  fecha_creacion: string
+  fecha_actualizacion: string
+
+### wp_agente_tools (5 rows) - Asignaci¾n de herramientas MCP o capacidades a agentes especÝficos.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  agente_id: integer -- Note:
+This is a Foreign Key to `wp_agentes.id`.<fk table='wp_agentes' column='id'/>
+  tool_id: integer -- Note:
+This is a Foreign Key to `wp_mcp_tools_catalog.id`.<fk table='wp_mcp_tools_catalog' column='id'/>
+  activo: boolean
+  prioridad: integer
+  configuracion: jsonb
+  fecha_asignacion: string
+  fecha_actualizacion: string
+
+### wp_agentes (33 rows) - Configuraci¾n principal de agentes de IA por empresa.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  nombre_agente: string
+  instrucciones: string
+  comportamiento: string
+  restricciones: string
+  rol: string
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  formato_respuesta: string
+  areas_de_expertise: string
+  uso_de_emojis: string
+  prompt_personalizado: string
+  idioma: string
+  url_imagen_agente: string
+  fecha_creacion: string
+  fecha_actualizacion: string
+  manejo_herramientas: string
+  instrucciones_mensajes: string
+  url_videos: string
+  llm: string
+  mcp_url: string
+  instrucciones_multimedia: string
+  id_rol: integer -- Note:
+This is a Foreign Key to `wp_agente_roles.id`.<fk table='wp_agente_roles' column='id'/>
+  metadata_contacto: jsonb
+  archivado: boolean -- Soft delete: agente archivado no responde mensajes
+
+### wp_agentes_historial (96 rows) - Vista de compatibilidad sobre wp_auditoria para el store de agentes
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  agente_id: integer
+  campo: string
+  valor_anterior: string
+  valor_nuevo: string
+  usuario_id: integer
+  mensaje_commit: string
+  created_at: string
+
+### wp_auditoria (97 rows) - AuditorÝa funcional de cambios en registros de la aplicaci¾n.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  tabla: string
+  registro_id: integer
+  campo: string
+  valor_anterior: string
+  valor_nuevo: string
+  usuario_id: integer
+  usuario_nombre: string
+  fecha: string
+  accion: string
+  mensaje_commit: string
+
+### wp_citas (11508 rows) - Agenda de citas y eventos entre contactos, equipo y empresa.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  contacto_id: integer -- Note:
+This is a Foreign Key to `wp_contactos.id`.<fk table='wp_contactos' column='id'/>
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  fecha_hora: string
+  duracion: integer
+  titulo: string
+  ubicacion: string
+  estado: string
+  created_at: string
+  updated_at: string
+  event_id: string
+  ultima_sincronizacion: string
+  team_humano_id: integer -- Note:
+This is a Foreign Key to `wp_team_humano.id`.<fk table='wp_team_humano' column='id'/>
+  timezone_cliente: string
+  duracion_buffer: integer
+  preguntas_calendario: jsonb
+  descripcion: string
+  sincronizacion: string
+  metadata: jsonb
+  cuestionario_asesor: jsonb
+  evaluacion_asesor: jsonb
+  notificaciones: jsonb -- se guarda cada vez que se envÝe una notificaci¾n al grupo de lideres
+  resumen_conversacion: string
+
+### wp_citas_participantes (404 rows) - Invitados adicionales de una cita. El due±o sigue siendo wp_citas.team_humano_id.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  cita_id: integer -- Note:
+This is a Foreign Key to `wp_citas.id`.<fk table='wp_citas' column='id'/>
+  team_humano_id: integer -- Note:
+This is a Foreign Key to `wp_team_humano.id`.<fk table='wp_team_humano' column='id'/>
+  rol: string
+  estado_rsvp: string
+  email: string
+  added_by: string
+  created_at: string
+
+### wp_contacto_estado_embudo (30788 rows) - Estado actual e historial inmediato de embudo por contacto.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  contacto_id: integer -- Note:
+This is a Foreign Key to `wp_contactos.id`.<fk table='wp_contactos' column='id'/>
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  etapa_anterior: integer -- ┌ltima etapa donde estuvo antes del cambio actual. Se actualiza con cada movimiento.
+
+Note:
+This is a Foreign Key to `wp_empresa_embudo.id`.<fk table='wp_empresa_embudo' column='id'/>
+  etapa_actual: integer -- Etapa donde se encuentra actualmente el contacto
+
+Note:
+This is a Foreign Key to `wp_empresa_embudo.id`.<fk table='wp_empresa_embudo' column='id'/>
+  team_humano_id: integer -- Note:
+This is a Foreign Key to `wp_team_humano.id`.<fk table='wp_team_humano' column='id'/>
+  origen_cambio: string
+  notas: string
+  metadata: jsonb
+  fecha_ingreso_embudo: string -- Fecha en que el contacto ingres¾ por primera vez al embudo (nunca cambia)
+  fecha_ultimo_cambio: string -- Fecha del ·ltimo cambio de etapa (se actualiza con cada movimiento)
+
+### wp_contacto_team_asignaciones (66382 rows) - Asignaciones m·ltiples de miembros del equipo a contactos. Permite colaboraci¾n entre varios asesores.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  contacto_id: integer -- Note:
+This is a Foreign Key to `wp_contactos.id`.<fk table='wp_contactos' column='id'/>
+  team_humano_id: integer -- Note:
+This is a Foreign Key to `wp_team_humano.id`.<fk table='wp_team_humano' column='id'/>
+  es_principal: boolean -- Indica el asesor principal. Se sincroniza automßticamente con wp_contactos.team_humano_id
+  rol_asignacion: string -- Tipo de asignaci¾n: principal, colaborador, observador
+  asignado_por: integer -- Note:
+This is a Foreign Key to `wp_team_humano.id`.<fk table='wp_team_humano' column='id'/>
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  created_at: string
+  updated_at: string
+
+### wp_contactos (66220 rows) - Tabla central del CRM para leads, prospectos y clientes.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  telefono: string
+  nombre: string
+  apellido: string
+  email: string
+  fecha_registro: string
+  ultima_interaccion: string
+  origen: string
+  notas: string
+  is_active: boolean
+  created_at: string
+  updated_at: string
+  subscriber_id: string
+  avatar_url: string
+  metadata: jsonb
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  etapa_emocional: string
+  timezone: string -- Zona horaria del contacto para programaci¾n de citas
+  es_calificado: string
+  estado: string
+  url_drive: string
+  link_stripe: string
+  team_humano_id: integer -- Note:
+This is a Foreign Key to `wp_team_humano.id`.<fk table='wp_team_humano' column='id'/>
+  etapa_embudo: integer -- Note:
+This is a Foreign Key to `wp_empresa_embudo.id`.<fk table='wp_empresa_embudo' column='id'/>
+  informe_gamma: string -- Url del informe generado mediante ia de gamma
+  suscripcion: boolean
+  paused_until: string -- ISO timestamp indicating when a temporary pause expires. NULL means permanent deactivation or active contact.
+
+### wp_contactos_auditoria (0 rows) - AuditorÝa de cambios y acciones relevantes sobre contactos.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  contacto_id: integer
+  telefono_viejo: string
+  telefono_nuevo: string
+  empresa_id: integer
+  canal_comunicacion: string
+  accion: string
+  resultado: string
+  mensaje: string
+  creado_en: string
+
+### wp_contactos_merge_log (0 rows) - Bitßcora de fusiones de contactos duplicados con snapshot y decisiones.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  primary_contact_id: integer
+  secondary_contact_id: integer
+  secondary_snapshot: jsonb
+  field_choices: jsonb
+  tables_updated: jsonb
+  merged_by: integer -- Note:
+This is a Foreign Key to `wp_team_humano.id`.<fk table='wp_team_humano' column='id'/>
+  merged_at: string
+
+### wp_contactos_nota (10419 rows) - Notas internas asociadas a contactos, visibles para equipo e IA.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  created_at: string
+  descripcion: string
+  contacto_id: integer -- Note:
+This is a Foreign Key to `wp_contactos.id`.<fk table='wp_contactos' column='id'/>
+  team_humano_id: integer -- Note:
+This is a Foreign Key to `wp_team_humano.id`.<fk table='wp_team_humano' column='id'/>
+  titulo: string -- TÝtulo opcional de la nota
+  etiquetas: jsonb -- Array JSON de strings para tags (ej: ["importante", "llamada"])
+  es_fijado: boolean -- Si la nota debe aparecer al principio de la lista
+  archivos_urls: array -- Array de URLs de archivos adjuntos (imßgenes, PDFs) almacenados en Supabase Storage bucket notas
+  visible_ia: boolean -- Si es TRUE, la nota es visible para el agente de IA (Monica/WhatsApp). Si es FALSE, solo la ven los humanos del equipo.
+
+### wp_conversaciones (61013 rows) - Conversaciones entre contactos y agentes por canal y empresa.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  agente_id: integer -- Note:
+This is a Foreign Key to `wp_agentes.id`.<fk table='wp_agentes' column='id'/>
+  contacto_id: integer -- Note:
+This is a Foreign Key to `wp_contactos.id`.<fk table='wp_contactos' column='id'/>
+  fecha_inicio: string
+  metadata: jsonb
+  created_at: string
+  updated_at: string
+  numero_id: integer -- Note:
+This is a Foreign Key to `wp_numeros.id`.<fk table='wp_numeros' column='id'/>
+  canal: string -- Identifica el origen de la conversaci¾n (whatsapp, app, email, webchat, telegram, api)
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  seguimiento: string
+  resumen: string
+  evaluacion: number
+  fecha_analisis: string
+  subscriber_id_redes: string
+  fecha_ultimo_mensaje_usuario: string
+  inteligencia_conversacional: string
+
+### wp_crm_pagos (5348 rows) - Pagos registrados dentro del m¾dulo CRM financiero.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  servicio_id: integer -- Note:
+This is a Foreign Key to `wp_crm_servicios.id`.<fk table='wp_crm_servicios' column='id'/>
+  contacto_id: integer -- Note:
+This is a Foreign Key to `wp_contactos.id`.<fk table='wp_contactos' column='id'/>
+  monto: number
+  moneda: string
+  fecha_pago: string
+  metodo_pago: string
+  referencia: string
+  estado: string
+  nota: string
+  comprobante_url: string
+  metadata: jsonb
+  created_at: string
+  updated_at: string
+  registrado_por: integer -- Note:
+This is a Foreign Key to `wp_team_humano.id`.<fk table='wp_team_humano' column='id'/>
+  factura_id: integer -- Note:
+This is a Foreign Key to `wp_facturas.id`.<fk table='wp_facturas' column='id'/>
+
+### wp_crm_servicios (2332 rows) - Servicios vendidos o gestionados para contactos dentro del CRM.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  contacto_id: integer -- Note:
+This is a Foreign Key to `wp_contactos.id`.<fk table='wp_contactos' column='id'/>
+  nombre_servicio: string
+  tipo_servicio: string
+  descripcion: string
+  moneda: string
+  valor_total: number
+  saldo_pagado: number
+  saldo_pendiente: number
+  estado: string
+  fecha_inicio: string
+  fecha_fin: string
+  contrato_url: string
+  metadata: jsonb
+  created_at: string
+  updated_at: string
+  created_by: integer
+  ultima_factura_id: integer -- Note:
+This is a Foreign Key to `wp_facturas.id`.<fk table='wp_facturas' column='id'/>
+  dia_compromiso_pago: integer
+  cuota_mensual: number
+
+### wp_deep_research (27 rows) - Trabajos de investigaci¾n profunda y sus resultados estructurados.
+  id: string -- Note:
+This is a Primary Key.<pk/>
+  local_job_id: string -- ID generado por el cliente para tracking local
+  user_id: string
+  empresa_id: integer
+  prompt: string
+  urls: array
+  schema: jsonb
+  firecrawl_job_id: string -- ID del job en Firecrawl para polling y webhooks
+  status: string -- Estado: queued, processing, completed, failed
+  data: jsonb
+  artifact_id: string -- FK al artifact generado cuando la investigaci¾n se completa
+
+Note:
+This is a Foreign Key to `artifacts.id`.<fk table='artifacts' column='id'/>
+  credits_used: integer
+  error: string
+  created_at: string
+  started_at: string
+  completed_at: string
+  expires_at: string
+  updated_at: string
+
+### wp_documentacion (33 rows) - Inventario de documentaci¾n interna de tablas, tools, conceptos y flujos.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  clave: string
+  titulo: string
+  descripcion_corta: string
+  descripcion_larga: string
+  tipo: string
+  ejemplos_uso: jsonb
+  tags: jsonb
+  fecha_creacion: string
+  fecha_actualizacion: string
+
+### wp_email_campanas (15 rows) - Campa±as de email marketing definidas por empresa.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  nombre: string
+  descripcion: string
+  estado: string
+  es_default_post_conversacion: boolean -- Si TRUE, esta campa±a se activa automßticamente cuando se captura email desde WhatsApp/Instagram
+  cadencia_dias: integer -- DÝas entre cada email de la secuencia
+  total_toques: integer -- N·mero mßximo de emails en la secuencia. NULL = ilimitado
+  instrucciones_ai: string -- Prompt base para que la IA genere el contenido de los emails
+  metadata: jsonb
+  created_at: string
+  updated_at: string
+  audiencia_id: integer -- Note:
+This is a Foreign Key to `wp_marketing_audiencias.id`.<fk table='wp_marketing_audiencias' column='id'/>
+
+### wp_email_contacto_campana (15378 rows) - Inscripci¾n y estado de cada contacto dentro de una campa±a de email.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  campana_id: integer -- Note:
+This is a Foreign Key to `wp_email_campanas.id`.<fk table='wp_email_campanas' column='id'/>
+  contacto_id: integer -- Note:
+This is a Foreign Key to `wp_contactos.id`.<fk table='wp_contactos' column='id'/>
+  estado: string
+  fecha_inscripcion: string
+  fecha_salida: string
+  motivo_salida: string
+  ultimo_toque: integer
+  proximo_envio_en: string
+  condiciones_entrada_capturadas: jsonb
+  metadata: jsonb
+  created_at: string
+  updated_at: string
+
+### wp_email_envio (22070 rows) - Historial de envÝos individuales de email por campa±a y contacto.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  campana_id: integer -- Note:
+This is a Foreign Key to `wp_email_campanas.id`.<fk table='wp_email_campanas' column='id'/>
+  contacto_id: integer -- Note:
+This is a Foreign Key to `wp_contactos.id`.<fk table='wp_contactos' column='id'/>
+  secuencia: integer -- N·mero de toque dentro de la campa±a (1, 2, 3, etc.)
+  estado: string -- Estado del envÝo: pendiente, programado, enviado, abierto, clic, fallido, cancelado
+  enviado_en: string
+  abierto_en: string
+  asunto: string
+  cuerpo_html: string
+  metadata: jsonb
+  created_at: string
+  updated_at: string
+  cuerpo_texto: string
+  thread_id: string
+  email_id: string
+  remitente_team_humano: integer -- Note:
+This is a Foreign Key to `wp_team_humano.id`.<fk table='wp_team_humano' column='id'/>
+
+### wp_email_recibido (1029 rows) - Correos recibidos y asociados a contactos dentro de la empresa.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  contacto_id: integer -- Note:
+This is a Foreign Key to `wp_contactos.id`.<fk table='wp_contactos' column='id'/>
+  asunto: string
+  cuerpo_html: string
+  cuerpo_texto: string
+  recibido_en: string
+  created_at: string
+  thread_id: string
+  email_id: string
+  receptor_team_humano: integer -- Note:
+This is a Foreign Key to `wp_team_humano.id`.<fk table='wp_team_humano' column='id'/>
+  descripcion: string
+  tipo: string
+  contestar: boolean
+
+### wp_empresa_ads_config (0 rows) - Configuraciones de conectores publicitarios y mÚtricas activas por empresa.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  connector: string
+  windsor_token: string
+  campos_activos: array
+  is_active: boolean
+  metadata: jsonb
+  created_at: string
+  updated_at: string
+  created_by: integer -- Note:
+This is a Foreign Key to `wp_team_humano.id`.<fk table='wp_team_humano' column='id'/>
+
+### wp_empresa_embudo (106 rows) - Etapas del embudo comercial configuradas por empresa.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  nombre_etapa: string
+  orden_etapa: integer -- Orden de la etapa en el embudo, inicia desde 0
+  descripcion: jsonb -- GuÝa de Smile para estandarizar la etapa antes de customizaci¾n
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  fecha_creacion: string
+  fecha_actualizacion: string
+  Respaldo: json
+  configuracion_seguimiento: jsonb
+
+### wp_empresa_historial (11 rows) - Historial de cambios sobre la configuraci¾n y datos de empresa.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  campo: string
+  valor_anterior: string
+  valor_nuevo: string
+  usuario_id: integer -- Note:
+This is a Foreign Key to `wp_team_humano.id`.<fk table='wp_team_humano' column='id'/>
+  mensaje_commit: string
+  created_at: string
+
+### wp_empresa_perfil (28 rows) - Perfil maestro de empresa dentro de la arquitectura multi-tenant.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  nombre: string
+  ciudad: string
+  pais: string
+  rubro: string
+  informacion_empresarial: string
+  preguntas_frecuentes: string
+  servicios_generales: string
+  embudo_ventas: string
+  logo_url: string
+  sitio_web: string
+  telefono: string
+  email: string
+  direccion: string
+  fecha_creacion: string
+  fecha_actualizacion: string
+  metadata: jsonb
+  team_slack: string
+  reglas_negocio: string
+  canal_comunicacion: string
+  metricas_activa: boolean
+  timezone: string
+  branding: jsonb
+  activo: boolean
+  email_marketing: boolean
+
+### wp_error_logs (19683 rows) - Registro centralizado de errores de funciones y procesos del sistema.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  function_name: string
+  error_message: string
+  error_stack: string
+  request_body: string
+  created_at: string
+  severity: string
+  user_id: string
+  empresa_id: integer
+  context: jsonb
+
+### wp_etiquetas_equipo (252 rows) - Etiquetas reutilizables del equipo para tareas y organizaci¾n interna.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  nombre: string
+  color: string
+  descripcion: string
+  created_at: string
+
+### wp_evaluacion_preliminar (1 rows) - Evaluaci¾n preliminar de contactos con criterios, evidencia y oportunidades.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  contacto_id: integer -- Note:
+This is a Foreign Key to `wp_contactos.id`.<fk table='wp_contactos' column='id'/>
+  codigo_criterio: string
+  titulo: string
+  descripcion: string
+  ponderacion: number
+  cumple: boolean
+  porcentaje_obtenido: number
+  categoria: string
+  icono: string
+  evidencias: array
+  informacion_faltante: array
+  recomendaciones: array
+  observaciones: string
+  nivel_confianza: string
+  evaluacion_completa: jsonb
+  fecha_evaluacion: string
+  created_at: string
+  updated_at: string
+  oportunidades_crecimiento: jsonb
+
+### wp_facturas (99 rows) - Facturaci¾n emitida a contactos por servicios y pagos.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  contacto_id: integer -- Note:
+This is a Foreign Key to `wp_contactos.id`.<fk table='wp_contactos' column='id'/>
+  servicio_id: integer -- Note:
+This is a Foreign Key to `wp_crm_servicios.id`.<fk table='wp_crm_servicios' column='id'/>
+  pago_id: integer -- Note:
+This is a Foreign Key to `wp_crm_pagos.id`.<fk table='wp_crm_pagos' column='id'/>
+  numero_factura: string -- N·mero ·nico de factura por empresa. Formato: {PREFIJO}-{SECUENCIA}
+  prefijo: string
+  secuencia: integer
+  fecha_emision: string
+  fecha_vencimiento: string
+  cliente_nombre: string
+  cliente_email: string
+  cliente_telefono: string
+  cliente_direccion: string
+  cliente_documento: string
+  cliente_pais: string
+  empresa_nombre: string
+  empresa_direccion: string
+  empresa_telefono: string
+  empresa_email: string
+  empresa_sitio_web: string
+  empresa_logo_url: string
+  empresa_documento: string
+  items: jsonb -- Array JSON con lÝneas de factura. Estructura: [{"descripcion", "cantidad", "precioUnitario", "subtotal"}]
+  moneda: string
+  subtotal: number
+  impuestos: number
+  descuentos: number
+  total: number
+  estado: string -- Estado actual: borrador, emitida, pagada, vencida, anulada
+  monto_pagado: number
+  saldo_pendiente: number
+  pdf_url: string -- URL del PDF generado en Supabase Storage bucket "facturas"
+  notas: string
+  terminos: string
+  metadata: jsonb
+  created_at: string
+  updated_at: string
+  created_by: integer
+
+### wp_finanzas (2 rows) - Movimientos financieros generales de ingresos, egresos y estados.
+  id: string -- Note:
+This is a Primary Key.<pk/>
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  contacto_id: integer -- Note:
+This is a Foreign Key to `wp_contactos.id`.<fk table='wp_contactos' column='id'/>
+  fecha: string
+  tipo: string
+  concepto: string
+  monto: number
+  estado: string
+  categoria: string
+  subcategoria: string
+  descripcion: string
+  fecha_vencimiento: string
+  referencia: string
+  metodo_pago: string
+  stripe_session_id: string
+  stripe_subscription_id: string
+  notas: string
+  metadata: jsonb
+  created_at: string
+  updated_at: string
+
+### wp_follow_up (18 rows) - Registro simple de mensajes o intentos de seguimiento.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  tipo: string
+  canal: string
+  intento: string
+  mensaje: string
+  created_at: string
+
+### wp_marketing_audiencia_contacto (100 rows) - Relaci¾n entre audiencias de marketing y contactos miembros.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  audiencia_id: integer -- Note:
+This is a Foreign Key to `wp_marketing_audiencias.id`.<fk table='wp_marketing_audiencias' column='id'/>
+  contacto_id: integer -- Note:
+This is a Foreign Key to `wp_contactos.id`.<fk table='wp_contactos' column='id'/>
+  created_at: string
+
+### wp_marketing_audiencias (7 rows) - Audiencias de marketing estßticas o dinßmicas por empresa.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  empresa_id: integer -- Empresa propietaria. SIEMPRE requerido - las audiencias son privadas.
+
+Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  nombre: string
+  descripcion: string
+  tipo: string -- estatica: lista fija de contactos, dinamica: basada en filtros_json
+  filtros_json: jsonb
+  metadata: jsonb
+  created_at: string
+  updated_at: string
+
+### wp_mcp_tools_catalog (6 rows) - Catßlogo de herramientas MCP disponibles para agentes o empresas.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  nombre_tool: string
+  descripcion: string
+  schema: jsonb
+  categoria: string
+  endpoint: string
+  version: string
+  activo: boolean
+  metadata: jsonb
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  fecha_creacion: string
+  fecha_actualizacion: string
+  permisos: jsonb
+  secreto: string
+
+### wp_mensajes (795932 rows) - Mensajes individuales pertenecientes a conversaciones del CRM.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  conversacion_id: integer -- Note:
+This is a Foreign Key to `wp_conversaciones.id`.<fk table='wp_conversaciones' column='id'/>
+  timestamp: string
+  contenido: string
+  tipo: string
+  remitente: string
+  status: string
+  metadata: jsonb
+  created_at: string
+  updated_at: string
+  modelo_llm: string
+  uso_herramientas: jsonb
+  url_ejecucion: string
+  empresa_id: integer
+
+### wp_metodos_pago (16 rows) - Catßlogo de mÚtodos de pago habilitados por empresa.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  codigo: string
+  nombre: string
+  descripcion: string
+  icono: string
+  is_active: boolean
+  orden: integer
+  metadata: jsonb
+  created_at: string
+  updated_at: string
+  created_by: integer
+
+### wp_module_usage_daily (0 rows) - Agregados diarios de uso de m¾dulos por empresa.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  date: string
+  module: string
+  unique_users: integer
+  total_views: integer
+  total_actions: integer
+  avg_time_seconds: integer
+  created_at: string
+
+### wp_multimedia (7586 rows) - Archivos multimedia asociados a contactos, contenidos o secciones.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  archivo_url: string
+  tipo: string
+  nombre_archivo: string
+  tama±o: integer
+  metadata: jsonb
+  hash: string
+  created_at: string
+  updated_at: string
+  contacto_id: integer -- Note:
+This is a Foreign Key to `wp_contactos.id`.<fk table='wp_contactos' column='id'/>
+  contenido: jsonb
+  url_carpeta: string
+  estado: string
+  empresa_id: integer
+  seccion: string
+
+### wp_notificaciones (7 rows) - Notificaciones simples orientadas a contactos o miembros del equipo.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  tipo: string
+  titulo: string
+  mensaje: string
+  contacto_id: integer -- Note:
+This is a Foreign Key to `wp_contactos.id`.<fk table='wp_contactos' column='id'/>
+  metadata: jsonb
+  team_humano: integer -- Note:
+This is a Foreign Key to `wp_team_humano.id`.<fk table='wp_team_humano' column='id'/>
+
+### wp_notificaciones_team (2276 rows) - Notificaciones para el equipo humano - Centro de Actividad
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  tipo: string -- Tipos: human_in_the_loop, nueva_cita, mensaje_urgente, tarea_asignada, recordatorio, sistema, tarea_mencion, tarea_estado, tarea_vencimiento_proximo, tarea_vencida, tarea_comentario, tarea_item_completado, proyecto_costo, deep_research
+  contacto_id: integer -- Note:
+This is a Foreign Key to `wp_contactos.id`.<fk table='wp_contactos' column='id'/>
+  mensaje: string
+  fecha_envio: string
+  estado: string
+  created_at: string
+  updated_at: string
+  respuesta: string
+  fecha_respuesta: string
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  asesor_id: integer -- Si es NULL, la notificaci¾n es broadcast para toda la empresa
+
+Note:
+This is a Foreign Key to `wp_team_humano.id`.<fk table='wp_team_humano' column='id'/>
+  agente_id: integer -- Note:
+This is a Foreign Key to `wp_agentes.id`.<fk table='wp_agentes' column='id'/>
+  origen: string
+  requiere_respuesta: boolean
+  visto: boolean
+  metadata: jsonb
+  archivado: boolean -- Soft delete: notificaci¾n archivada
+
+### wp_numeros (34 rows) - N·meros, canales o endpoints de comunicaci¾n por empresa y agente.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  telefono: string
+  nombre: string
+  activo: boolean
+  created_at: string
+  updated_at: string
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  agente_id: integer -- Note:
+This is a Foreign Key to `wp_agentes.id`.<fk table='wp_agentes' column='id'/>
+  canal: string
+  waha_session: string
+  evolution_instance: string
+  elevenlabs_id_voz: string
+  timezone: string
+  link_conectar_canal: string
+  id_kapso: string
+  agente_id_ab: integer -- Agente para variante B en pruebas A/B. Solo se usa si ab_test_activo = TRUE
+
+Note:
+This is a Foreign Key to `wp_agentes.id`.<fk table='wp_agentes' column='id'/>
+  ab_test_activo: boolean -- Indica si este n·mero estß participando en pruebas A/B. 
+
+Distribuci¾n: ·ltimo dÝgito par = agente_id, impar = agente_id_ab
+
+### wp_numeros_horarios (4 rows) - Configuraci¾n horaria de activaci¾n y desactivaci¾n por n·mero.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  numero_id: integer -- Note:
+This is a Foreign Key to `wp_numeros.id`.<fk table='wp_numeros' column='id'/>
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  hora_activar: string -- Hora en que el n·mero se activa (ej: 17:00 = 5PM)
+  hora_desactivar: string -- Hora en que el n·mero se desactiva (ej: 06:00 = 6AM)
+  dias_desactivar: array -- DÝas de la semana donde aplica desactivaci¾n (ISO: 1=Lunes, 7=Domingo)
+  dias_siempre_activo: array -- DÝas donde el n·mero siempre estß activo (fines de semana)
+  timezone: string
+  habilitado: boolean
+  created_at: string
+  updated_at: string
+
+### wp_plan_consumo (27 rows) - Consumo de caracterÝsticas del plan de suscripci¾n por empresa.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  id_plan: string -- Note:
+This is a Foreign Key to `wp_planes_suscripcion.id`.<fk table='wp_planes_suscripcion' column='id'/>
+  id_empresa: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  caracteristica_id: integer -- Note:
+This is a Foreign Key to `wp_planes_caracteristicas.id`.<fk table='wp_planes_caracteristicas' column='id'/>
+  cantidad_consumida: number
+  created_at: string
+  consumo_extra: number
+
+### wp_planes_caracteristicas (15 rows) - CaracterÝsticas incluidas en cada plan de suscripci¾n.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  created_at: string
+  caracteristica: string
+  plan_id: string -- Note:
+This is a Foreign Key to `wp_planes_suscripcion.id`.<fk table='wp_planes_suscripcion' column='id'/>
+  descripccion: string
+  cantidad: number
+
+### wp_planes_suscripcion (2 rows) - Catßlogo de planes de suscripci¾n comercializados por la plataforma.
+  id: string -- Note:
+This is a Primary Key.<pk/>
+  nombre: string
+  descripcion: string
+  precio: number
+  moneda: string
+  periodo: string
+  stripe_price_id: string
+  activo: boolean
+  dias_prueba: integer
+  duracion_dias: integer
+  metadata: jsonb
+  created_at: string
+
+### wp_proyectos (6 rows) - Proyectos internos o de cliente vinculados a contactos y servicios.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  nombre: string
+  descripcion: string
+  estado: string
+  color: string
+  icono: string
+  orden: integer
+  config: jsonb
+  creado_por: integer -- Note:
+This is a Foreign Key to `wp_team_humano.id`.<fk table='wp_team_humano' column='id'/>
+  created_at: string
+  updated_at: string
+  contacto_id: integer -- Note:
+This is a Foreign Key to `wp_contactos.id`.<fk table='wp_contactos' column='id'/>
+  servicio_id: integer -- Note:
+This is a Foreign Key to `wp_crm_servicios.id`.<fk table='wp_crm_servicios' column='id'/>
+  presupuesto: number
+  gasto_actual: number
+  moneda: string
+  fecha_inicio: string
+  fecha_fin_estimada: string
+  fecha_fin_real: string
+
+### wp_proyectos_costos (0 rows) - Costos registrados dentro de proyectos, tareas o categorÝas operativas.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  proyecto_id: integer -- Note:
+This is a Foreign Key to `wp_proyectos.id`.<fk table='wp_proyectos' column='id'/>
+  concepto: string
+  categoria: string
+  monto: number
+  moneda: string
+  tarea_id: integer -- Note:
+This is a Foreign Key to `wp_tareas.id`.<fk table='wp_tareas' column='id'/>
+  fecha_costo: string
+  registrado_por: integer -- Note:
+This is a Foreign Key to `wp_team_humano.id`.<fk table='wp_team_humano' column='id'/>
+  comprobante_url: string
+  notas: string
+  created_at: string
+
+### wp_recordatorios (0 rows) - Recordatorios vinculados a contactos y conversaciones.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  contacto_id: integer -- Note:
+This is a Foreign Key to `wp_contactos.id`.<fk table='wp_contactos' column='id'/>
+  conversacion_id: integer -- Note:
+This is a Foreign Key to `wp_conversaciones.id`.<fk table='wp_conversaciones' column='id'/>
+  titulo: string
+  descripcion: string
+  fecha_hora: string
+  repeticion: string
+  estado: string
+  created_at: string
+  updated_at: string
+
+### wp_suscripcion_historial (0 rows) - Historial de cambios de plan o precio en suscripciones.
+  id: string -- Note:
+This is a Primary Key.<pk/>
+  suscripcion_id: string -- Note:
+This is a Foreign Key to `wp_suscripciones.id`.<fk table='wp_suscripciones' column='id'/>
+  plan_id: string -- Note:
+This is a Foreign Key to `wp_planes_suscripcion.id`.<fk table='wp_planes_suscripcion' column='id'/>
+  cambio_fecha: string
+  motivo: string
+  precio_aplicado: number
+
+### wp_suscripciones (4 rows) - Suscripciones activas o hist¾ricas de empresas y contactos.
+  id: string -- Note:
+This is a Primary Key.<pk/>
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  contacto_id: integer -- Note:
+This is a Foreign Key to `wp_contactos.id`.<fk table='wp_contactos' column='id'/>
+  plan_id: string -- Note:
+This is a Foreign Key to `wp_planes_suscripcion.id`.<fk table='wp_planes_suscripcion' column='id'/>
+  stripe_id_suscripcion: string
+  stripe_id_cliente: string
+  estado: string
+  fecha_inicio: string
+  fecha_fin: string
+  proxima_facturacion: string
+  cancel_at: string
+  precio_actual: number
+  metadata: jsonb
+  created_at: string
+  updated_at: string
+
+### wp_system_alerts (0 rows) - Alertas del sistema por severidad, contexto y empresa.
+  id: string -- Note:
+This is a Primary Key.<pk/>
+  type: string
+  severity: string
+  title: string
+  message: string
+  context: jsonb
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  user_id: string
+  dismissed_at: string
+  created_at: string
+
+### wp_tareas (171 rows) - Tareas operativas asociadas a CRM, proyectos y equipo.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  titulo: string
+  descripcion: string
+  estado: string
+  prioridad: integer
+  contacto_id: integer -- Note:
+This is a Foreign Key to `wp_contactos.id`.<fk table='wp_contactos' column='id'/>
+  cita_id: integer -- Note:
+This is a Foreign Key to `wp_citas.id`.<fk table='wp_citas' column='id'/>
+  conversacion_id: integer -- Note:
+This is a Foreign Key to `wp_conversaciones.id`.<fk table='wp_conversaciones' column='id'/>
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  asignado_a: integer -- Note:
+This is a Foreign Key to `wp_team_humano.id`.<fk table='wp_team_humano' column='id'/>
+  creado_por: integer -- Note:
+This is a Foreign Key to `wp_team_humano.id`.<fk table='wp_team_humano' column='id'/>
+  fecha_vencimiento: string
+  fecha_completada: string
+  created_at: string
+  updated_at: string
+  metadata: jsonb
+  proyecto_id: integer -- Note:
+This is a Foreign Key to `wp_proyectos.id`.<fk table='wp_proyectos' column='id'/>
+  descripcion_md: string
+  portada_url: string
+  tiempo_estimado_min: integer
+  tiempo_real_min: integer
+  costo_estimado: number
+  costo_real: number
+  moneda: string
+
+### wp_tareas_asignados (159 rows) - Relaci¾n muchos a muchos entre tareas y miembros asignados.
+  tarea_id: integer -- Note:
+This is a Primary Key.<pk/>
+This is a Foreign Key to `wp_tareas.id`.<fk table='wp_tareas' column='id'/>
+  team_humano_id: integer -- Note:
+This is a Primary Key.<pk/>
+This is a Foreign Key to `wp_team_humano.id`.<fk table='wp_team_humano' column='id'/>
+  rol: string
+  asignado_por: integer -- Note:
+This is a Foreign Key to `wp_team_humano.id`.<fk table='wp_team_humano' column='id'/>
+  created_at: string
+
+### wp_tareas_comentarios (54 rows) - Comentarios y menciones sobre tareas.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  tarea_id: integer -- Note:
+This is a Foreign Key to `wp_tareas.id`.<fk table='wp_tareas' column='id'/>
+  autor_id: integer -- Note:
+This is a Foreign Key to `wp_team_humano.id`.<fk table='wp_team_humano' column='id'/>
+  contenido: string
+  tipo: string
+  metadata: jsonb
+  editado: boolean
+  created_at: string
+  updated_at: string
+
+### wp_tareas_etiquetas (0 rows) - Relaci¾n entre tareas y etiquetas del equipo.
+  tarea_id: integer -- Note:
+This is a Primary Key.<pk/>
+This is a Foreign Key to `wp_tareas.id`.<fk table='wp_tareas' column='id'/>
+  etiqueta_id: integer -- Note:
+This is a Primary Key.<pk/>
+This is a Foreign Key to `wp_etiquetas_equipo.id`.<fk table='wp_etiquetas_equipo' column='id'/>
+  created_at: string
+
+### wp_tareas_historial (508 rows) - Historial de acciones y cambios realizados sobre tareas.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  tarea_id: integer -- Note:
+This is a Foreign Key to `wp_tareas.id`.<fk table='wp_tareas' column='id'/>
+  accion: string
+  campo_modificado: string
+  valor_anterior: string
+  valor_nuevo: string
+  autor_id: integer -- Note:
+This is a Foreign Key to `wp_team_humano.id`.<fk table='wp_team_humano' column='id'/>
+  metadata: jsonb
+  created_at: string
+
+### wp_tareas_items (62 rows) - Checklist o subtareas pertenecientes a una tarea.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  tarea_id: integer -- Note:
+This is a Foreign Key to `wp_tareas.id`.<fk table='wp_tareas' column='id'/>
+  texto: string
+  orden: integer
+  completado: boolean
+  completado_por: integer -- Note:
+This is a Foreign Key to `wp_team_humano.id`.<fk table='wp_team_humano' column='id'/>
+  completado_at: string
+  created_at: string
+  asignado_a: integer -- Note:
+This is a Foreign Key to `wp_team_humano.id`.<fk table='wp_team_humano' column='id'/>
+  etiqueta_id: integer -- Note:
+This is a Foreign Key to `wp_etiquetas_equipo.id`.<fk table='wp_etiquetas_equipo' column='id'/>
+
+### wp_tareas_media (0 rows) - Archivos multimedia adjuntos a tareas.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  tarea_id: integer -- Note:
+This is a Foreign Key to `wp_tareas.id`.<fk table='wp_tareas' column='id'/>
+  nombre_archivo: string
+  tipo_mime: string
+  tama±o_bytes: integer
+  storage_path: string
+  url_publica: string
+  descripcion: string
+  es_portada: boolean
+  subido_por: integer -- Note:
+This is a Foreign Key to `wp_team_humano.id`.<fk table='wp_team_humano' column='id'/>
+  created_at: string
+
+### wp_tareas_reacciones (0 rows) - Reacciones emoji sobre comentarios de tareas.
+  comentario_id: integer -- Note:
+This is a Primary Key.<pk/>
+This is a Foreign Key to `wp_tareas_comentarios.id`.<fk table='wp_tareas_comentarios' column='id'/>
+  usuario_id: integer -- Note:
+This is a Primary Key.<pk/>
+This is a Foreign Key to `wp_team_humano.id`.<fk table='wp_team_humano' column='id'/>
+  emoji: string -- Note:
+This is a Primary Key.<pk/>
+  created_at: string
+
+### wp_team_humano (101 rows) - Miembros humanos de una empresa con rol operativo, disponibilidad e integraciones.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  nombre: string
+  apellido: string
+  email: string
+  telefono: string
+  rol: string -- Rol dentro de la empresa (Ventas, Soporte, Administraci¾n, etc.)
+  especialidad: string -- ┴rea de especializaci¾n especÝfica
+  is_active: boolean
+  prioridad: string -- Nivel de prioridad para derivaciones (1-5, siendo 1 la mßs alta)
+  metadata: jsonb
+  created_at: string
+  updated_at: string
+  timezone: string
+  disponibilidad: jsonb -- Estructura JSON robusta para manejar horarios complejos: 
+{
+  "horarios_normales": {
+    "lunes": [{"inicio": "09:00", "fin": "12:00"}, {"inicio": "14:00", "fin": "17:00"}]
+  },
+  "horarios_especiales": [{"fecha": "2024-12-25", "horarios": []}],
+  "vacaciones": [{"inicio": "2024-07-01", "fin": "2024-07-15"}],
+  "buffer_entre_citas": 15,
+  "duracion_maxima_cita": 240,
+  "permite_fines_semana": false
+}
+  calendly: string
+  grupo_whatsapp: string
+  webinar: string
+  slack_id: string
+  ultima_asignacion: string
+  deleted: string
+  grant_id: string
+  id_contacto: integer -- Note:
+This is a Foreign Key to `wp_contactos.id`.<fk table='wp_contactos' column='id'/>
+  duracion_cita_minutos: integer
+  acepta_citas: boolean
+  notetaker: boolean
+  auth_uid: string
+  analisis_asesor: string
+  role_id: integer -- Note:
+This is a Foreign Key to `system_roles.id`.<fk table='system_roles' column='id'/>
+  enterprise_id: integer -- Campo para definir que empresa se le muestra al usuario
+
+Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  multimedia: string
+  temporal_nylas: string
+
+### wp_team_invitations (28 rows) - Invitaciones legacy o alternativas para incorporar miembros al equipo.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  token: string -- Token UUID ·nico para el link de invitaci¾n
+  email: string
+  rol: string
+  role_id: integer
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  invited_by: integer -- Note:
+This is a Foreign Key to `wp_team_humano.id`.<fk table='wp_team_humano' column='id'/>
+  status: string -- Estado: pending, accepted, expired, cancelled
+  created_at: string
+  expires_at: string -- Fecha de expiraci¾n (default: 7 dÝas)
+  accepted_at: string
+  team_member_id: integer -- Note:
+This is a Foreign Key to `wp_team_humano.id`.<fk table='wp_team_humano' column='id'/>
+  metadata: jsonb
+
+### wp_user_engagement (57333 rows) - Eventos granulares de uso de producto por usuario y empresa.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  user_id: string
+  team_humano_id: integer -- Note:
+This is a Foreign Key to `wp_team_humano.id`.<fk table='wp_team_humano' column='id'/>
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  event_type: string
+  event_name: string
+  module: string
+  sub_module: string
+  metadata: jsonb
+  session_id: string
+  device_type: string
+  user_agent: string
+  created_at: string
+
+### wp_user_engagement_daily (1442 rows) - Resumen diario de engagement de usuarios por empresa.
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  user_id: string
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  date: string
+  total_events: integer
+  total_page_views: integer
+  total_actions: integer
+  session_count: integer
+  total_duration_seconds: integer
+  modules_used: array
+  features_used: array
+  first_activity_at: string
+  last_activity_at: string
+  created_at: string
+  updated_at: string
+
+### wp_videos (229 rows) - 
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  nombre_video: string
+  fecha: string
+  link: string
+  analisis_video: string
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  cita_id: integer -- Note:
+This is a Foreign Key to `wp_citas.id`.<fk table='wp_citas' column='id'/>
+  nombre_asesor: string
+  asesor_id: integer -- Note:
+This is a Foreign Key to `wp_team_humano.id`.<fk table='wp_team_humano' column='id'/>
+  cita_externa_id: string
+  created_at: string
+  updated_at: string
+
+### wp_whatsapp_template_envios (0 rows) - 
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  numero_id: integer -- Note:
+This is a Foreign Key to `wp_numeros.id`.<fk table='wp_numeros' column='id'/>
+  template_id: integer -- Note:
+This is a Foreign Key to `wp_whatsapp_templates.id`.<fk table='wp_whatsapp_templates' column='id'/>
+  conversacion_id: integer -- Note:
+This is a Foreign Key to `wp_conversaciones.id`.<fk table='wp_conversaciones' column='id'/>
+  mensaje_id: integer -- Note:
+This is a Foreign Key to `wp_mensajes.id`.<fk table='wp_mensajes' column='id'/>
+  contacto_id: integer -- Note:
+This is a Foreign Key to `wp_contactos.id`.<fk table='wp_contactos' column='id'/>
+  enviado_por: integer -- Note:
+This is a Foreign Key to `wp_team_humano.id`.<fk table='wp_team_humano' column='id'/>
+  provider: string
+  provider_message_id: string
+  provider_template_id: string
+  template_name: string
+  language_code: string
+  category: string
+  telefono_destino: string
+  payload: jsonb
+  parametros_resueltos: jsonb
+  rendered_body: string
+  estado: string
+  error_code: string
+  error_message: string
+  sent_at: string
+  delivered_at: string
+  read_at: string
+  failed_at: string
+  metadata: jsonb
+  created_at: string
+  updated_at: string
+  meta_category: string
+  clasificacion_interna: string
+
+### wp_whatsapp_templates (0 rows) - 
+  id: integer -- Note:
+This is a Primary Key.<pk/>
+  empresa_id: integer -- Note:
+This is a Foreign Key to `wp_empresa_perfil.id`.<fk table='wp_empresa_perfil' column='id'/>
+  numero_id: integer -- Note:
+This is a Foreign Key to `wp_numeros.id`.<fk table='wp_numeros' column='id'/>
+  provider: string
+  provider_phone_id: string
+  provider_template_id: string
+  business_account_id: string
+  template_name: string
+  language_code: string
+  category: string
+  status: string
+  is_active: boolean
+  header_type: string
+  components: jsonb
+  variables_schema: jsonb
+  example_payload: jsonb
+  rejection_reason: string
+  quality_rating: string
+  last_synced_at: string
+  external_created_at: string
+  external_updated_at: string
+  metadata: jsonb
+  created_at: string
+  updated_at: string
+  meta_category: string
+  clasificacion_interna: string
+
+
+## VISTAS
+
+### vista_transcripciones_completas (27 cols)
+### vw_agent_changelog (11 cols)
+### vw_contact_pause_status (10 cols)
+### vw_facturacion_resumen (9 cols)
+### vw_facturas_contactos (43 cols)
+### vw_notificaciones_con_contacto (22 cols)
+### vw_proyectos_metricas (29 cols)
+### vw_tareas_completas (33 cols)
+### vw_training_courses_stats (16 cols)
+### vw_training_user_dashboard (10 cols)
