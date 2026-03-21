@@ -140,7 +140,7 @@ async def kapso_debug_config():
 
 @router.get("/debug/interactions")
 async def kapso_debug_interactions(limit: int = 50, phone: str | None = None):
-    return {"interactions": get_interactions(limit=limit, phone=phone)}
+    return {"interactions": await get_interactions(limit=limit, phone=phone)}
 
 
 @router.post("/inbound", response_model=KapsoInboundResponse)

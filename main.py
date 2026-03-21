@@ -1,5 +1,7 @@
 import logging
 import os
+from contextlib import asynccontextmanager
+
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,6 +10,7 @@ from app.api.kapso_routes import router as kapso_router
 from app.api.routes import router
 from app.api.db_routes import router as db_router
 from app.core.config import get_settings
+from app.core.pg_client import ensure_debug_table, close_pg_pool
 
 logging.basicConfig(
     level=logging.INFO,
@@ -18,12 +21,25 @@ logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    logger.info("Iniciando %s", settings.APP_NAME)
+    await ensure_debug_table()
+    yield
+    # Shutdown
+    await close_pg_pool()
+    logger.info("Servidor apagado limpiamente")
+
+
 app = FastAPI(
     title=settings.APP_NAME,
     description="Sistema multi-agente basado en LangGraph con soporte MCP para múltiples empresas",
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 app.add_middleware(

@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     DEFAULT_MODEL: str = "x-ai/grok-4.1-fast"
     SUPABASE_URL: str
     SUPABASE_SERVICE_KEY: str
+    DATABASE_URL: str | None = None  # Railway Postgres — inyectado automáticamente
     KAPSO_INTERNAL_TOKEN: str | None = None
     APP_NAME: str = "URPE AI Lab - Multi-Agent System"
     DEBUG: bool = False
