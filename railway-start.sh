@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-export PYTHON_SERVICE_PORT="${PYTHON_SERVICE_PORT:-8080}"
+export PYTHON_SERVICE_PORT="${PYTHON_SERVICE_PORT:-8000}"
 export DEBUG="${DEBUG:-false}"
 
 python main.py &

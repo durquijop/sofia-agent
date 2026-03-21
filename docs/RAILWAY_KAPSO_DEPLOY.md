@@ -5,7 +5,7 @@
 Desplegar el proyecto como un solo servicio de Railway con esta arquitectura:
 
 - **Proceso público**: `kapso-bridge/server.mjs`
-- **Proceso interno**: `FastAPI + LangGraph` en `127.0.0.1:8080`
+- **Proceso interno**: `FastAPI + LangGraph` en `127.0.0.1:8000`
 
 Kapso debe apuntar su webhook a la URL pública de Railway terminando en:
 
@@ -19,7 +19,7 @@ Kapso debe apuntar su webhook a la URL pública de Railway terminando en:
 Kapso Webhook
   -> Railway public URL
   -> Node Kapso Bridge
-  -> Internal FastAPI endpoint http://127.0.0.1:8080/api/v1/kapso/inbound
+  -> Internal FastAPI endpoint http://127.0.0.1:8000/api/v1/kapso/inbound
   -> LangGraph agent
   -> Node Kapso Bridge
   -> WhatsApp reply via Kapso SDK
@@ -55,8 +55,8 @@ DEBUG=false
 
 KAPSO_BASE_URL=https://api.kapso.ai/meta/whatsapp
 KAPSO_INTERNAL_TOKEN=kapso-internal-prod-urpe
-INTERNAL_AGENT_API_URL=http://127.0.0.1:8080/api/v1/kapso/inbound
-PYTHON_SERVICE_PORT=8080
+INTERNAL_AGENT_API_URL=http://127.0.0.1:8000/api/v1/kapso/inbound
+PYTHON_SERVICE_PORT=8000
 ```
 
 ## Archivos relevantes para Railway

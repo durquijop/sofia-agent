@@ -26,7 +26,7 @@ COPY main.py nixpacks.toml README.md ./
 
 RUN chmod +x railway-start.sh
 
-ENV PYTHON_SERVICE_PORT=8080 \
-    INTERNAL_AGENT_API_URL=http://127.0.0.1:8080/api/v1/kapso/inbound
+ENV PYTHON_SERVICE_PORT=8000 \
+    INTERNAL_AGENT_API_URL=http://127.0.0.1:8000/api/v1/kapso/inbound
 
 CMD ["bash", "railway-start.sh"]
