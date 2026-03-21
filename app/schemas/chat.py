@@ -15,6 +15,8 @@ class ChatRequest(BaseModel):
     conversation_id: Optional[str] = Field(default=None, description="ID de conversación para mantener contexto entre mensajes")
     max_tokens: Optional[int] = Field(default=1024, description="Máximo de tokens en la respuesta. Menor = más rápido. Default: 1024")
     temperature: Optional[float] = Field(default=0.7, description="Temperatura del modelo (0-2). Default: 0.7")
+    memory_session_id: Optional[str] = None
+    memory_window: Optional[int] = 8
 
 
 class ToolCall(BaseModel):

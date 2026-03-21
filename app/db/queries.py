@@ -161,6 +161,30 @@ async def insertar_mensaje(
     return await sb.insert("wp_mensajes", payload)
 
 
+async def get_agent_memory(session_id: str, limit: int = 16) -> list[dict]:
+    sb = await get_supabase()
+    data = await sb.query(
+        "agent_memory",
+        filters={"session_id": session_id},
+        order="id",
+        order_desc=True,
+        limit=limit,
+    ) or []
+    data.reverse()
+    return data
+
+
+async def insert_agent_memory(session_id: str, message: dict[str, Any]) -> dict:
+    sb = await get_supabase()
+    return await sb.insert(
+        "agent_memory",
+        {
+            "session_id": session_id,
+            "message": message,
+        },
+    )
+
+
 # ─── Citas ───────────────────────────────────────────────────────────────────
 
 async def get_citas_contacto(contacto_id: int, limit: int = 5) -> list[dict]:

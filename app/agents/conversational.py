@@ -15,6 +15,7 @@ from langgraph.prebuilt import ToolNode
 
 from app.core.cache import response_cache
 from app.core.config import get_settings
+from app.db import queries as db
 from app.mcp_client.client import MCPClient, mcp_tools_to_langchain
 from app.schemas.chat import ChatRequest, ChatResponse, TimingInfo, ToolCall
 
@@ -137,6 +138,62 @@ def _build_graph(llm_with_tools, tools: list) -> StateGraph:
     return graph
 
 
+def _memory_to_message(payload: dict | None):
+    if not isinstance(payload, dict):
+        return None
+    role = str(payload.get("role") or "").strip().lower()
+    content = payload.get("content")
+    if not content:
+        return None
+    if role in {"user", "human"}:
+        return HumanMessage(content=str(content))
+    if role in {"assistant", "ai"}:
+        return AIMessage(content=str(content))
+    if role == "system":
+        return SystemMessage(content=str(content))
+    return None
+
+
+async def _load_memory_messages(session_id: str, memory_window: int) -> list:
+    try:
+        rows = await db.get_agent_memory(session_id, limit=max(memory_window * 2, 2))
+    except Exception as exc:
+        logger.warning("No se pudo cargar agent_memory session_id=%s: %s", session_id, exc)
+        return []
+
+    messages: list = []
+    for row in rows:
+        message = _memory_to_message(row.get("message"))
+        if message is not None:
+            messages.append(message)
+    return messages
+
+
+async def _persist_memory_turn(session_id: str, user_message: str, assistant_message: str, conversation_id: str, model: str) -> None:
+    try:
+        await asyncio.gather(
+            db.insert_agent_memory(
+                session_id,
+                {
+                    "role": "user",
+                    "content": user_message,
+                    "conversation_id": conversation_id,
+                },
+            ),
+            db.insert_agent_memory(
+                session_id,
+                {
+                    "role": "assistant",
+                    "content": assistant_message,
+                    "conversation_id": conversation_id,
+                    "model": model,
+                },
+            ),
+        )
+    except Exception as exc:
+        logger.warning("No se pudo persistir agent_memory session_id=%s: %s", session_id, exc)
+
+
 async def run_agent(request: ChatRequest) -> ChatResponse:
     """Ejecuta el agente conversacional completo."""
     t_start = time.perf_counter()
@@ -145,11 +202,13 @@ async def run_agent(request: ChatRequest) -> ChatResponse:
     max_tokens = request.max_tokens or 1024
     temperature = request.temperature if request.temperature is not None else 0.7
     conversation_id = request.conversation_id or str(uuid.uuid4())
+    memory_session_id = request.memory_session_id.strip() if request.memory_session_id else None
+    memory_window = max(1, request.memory_window or 8)
 
     logger.info(f"run_agent: model={model}, max_tokens={max_tokens}")
 
     # Verificar cache (solo para requests sin MCP tools)
-    if not request.mcp_servers:
+    if not request.mcp_servers and not memory_session_id:
         cached = response_cache.get(request.system_prompt, request.message, model)
         if cached is not None:
             total_ms = (time.perf_counter() - t_start) * 1000
@@ -185,10 +244,11 @@ async def run_agent(request: ChatRequest) -> ChatResponse:
     graph_build_ms = (time.perf_counter() - t_graph) * 1000
 
     # Preparar mensajes iniciales
-    messages = [
-        SystemMessage(content=request.system_prompt),
-        HumanMessage(content=request.message),
-    ]
+    messages = [SystemMessage(content=request.system_prompt)]
+    if memory_session_id:
+        memory_messages = await _load_memory_messages(memory_session_id, memory_window)
+        messages.extend(memory_messages)
+    messages.append(HumanMessage(content=request.message))
 
     # Ejecutar el grafo
     initial_state: AgentState = {
@@ -205,7 +265,10 @@ async def run_agent(request: ChatRequest) -> ChatResponse:
     response_text = last_message.content if isinstance(last_message, AIMessage) else str(last_message.content)
 
     # Guardar en cache (solo sin MCP tools)
-    if not request.mcp_servers:
+    if memory_session_id:
+        await _persist_memory_turn(memory_session_id, request.message, response_text, conversation_id, model)
+
+    if not request.mcp_servers and not memory_session_id:
         response_cache.set(request.system_prompt, request.message, model, response_text)
 
     total_ms = (time.perf_counter() - t_start) * 1000

@@ -196,6 +196,24 @@ async def kapso_inbound(
         mcp_servers = _build_mcp_servers(agent)
         model = agent.get("llm") or None
         conversation_id = f"kapso:{request.kapso_conversation_id}"
+        contacto = None
+        memory_session_id = request.from_phone
+        if agent.get("empresa_id"):
+            contacto = await db.get_contacto_por_telefono(request.from_phone, int(agent["empresa_id"]))
+            if contacto and contacto.get("id") is not None:
+                memory_session_id = str(contacto["id"])
+
+        add_kapso_debug_event(
+            "fastapi",
+            "memory_session_resolved",
+            {
+                "memory_session_id": memory_session_id,
+                "memory_source": "contacto_id" if contacto and contacto.get("id") is not None else "from_phone",
+                "contacto_id": contacto.get("id") if contacto else None,
+                "from": request.from_phone,
+                "message_id": request.message_id,
+            },
+        )
 
         add_kapso_debug_event(
             "fastapi",
@@ -206,6 +224,7 @@ async def kapso_inbound(
                 "phone_number_id": request.phone_number_id,
                 "message_id": request.message_id,
                 "conversation_id": conversation_id,
+                "memory_session_id": memory_session_id,
                 "model": model,
                 "mcp_servers": len(mcp_servers),
             },
@@ -226,6 +245,8 @@ async def kapso_inbound(
                 model=model,
                 mcp_servers=mcp_servers,
                 conversation_id=conversation_id,
+                memory_session_id=memory_session_id,
+                memory_window=8,
             )
         )
 
