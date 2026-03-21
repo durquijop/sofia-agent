@@ -1,12 +1,20 @@
 import json
 import logging
 import os
+import uuid
 
 from fastapi import APIRouter, Header, HTTPException
 
 from app.agents.conversational import run_agent
 from app.core.config import get_settings
-from app.core.kapso_debug import add_kapso_debug_event, get_kapso_debug_events, mask_secret
+from app.core.kapso_debug import (
+    add_kapso_debug_event,
+    finish_interaction,
+    get_interactions,
+    get_kapso_debug_events,
+    mask_secret,
+    start_interaction,
+)
 from app.db import queries as db
 from app.schemas.chat import ChatRequest, MCPServerConfig
 from app.schemas.kapso import KapsoInboundRequest, KapsoInboundResponse, KapsoReactionPayload
@@ -130,12 +138,18 @@ async def kapso_debug_config():
     return _get_debug_config()
 
 
+@router.get("/debug/interactions")
+async def kapso_debug_interactions(limit: int = 50, phone: str | None = None):
+    return {"interactions": get_interactions(limit=limit, phone=phone)}
+
+
 @router.post("/inbound", response_model=KapsoInboundResponse)
 async def kapso_inbound(
     request: KapsoInboundRequest,
     x_kapso_internal_token: str | None = Header(default=None),
 ):
     settings = get_settings()
+    interaction_id = str(uuid.uuid4())
     add_kapso_debug_event(
         "fastapi",
         "inbound_received",
@@ -147,6 +161,15 @@ async def kapso_inbound(
             "message_type": request.message_type,
         },
     )
+    # Registrar inicio de interacción
+    start_interaction(interaction_id, {
+        "from_phone": request.from_phone,
+        "contact_name": request.contact_name,
+        "message_id": request.message_id,
+        "message_type": request.message_type,
+        "message_text": request.text,
+        "phone_number_id": request.phone_number_id,
+    })
     logger.info(
         "Kapso inbound recibido phone_number_id=%s from=%s conversation_id=%s message_id=%s type=%s",
         request.phone_number_id,
@@ -206,10 +229,19 @@ async def kapso_inbound(
         if not agent:
             raise HTTPException(status_code=404, detail="No se encontró el agente configurado para este canal")
 
+        # Actualizar interacción con datos del agente resuelto
+        model = agent.get("llm") or None
+        mcp_servers_list = _build_mcp_servers(agent)
+        finish_interaction(interaction_id, {
+            "agent_id": int(agente_id),
+            "agent_name": agent.get("nombre_agente") or str(agente_id),
+            "model_used": model or settings.DEFAULT_MODEL,
+            "mcp_servers": [s.url for s in mcp_servers_list],
+        })
+
         system_prompt = _build_system_prompt(agent, request)
         user_message = _build_user_message(request)
-        mcp_servers = _build_mcp_servers(agent)
-        model = agent.get("llm") or None
+        mcp_servers = mcp_servers_list
         conversation_id = f"kapso:{request.kapso_conversation_id}"
         contacto = None
         memory_session_id = request.from_phone
@@ -217,6 +249,9 @@ async def kapso_inbound(
             contacto = await db.get_contacto_por_telefono(request.from_phone, int(agent["empresa_id"]))
             if contacto and contacto.get("id") is not None:
                 memory_session_id = str(contacto["id"])
+
+        # Actualizar memory_session_id en la interacción
+        finish_interaction(interaction_id, {"memory_session_id": memory_session_id})
 
         add_kapso_debug_event(
             "fastapi",
@@ -298,6 +333,18 @@ async def kapso_inbound(
                 emoji=reaction_emoji,
             )
 
+        # Finalizar interacción con datos completos
+        finish_interaction(interaction_id, {
+            "status": "ok",
+            "timing": result.timing.model_dump(),
+            "tools_used": [t.model_dump() for t in result.tools_used],
+            "reaction_emoji": reaction_emoji,
+            "reply_type": "text",
+            "response_chars": len(result.response or ""),
+            "response_preview": (result.response or "")[:600],
+            "model_used": result.model_used,
+        })
+
         return KapsoInboundResponse(
             reply_type="text",
             reply_text=result.response,
@@ -317,6 +364,7 @@ async def kapso_inbound(
             "http_error",
             {"status_code": exc.status_code, "detail": str(exc.detail), "message_id": request.message_id},
         )
+        finish_interaction(interaction_id, {"status": "error", "error": f"HTTP {exc.status_code}: {exc.detail}"})
         raise
     except Exception as exc:
         add_kapso_debug_event(
@@ -324,5 +372,6 @@ async def kapso_inbound(
             "exception",
             {"error": str(exc), "message_id": request.message_id, "phone_number_id": request.phone_number_id},
         )
+        finish_interaction(interaction_id, {"status": "error", "error": str(exc)})
         logger.error("Kapso inbound error: %s", exc, exc_info=True)
         raise

@@ -97,80 +97,295 @@ function renderKapsoDebugHtml() {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Kapso Debug</title>
   <style>
-    body { font-family: Arial, sans-serif; background: #111827; color: #e5e7eb; margin: 0; padding: 16px; }
-    h1, h2 { margin: 0 0 12px; }
-    .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
-    .card { background: #1f2937; border: 1px solid #374151; border-radius: 10px; padding: 16px; }
-    pre { white-space: pre-wrap; word-break: break-word; background: #0b1220; border-radius: 8px; padding: 12px; overflow: auto; }
-    .muted { color: #9ca3af; font-size: 12px; }
-    .event { border-top: 1px solid #374151; padding: 10px 0; }
-    .event:first-child { border-top: 0; padding-top: 0; }
-    .stage { color: #93c5fd; font-weight: bold; }
-    .source { color: #86efac; }
-    .toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; }
-    button { background: #2563eb; color: white; border: 0; padding: 8px 12px; border-radius: 8px; cursor: pointer; }
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f172a;color:#e2e8f0;font-size:13px;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+    /* Header */
+    .hdr{background:#1e293b;border-bottom:1px solid #334155;padding:10px 18px;display:flex;align-items:center;gap:12px;flex-shrink:0;z-index:10}
+    .hdr h1{font-size:15px;font-weight:700;color:#f1f5f9;letter-spacing:-0.3px}
+    .hdr .pill{background:#1d4ed8;color:#bfdbfe;padding:2px 7px;border-radius:20px;font-size:10px;font-weight:600}
+    .hdr-r{margin-left:auto;display:flex;align-items:center;gap:8px}
+    .btn{background:#2563eb;color:#fff;border:none;padding:5px 13px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:500;transition:background .15s}
+    .btn:hover{background:#1d4ed8}
+    .btn-g{background:transparent;border:1px solid #475569;color:#94a3b8}
+    .btn-g:hover{background:#1e293b;color:#e2e8f0}
+    .muted{color:#64748b;font-size:11px}
+    /* Layout */
+    .layout{display:flex;flex:1;overflow:hidden}
+    .sidebar{width:260px;min-width:260px;background:#1e293b;border-right:1px solid #334155;overflow-y:auto;padding:14px;flex-shrink:0}
+    .main{flex:1;overflow-y:auto;padding:16px}
+    /* Sidebar */
+    .sb-title{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#64748b;margin-bottom:8px;margin-top:16px}
+    .sb-title:first-child{margin-top:0}
+    .cfg-row{margin-bottom:5px}
+    .cfg-k{color:#64748b;font-size:10px}
+    .cfg-v{color:#e2e8f0;font-size:11px;word-break:break-all}
+    /* Stats */
+    .stats{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:14px}
+    .stat{background:#0f172a;border-radius:8px;padding:10px 12px}
+    .stat-n{font-size:18px;font-weight:700;color:#f1f5f9}
+    .stat-l{font-size:10px;color:#64748b;margin-top:2px}
+    .s-ok .stat-n{color:#34d399}.s-err .stat-n{color:#f87171}.s-avg .stat-n{color:#60a5fa}
+    /* Table area */
+    .tbar{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+    .tbar h2{font-size:14px;font-weight:600;color:#f1f5f9}
+    .fi{margin-left:auto;background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:5px 10px;border-radius:6px;font-size:12px;width:170px}
+    .fi:focus{outline:none;border-color:#3b82f6}
+    .fi::placeholder{color:#475569}
+    table{width:100%;border-collapse:collapse}
+    thead th{text-align:left;padding:7px 10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#64748b;background:#1e293b;border-bottom:1px solid #334155;white-space:nowrap}
+    tbody tr{border-bottom:1px solid #172033;cursor:pointer;transition:background .1s}
+    tbody tr:hover{background:#1a2540}
+    tbody tr.sel{background:#1e3a5f}
+    td{padding:8px 10px;vertical-align:middle}
+    .nd{text-align:center;padding:52px;color:#475569;font-size:13px}
+    /* Badges */
+    .bok{color:#34d399;display:inline-flex;align-items:center;gap:4px;font-size:11px}
+    .berr{color:#f87171;display:inline-flex;align-items:center;gap:4px;font-size:11px}
+    .bprc{color:#fbbf24;display:inline-flex;align-items:center;gap:4px;font-size:11px}
+    .dot{width:6px;height:6px;border-radius:50%;background:currentColor;display:inline-block}
+    .bm{background:#1e3a5f;color:#60a5fa;padding:2px 5px;border-radius:4px;font-size:10px;white-space:nowrap;max-width:90px;overflow:hidden;text-overflow:ellipsis;display:inline-block;vertical-align:middle}
+    .bt{background:#2d1b69;color:#a78bfa;padding:2px 6px;border-radius:4px;font-size:10px}
+    .tp{font-family:monospace;font-size:11px;font-weight:700}
+    .tf{color:#34d399}.tm{color:#fbbf24}.ts{color:#f87171}
+    @keyframes sp{to{transform:rotate(360deg)}}
+    .sp{width:12px;height:12px;border:2px solid #334155;border-top-color:#fbbf24;border-radius:50%;animation:sp .7s linear infinite;display:inline-block}
+    /* Modal */
+    .ov{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:200;display:none;align-items:flex-start;justify-content:center;padding:20px;overflow-y:auto}
+    .ov.open{display:flex}
+    .modal{background:#1e293b;border-radius:12px;border:1px solid #334155;width:100%;max-width:840px;margin:auto;max-height:90vh;display:flex;flex-direction:column}
+    .mhdr{padding:14px 18px;border-bottom:1px solid #334155;display:flex;align-items:center;gap:10px;flex-shrink:0}
+    .mttl{font-size:14px;font-weight:700;color:#f1f5f9}
+    .mttl span{color:#64748b;font-size:12px;font-weight:400;margin-left:6px}
+    .mcls{margin-left:auto;background:none;border:none;color:#64748b;cursor:pointer;font-size:20px;line-height:1;padding:2px 6px}
+    .mcls:hover{color:#e2e8f0}
+    /* Tabs */
+    .tabs{display:flex;border-bottom:1px solid #334155;padding:0 18px;flex-shrink:0}
+    .tab{padding:9px 14px;font-size:12px;font-weight:500;color:#64748b;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;transition:color .1s}
+    .tab:hover{color:#e2e8f0}
+    .tab.a{color:#60a5fa;border-bottom-color:#3b82f6}
+    .tc{display:none;padding:18px;overflow-y:auto;flex:1}
+    .tc.a{display:block}
+    /* Detail cards */
+    .dg{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+    .dc{background:#0f172a;border-radius:8px;padding:13px}
+    .dct{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#64748b;margin-bottom:8px}
+    .dr{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:5px;gap:8px}
+    .dk{color:#64748b;font-size:11px;white-space:nowrap;flex-shrink:0}
+    .dv{color:#e2e8f0;font-size:11px;text-align:right;word-break:break-all}
+    .msgbox{background:#0f172a;border-radius:8px;padding:13px;margin-bottom:12px}
+    .msgl{font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:.1em;font-weight:700;margin-bottom:7px}
+    .msgt{color:#f1f5f9;font-size:13px;line-height:1.6;white-space:pre-wrap;word-break:break-word}
+    .resp{background:#0a1628;border-radius:8px;padding:13px;margin-top:12px;border-left:3px solid #3b82f6}
+    /* Timing */
+    .tbr{margin-bottom:10px}
+    .tbh{display:flex;justify-content:space-between;margin-bottom:4px}
+    .tbl{font-size:11px;color:#94a3b8}
+    .tbv{font-family:monospace;font-size:11px;color:#f1f5f9;font-weight:600}
+    .tbt{height:7px;background:#1e293b;border-radius:100px;overflow:hidden}
+    .tbf{height:100%;border-radius:100px;transition:width .4s}
+    .c1{background:#3b82f6}.c2{background:#8b5cf6}.c3{background:#06b6d4}.c4{background:#f59e0b}
+    /* Tools */
+    .tl{background:#0f172a;border-radius:8px;padding:13px;margin-bottom:10px;border-left:3px solid #7c3aed}
+    .tln{font-size:12px;font-weight:700;color:#a78bfa;margin-bottom:10px}
+    .tllbl{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#64748b;margin-bottom:4px}
+    pre.cd{background:#0a1628;border-radius:6px;padding:10px;font-size:11px;color:#94a3b8;overflow-x:auto;white-space:pre-wrap;word-break:break-word;margin-bottom:8px;max-height:180px;overflow-y:auto}
+    ::-webkit-scrollbar{width:5px;height:5px}
+    ::-webkit-scrollbar-thumb{background:#334155;border-radius:5px}
   </style>
 </head>
 <body>
-  <div class="toolbar">
-    <h1>Kapso Debug Dashboard</h1>
-    <button onclick="loadData()">Refrescar</button>
-    <span class="muted" id="status">cargando...</span>
+  <div class="hdr">
+    <h1>Kapso Debug</h1>
+    <span class="pill">LIVE</span>
+    <div class="hdr-r">
+      <span class="muted" id="upd">cargando...</span>
+      <button class="btn btn-g" id="ar-btn" onclick="toggleAR()">⏸ Pausar</button>
+      <button class="btn" onclick="loadAll()">↻ Refrescar</button>
+    </div>
   </div>
-  <div class="grid">
-    <section class="card">
-      <h2>Bridge config</h2>
-      <pre id="bridge-config"></pre>
-    </section>
-    <section class="card">
-      <h2>FastAPI config</h2>
-      <pre id="fastapi-config"></pre>
-    </section>
+  <div class="layout">
+    <div class="sidebar">
+      <div class="stats" id="stats">
+        <div class="stat"><div class="stat-n" id="st">0</div><div class="stat-l">Total</div></div>
+        <div class="stat s-ok"><div class="stat-n" id="sk">0</div><div class="stat-l">OK</div></div>
+        <div class="stat s-err"><div class="stat-n" id="se">0</div><div class="stat-l">Errores</div></div>
+        <div class="stat s-avg"><div class="stat-n" id="sa">—</div><div class="stat-l">Tiempo avg</div></div>
+      </div>
+      <div class="sb-title">Bridge Config</div>
+      <div id="bcfg"></div>
+      <div class="sb-title">FastAPI Config</div>
+      <div id="fcfg"></div>
+    </div>
+    <div class="main">
+      <div class="tbar">
+        <h2>Interacciones</h2>
+        <input class="fi" id="fi" placeholder="Filtrar por teléfono o nombre..." oninput="onFilter()">
+      </div>
+      <table>
+        <thead><tr>
+          <th>Hora</th><th>Contacto</th><th>Tipo</th><th>Mensaje</th>
+          <th>Agente</th><th>Modelo</th><th>Tiempo</th><th>Tools</th><th>Rx</th><th>Status</th>
+        </tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
   </div>
-  <div class="grid" style="margin-top: 16px;">
-    <section class="card">
-      <h2>Bridge events</h2>
-      <div id="bridge-events"></div>
-    </section>
-    <section class="card">
-      <h2>FastAPI events</h2>
-      <div id="fastapi-events"></div>
-    </section>
+  <!-- Detail modal -->
+  <div class="ov" id="ov" onclick="if(event.target===this)closeM()">
+    <div class="modal">
+      <div class="mhdr">
+        <div>
+          <div class="mttl" id="mttl">Interacción <span id="msub"></span></div>
+        </div>
+        <button class="mcls" onclick="closeM()">&#x2715;</button>
+      </div>
+      <div class="tabs">
+        <div class="tab a" data-t="ov" onclick="swTab('ov')">Overview</div>
+        <div class="tab" data-t="tm" onclick="swTab('tm')">Timing</div>
+        <div class="tab" data-t="tl" onclick="swTab('tl')">Herramientas</div>
+        <div class="tab" data-t="rp" onclick="swTab('rp')">Respuesta</div>
+      </div>
+      <div class="tc a" id="tc-ov"></div>
+      <div class="tc" id="tc-tm"></div>
+      <div class="tc" id="tc-tl"></div>
+      <div class="tc" id="tc-rp"></div>
+    </div>
   </div>
   <script>
-    function renderEvents(containerId, events) {
-      const container = document.getElementById(containerId);
-      if (!events || !events.length) {
-        container.innerHTML = '<div class="muted">Sin eventos</div>';
-        return;
-      }
-      container.innerHTML = events.map(event => 
-        '<div class="event">' +
-          '<div><span class="source">' + (event.source || '') + '</span> · <span class="stage">' + (event.stage || '') + '</span></div>' +
-          '<div class="muted">' + (event.timestamp || '') + '</div>' +
-          '<pre>' + JSON.stringify(event.payload || {}, null, 2) + '</pre>' +
-        '</div>'
-      ).join('');
+    let D={},sel=null,ar=true,arT=null,fq='';
+
+    const esc=s=>String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const trunc=(s,n=45)=>!s?'<span class="muted">—</span>':s.length>n?esc(s.slice(0,n))+'&hellip;':esc(s);
+    function rel(t){if(!t)return'—';const d=Date.now()-new Date(t);if(d<60e3)return Math.round(d/1e3)+'s';if(d<3600e3)return Math.round(d/60e3)+'m ago';return new Date(t).toLocaleTimeString();}
+    function fms(ms){if(!ms&&ms!==0)return'—';if(ms<1e3)return Math.round(ms)+'ms';return(ms/1e3).toFixed(1)+'s';}
+    function tcls(ms){if(!ms)return'';if(ms<1500)return'tf';if(ms<4e3)return'tm';return'ts';}
+    function sBadge(s){if(s==='ok')return'<span class="bok"><span class="dot"></span>OK</span>';if(s==='error')return'<span class="berr"><span class="dot"></span>Error</span>';return'<span class="bprc"><span class="sp"></span></span>';}
+    function mshort(m){if(!m)return'—';const p=m.split('/');return p[p.length-1];}
+
+    function filt(items){return fq?items.filter(i=>(i.from_phone||'').includes(fq)||(i.contact_name||'').toLowerCase().includes(fq.toLowerCase())):items;}
+
+    function renderCfg(id,obj){document.getElementById(id).innerHTML=Object.entries(obj||{}).map(([k,v])=>'<div class="cfg-row"><div class="cfg-k">'+esc(k)+'</div><div class="cfg-v">'+esc(v??'—')+'</div></div>').join('');}
+
+    function renderStats(items){
+      const ok=items.filter(i=>i.status==='ok').length;
+      const err=items.filter(i=>i.status==='error').length;
+      const dms=items.filter(i=>i.duration_ms).map(i=>i.duration_ms);
+      const avg=dms.length?dms.reduce((a,b)=>a+b,0)/dms.length:null;
+      document.getElementById('st').textContent=items.length;
+      document.getElementById('sk').textContent=ok;
+      document.getElementById('se').textContent=err;
+      document.getElementById('sa').textContent=fms(avg);
     }
 
-    async function loadData() {
-      const status = document.getElementById('status');
-      status.textContent = 'cargando...';
-      try {
-        const response = await fetch('/debug/kapso/data');
-        const data = await response.json();
-        document.getElementById('bridge-config').textContent = JSON.stringify(data.bridge_config || {}, null, 2);
-        document.getElementById('fastapi-config').textContent = JSON.stringify(data.fastapi_config || {}, null, 2);
-        renderEvents('bridge-events', data.bridge_events || []);
-        renderEvents('fastapi-events', data.fastapi_events || []);
-        status.textContent = 'actualizado ' + new Date().toLocaleTimeString();
-      } catch (error) {
-        status.textContent = 'error cargando datos';
-      }
+    function renderTable(items){
+      const rows=filt(items);
+      if(!rows.length){document.getElementById('tbody').innerHTML='<tr><td colspan="10" class="nd">'+(items.length?'Sin resultados para ese filtro.':'Sin interacciones aún. Envía un mensaje WhatsApp para ver actividad.')+'</td></tr>';return;}
+      document.getElementById('tbody').innerHTML=rows.map((it,i)=>`
+        <tr class="${sel&&sel.id===it.id?'sel':''}" onclick="openM(${i})">
+          <td class="muted">${rel(it.started_at)}</td>
+          <td><div style="font-weight:600;color:#f1f5f9">${esc(it.contact_name||'—')}</div><div class="muted">${esc(it.from_phone||'')}</div></td>
+          <td class="muted">${esc(it.message_type||'text')}</td>
+          <td style="max-width:180px">${trunc(it.message_text)}</td>
+          <td><div style="color:#e2e8f0">${esc(it.agent_name||'—')}</div><div class="muted">#${it.agent_id||'?'}</div></td>
+          <td><span class="bm" title="${esc(it.model_used||'')}">${esc(mshort(it.model_used))}</span></td>
+          <td><span class="tp ${tcls(it.duration_ms)}">${fms(it.duration_ms)}</span></td>
+          <td>${(it.tools_used||[]).length?'<span class="bt">'+((it.tools_used||[]).length)+' tool'+(it.tools_used.length>1?'s':'')+'</span>':'<span class="muted">—</span>'}</td>
+          <td style="font-size:14px">${it.reaction_emoji||'<span class="muted">—</span>'}</td>
+          <td>${sBadge(it.status)}</td>
+        </tr>`).join('');
     }
 
-    loadData();
-    setInterval(loadData, 3000);
+    function openM(idx){
+      const rows=filt(D.interactions||[]);
+      const it=rows[idx];if(!it)return;
+      sel=it;
+      const tm=it.timing||{};
+      const tools=it.tools_used||[];
+      const maxMs=tm.total_ms||1;
+      document.getElementById('mttl').innerHTML='Interacción <span id="msub">'+esc(it.contact_name||it.from_phone||'')+'</span>';
+      // Overview
+      document.getElementById('tc-ov').innerHTML=`
+        <div class="msgbox"><div class="msgl">💬 Mensaje recibido</div><div class="msgt">${esc(it.message_text)||'<em style="color:#64748b">Sin texto</em>'}</div></div>
+        <div class="dg">
+          <div class="dc"><div class="dct">Contacto</div>
+            <div class="dr"><span class="dk">Nombre</span><span class="dv">${esc(it.contact_name||'—')}</span></div>
+            <div class="dr"><span class="dk">Teléfono</span><span class="dv">${esc(it.from_phone||'—')}</span></div>
+            <div class="dr"><span class="dk">Tipo msg</span><span class="dv">${esc(it.message_type||'—')}</span></div>
+            <div class="dr"><span class="dk">Message ID</span><span class="dv" style="font-size:9px;font-family:monospace">${esc(it.message_id||'—')}</span></div>
+          </div>
+          <div class="dc"><div class="dct">Agente</div>
+            <div class="dr"><span class="dk">Nombre</span><span class="dv">${esc(it.agent_name||'—')}</span></div>
+            <div class="dr"><span class="dk">ID</span><span class="dv">#${it.agent_id||'—'}</span></div>
+            <div class="dr"><span class="dk">Modelo</span><span class="dv">${esc(it.model_used||'—')}</span></div>
+            <div class="dr"><span class="dk">MCP servers</span><span class="dv">${(it.mcp_servers||[]).length?it.mcp_servers.map(u=>u.split('/').pop()).join(', '):'—'}</span></div>
+            <div class="dr"><span class="dk">Memory session</span><span class="dv" style="font-size:9px">${esc(it.memory_session_id||'—')}</span></div>
+          </div>
+        </div>
+        <div class="dg">
+          <div class="dc"><div class="dct">Resultado</div>
+            <div class="dr"><span class="dk">Status</span><span class="dv">${sBadge(it.status)}</span></div>
+            <div class="dr"><span class="dk">Duración</span><span class="dv tp ${tcls(it.duration_ms)}">${fms(it.duration_ms)}</span></div>
+            <div class="dr"><span class="dk">Tipo respuesta</span><span class="dv">${esc(it.reply_type||'text')}</span></div>
+            <div class="dr"><span class="dk">Chars respuesta</span><span class="dv">${it.response_chars??'—'}</span></div>
+            <div class="dr"><span class="dk">Reacción emoji</span><span class="dv" style="font-size:16px">${it.reaction_emoji||'—'}</span></div>
+            ${it.error?'<div class="dr"><span class="dk">Error</span><span class="dv" style="color:#f87171">'+esc(it.error)+'</span></div>':''}
+          </div>
+          <div class="dc"><div class="dct">Timestamps</div>
+            <div class="dr"><span class="dk">Inicio</span><span class="dv">${it.started_at?new Date(it.started_at).toLocaleTimeString():'—'}</span></div>
+            <div class="dr"><span class="dk">Fin</span><span class="dv">${it.finished_at?new Date(it.finished_at).toLocaleTimeString():'—'}</span></div>
+            <div class="dr"><span class="dk">Fecha</span><span class="dv">${it.started_at?new Date(it.started_at).toLocaleDateString():'—'}</span></div>
+            <div class="dr"><span class="dk">Tools usadas</span><span class="dv">${tools.length}</span></div>
+          </div>
+        </div>`;
+      // Timing
+      const bars=[
+        {l:'Total',k:'total_ms',c:'c1'},{l:'LLM',k:'llm_ms',c:'c2'},
+        {l:'MCP Discovery',k:'mcp_discovery_ms',c:'c3'},{l:'Graph Build',k:'graph_build_ms',c:'c4'},
+      ];
+      document.getElementById('tc-tm').innerHTML='\
+        <div style="background:#0f172a;border-radius:8px;padding:16px">\
+        '+bars.map(b=>{const v=tm[b.k]||0;const p=maxMs>0?Math.min(100,(v/maxMs)*100):0;return`
+          <div class="tbr"><div class="tbh"><span class="tbl">${b.l}</span><span class="tbv">${fms(v)}</span></div>
+          <div class="tbt"><div class="tbf ${b.c}" style="width:${p.toFixed(1)}%"></div></div></div>`;}).join('')+'\
+        </div>';
+      // Tools
+      document.getElementById('tc-tl').innerHTML=tools.length
+        ?tools.map(t=>`<div class="tl"><div class="tln">⚙️ ${esc(t.tool_name)}</div>
+          <div class="tllbl">Input</div><pre class="cd">${esc(JSON.stringify(t.tool_input,null,2))}</pre>
+          <div class="tllbl">Output</div><pre class="cd">${esc(t.tool_output||'—')}</pre></div>`).join('')
+        :'<div class="nd">No se usaron herramientas externas en esta interacción.</div>';
+      // Response
+      document.getElementById('tc-rp').innerHTML=it.response_preview
+        ?`<div class="resp"><div class="msgl">Respuesta enviada <span class="muted">(${it.response_chars||0} chars)</span></div><div class="msgt">${esc(it.response_preview)}${(it.response_chars||0)>600?'\n\n<em style="color:#64748b">[...respuesta truncada a 600 chars]</em>':''}</div></div>`
+        :'<div class="nd">Sin preview de respuesta disponible.</div>';
+      document.getElementById('ov').classList.add('open');
+      swTab('ov');
+    }
+
+    function closeM(){document.getElementById('ov').classList.remove('open');sel=null;}
+    function swTab(n){document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('a',t.dataset.t===n));document.querySelectorAll('.tc').forEach(t=>t.classList.toggle('a',t.id==='tc-'+n));}
+    function onFilter(){fq=document.getElementById('fi').value.trim();renderTable(D.interactions||[]);}
+
+    async function loadAll(){
+      try{
+        const r=await fetch('/debug/kapso/data');
+        D=await r.json();
+        renderCfg('bcfg',D.bridge_config);
+        renderCfg('fcfg',D.fastapi_config);
+        renderStats(D.interactions||[]);
+        renderTable(D.interactions||[]);
+        document.getElementById('upd').textContent='actualizado '+new Date().toLocaleTimeString();
+      }catch(e){document.getElementById('upd').textContent='error al cargar';}
+    }
+
+    function toggleAR(){
+      ar=!ar;
+      document.getElementById('ar-btn').textContent=ar?'⏸ Pausar':'▶ Reanudar';
+      if(ar){arT=setInterval(loadAll,4000);}else{clearInterval(arT);}
+    }
+
+    loadAll();
+    arT=setInterval(loadAll,4000);
   </script>
 </body>
 </html>`;
@@ -574,9 +789,10 @@ app.get('/debug/kapso', (_req, res) => {
 
 app.get('/debug/kapso/data', async (_req, res) => {
   try {
-    const [fastapiEventsResult, fastapiConfigResult] = await Promise.allSettled([
+    const [fastapiEventsResult, fastapiConfigResult, interactionsResult] = await Promise.allSettled([
       fetchFastApiDebugJson('/api/v1/kapso/debug/events?limit=100'),
       fetchFastApiDebugJson('/api/v1/kapso/debug/config'),
+      fetchFastApiDebugJson('/api/v1/kapso/debug/interactions?limit=50'),
     ]);
 
     res.status(200).json({
@@ -589,6 +805,7 @@ app.get('/debug/kapso/data', async (_req, res) => {
         stage: 'fastapi_debug_error',
         payload: { error: String(fastapiEventsResult.reason) },
       }],
+      interactions: interactionsResult.status === 'fulfilled' ? (interactionsResult.value.interactions || []) : [],
     });
   } catch (error) {
     res.status(500).json({ error: String(error) });
