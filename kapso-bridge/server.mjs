@@ -429,9 +429,10 @@ async function dispatchKapsoResponse(reply) {
     phone_number_id: phoneNumberId,
     reply_type: replyType,
     message_id: reply.message_id,
+    has_reaction: !!(reply.reaction?.emoji),
   });
   console.log(
-    `[KapsoBridge] -> KapsoSend to=${recipientPhone} phone_number_id=${phoneNumberId} reply_type=${replyType}`,
+    `[KapsoBridge] -> KapsoSend to=${recipientPhone} phone_number_id=${phoneNumberId} reply_type=${replyType} reaction=${reply.reaction?.emoji || 'none'}`,
   );
 
   if (replyType === 'buttons' && Array.isArray(reply.buttons) && reply.buttons.length > 0) {
@@ -504,6 +505,32 @@ async function dispatchKapsoResponse(reply) {
       }),
       `sendDocument(${recipientPhone})`,
     );
+  }
+
+  // Texto: si también hay reacción, enviarla primero y luego el texto (dual-dispatch)
+  if (reply.reaction?.message_id && reply.reaction?.emoji) {
+    addBridgeDebugEvent('kapso_send_reaction_with_text', {
+      to: recipientPhone,
+      emoji: reply.reaction.emoji,
+      message_id: reply.reaction.message_id,
+    });
+    console.log(
+      `[KapsoBridge] -> KapsoReaction (dual) to=${recipientPhone} emoji=${reply.reaction.emoji}`,
+    );
+    try {
+      await withKapsoRetry(
+        () => client.messages.reactionSender.send({
+          phoneNumberId,
+          to: recipientPhone,
+          messageId: reply.reaction.message_id,
+          emoji: reply.reaction.emoji,
+        }),
+        `sendReaction(${recipientPhone})`,
+      );
+    } catch (reactionError) {
+      // No bloqueamos el envío del texto si la reacción falla
+      console.warn('[KapsoBridge] Reacción falló (no bloquea texto):', reactionError?.message || reactionError);
+    }
   }
 
   return sendKapsoText(recipientPhone, phoneNumberId, reply.reply_text || '');

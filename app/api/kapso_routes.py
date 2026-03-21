@@ -9,7 +9,7 @@ from app.core.config import get_settings
 from app.core.kapso_debug import add_kapso_debug_event, get_kapso_debug_events, mask_secret
 from app.db import queries as db
 from app.schemas.chat import ChatRequest, MCPServerConfig
-from app.schemas.kapso import KapsoInboundRequest, KapsoInboundResponse
+from app.schemas.kapso import KapsoInboundRequest, KapsoInboundResponse, KapsoReactionPayload
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +42,21 @@ def _build_system_prompt(agent: dict, inbound: KapsoInboundRequest) -> str:
     instrucciones_multimedia = agent.get("instrucciones_multimedia")
     if instrucciones_multimedia:
         sections.append(f"INSTRUCCIONES MULTIMEDIA:\n{instrucciones_multimedia}")
+
+    sections.append(
+        "CAPACIDAD DE REACCIÓN:\n"
+        "Tienes la herramienta 'send_reaction' para reaccionar al mensaje del usuario con un emoji en WhatsApp.\n"
+        "Eres libre de usárla cuando lo consideres conveniente.\n"
+        "Ejemplos de situaciones donde una reacción es apropiada:\n"
+        "- El usuario expresa afecto, amor o cariño (❤️, 🥰, 😘)\n"
+        "- El usuario agradece o elogia (🙏, 💙, 👍)\n"
+        "- El usuario comparte buenas noticias o un logro (🎉, 🙌, 🔥)\n"
+        "- El usuario hace un chiste o algo gracioso (😂, 😆)\n"
+        "- El usuario saluda calurosamente (👋, 😊)\n"
+        "No reacciones a mensajes neutros, preguntas técnicas o quejas.\n"
+        "Si reaccionas, úsala UNA sola vez por mensaje y elige el emoji más apropiado.\n"
+        "Puedes reaccionar Y responder con texto al mismo tiempo."
+    )
 
     sections.append(
         "CONTEXTO DEL CANAL:\n"
@@ -269,9 +284,24 @@ async def kapso_inbound(
             len(result.response or ""),
         )
 
+        # Extraer emoji de reacción si el agente lo usó
+        reaction_emoji: str | None = None
+        for tool_call in result.tools_used:
+            if tool_call.tool_name == "send_reaction" and tool_call.tool_input.get("emoji"):
+                reaction_emoji = tool_call.tool_input["emoji"]
+                break
+
+        reaction_payload = None
+        if reaction_emoji:
+            reaction_payload = KapsoReactionPayload(
+                message_id=request.message_id,
+                emoji=reaction_emoji,
+            )
+
         return KapsoInboundResponse(
             reply_type="text",
             reply_text=result.response,
+            reaction=reaction_payload,
             recipient_phone=request.from_phone,
             phone_number_id=request.phone_number_id,
             message_id=request.message_id,

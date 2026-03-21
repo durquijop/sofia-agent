@@ -8,6 +8,7 @@ import httpx
 from langchain_core.callbacks.base import Callbacks
 from langchain_core.caches import BaseCache
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
@@ -27,10 +28,21 @@ ChatOpenAI.model_rebuild(_types_namespace={"BaseCache": BaseCache, "Callbacks": 
 class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
     tools_used: list[ToolCall]
+    reaction_emoji: str | None
 
 
 _llm_cache: dict[str, ChatOpenAI] = {}
 _shared_http_client: httpx.AsyncClient | None = None
+
+
+@tool
+def send_reaction(emoji: str) -> str:
+    """Envía una reacción de emoji al mensaje del usuario en WhatsApp.
+    Úsala cuando sientas que el mensaje merece una reacción emocional
+    (ej: mensajes de amor, gratitud, buenas noticias, logros, humor).
+    Ejemplos de emojis: ❤️ 🙏 😂 🎉 👍 🔥 😍 💪
+    """
+    return f"reaction:{emoji}"
 
 
 def _get_http_client() -> httpx.AsyncClient:
@@ -108,6 +120,7 @@ def _build_graph(llm_with_tools, tools: list) -> StateGraph:
     async def tool_tracker_node(state: AgentState) -> dict:
         """Nodo que trackea las herramientas usadas después de ejecutarlas."""
         tools_used = list(state.get("tools_used", []))
+        reaction_emoji: str | None = state.get("reaction_emoji") or None
         for msg in state["messages"]:
             if isinstance(msg, ToolMessage):
                 ai_messages = [m for m in state["messages"] if isinstance(m, AIMessage) and m.tool_calls]
@@ -121,7 +134,10 @@ def _build_graph(llm_with_tools, tools: list) -> StateGraph:
                             )
                             if not any(t.tool_name == tool_call.tool_name and t.tool_input == tool_call.tool_input for t in tools_used):
                                 tools_used.append(tool_call)
-        return {"tools_used": tools_used}
+                            # Capturar el emoji de reacción si se usó send_reaction
+                            if tc["name"] == "send_reaction" and tc["args"].get("emoji"):
+                                reaction_emoji = tc["args"]["emoji"]
+        return {"tools_used": tools_used, "reaction_emoji": reaction_emoji}
 
     tool_node = ToolNode(tools)
 
@@ -136,6 +152,9 @@ def _build_graph(llm_with_tools, tools: list) -> StateGraph:
     graph.add_edge("tool_tracker", "agent")
 
     return graph
+
+
+SEND_REACTION_TOOL_NAME = "send_reaction"
 
 
 def _memory_to_message(payload: dict | None):
@@ -223,19 +242,16 @@ async def run_agent(request: ChatRequest) -> ChatResponse:
 
     # Cargar herramientas MCP (en paralelo)
     t_mcp = time.perf_counter()
-    tools = []
+    tools = [send_reaction]
     if request.mcp_servers:
         mcp_configs = [{"url": s.url, "name": s.name} for s in request.mcp_servers]
-        tools = await _load_mcp_tools(mcp_configs)
+        tools.extend(await _load_mcp_tools(mcp_configs))
         logger.info(f"Total herramientas cargadas: {len(tools)}")
     mcp_discovery_ms = (time.perf_counter() - t_mcp) * 1000
 
     # Crear LLM con parámetros del request
     llm = _create_llm(model, max_tokens, temperature)
-    if tools:
-        llm_with_tools = llm.bind_tools(tools)
-    else:
-        llm_with_tools = llm
+    llm_with_tools = llm.bind_tools(tools)
 
     # Construir y compilar el grafo
     t_graph = time.perf_counter()
@@ -254,6 +270,7 @@ async def run_agent(request: ChatRequest) -> ChatResponse:
     initial_state: AgentState = {
         "messages": messages,
         "tools_used": [],
+        "reaction_emoji": None,
     }
 
     t_llm = time.perf_counter()
