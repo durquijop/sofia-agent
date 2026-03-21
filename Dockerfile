@@ -1,19 +1,20 @@
 FROM node:22-bookworm-slim
 
 ENV PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    VIRTUAL_ENV=/opt/venv \
+    PATH="/opt/venv/bin:$PATH"
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends python3 python3-pip python3-venv bash ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
-    && ln -sf /usr/bin/python3 /usr/local/bin/python \
-    && ln -sf /usr/bin/pip3 /usr/local/bin/pip
+    && python3 -m venv "$VIRTUAL_ENV" \
+    && "$VIRTUAL_ENV/bin/pip" install --upgrade pip
 
 WORKDIR /app
 
 COPY requirements.txt package.json package-lock.json railway-start.sh ./
-RUN pip install --upgrade pip \
-    && pip install -r requirements.txt \
+RUN pip install -r requirements.txt \
     && npm ci
 
 COPY app ./app
