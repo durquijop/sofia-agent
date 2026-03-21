@@ -1,9 +1,8 @@
 """
-Kapso Debug — persistencia en Postgres de Railway (asyncpg).
+Kapso Debug — persistencia en Redis de Railway.
 
-- start_interaction / finish_interaction: fire-and-forget (no bloquean el flujo principal).
-- get_interactions: query async a Railway Postgres.
-- Los eventos en memoria (deque) se mantienen para el panel de eventos del bridge.
+- Guarda interacciones como JSON en un Hashes, y mantiene una Lista para el ordenamiento (ultimas 100).
+- start_interaction / finish_interaction: fire-and-forget
 """
 import asyncio
 import json
@@ -39,13 +38,11 @@ def get_kapso_debug_events(limit: int = 100) -> list[dict[str, Any]]:
         return list(_events)[:normalized_limit]
 
 
-# ─── Interacciones en Postgres ────────────────────────────────────────────────
+# ─── Interacciones en Redis ───────────────────────────────────────────────────
 
-def _dumps(value: Any) -> str | None:
-    """Serializa un valor a JSON string para Postgres JSONB."""
-    if value is None:
-        return None
-    return json.dumps(value)
+REDIS_HKEY_DATA = "kapso:debug:interactions:data"
+REDIS_LKEY_ORDER = "kapso:debug:interactions:list"
+MAX_STORED_INTERACTIONS = 100
 
 
 def _fire(coro) -> None:
@@ -61,84 +58,77 @@ def _fire(coro) -> None:
 
 
 async def _insert_interaction(interaction_id: str, data: dict[str, Any]) -> None:
-    from app.core.pg_client import get_pg_pool
-    pool = await get_pg_pool()
-    if pool is None:
+    from app.core.redis_client import get_redis
+    redis = await get_redis()
+    if not redis:
         return
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    entry = {
+        "id": interaction_id,
+        "started_at": now_iso,
+        "finished_at": None,
+        "duration_ms": None,
+        "status": "processing",
+        "error": None,
+        "from_phone": data.get("from_phone"),
+        "contact_name": data.get("contact_name"),
+        "message_id": data.get("message_id"),
+        "message_type": data.get("message_type"),
+        "message_text": data.get("message_text"),
+        "phone_number_id": data.get("phone_number_id"),
+        "agent_id": None,
+        "agent_name": None,
+        "model_used": None,
+        "mcp_servers": [],
+        "memory_session_id": None,
+        "timing": None,
+        "tools_used": [],
+        "reaction_emoji": None,
+        "reply_type": None,
+        "response_chars": None,
+        "response_preview": None,
+    }
+
     try:
-        async with pool.acquire() as conn:
-            await conn.execute(
-                """
-                INSERT INTO kapso_debug_interactions
-                  (id, from_phone, contact_name, message_id, message_type,
-                   message_text, phone_number_id, status, started_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, 'processing', NOW())
-                ON CONFLICT (id) DO NOTHING
-                """,
-                interaction_id,
-                data.get("from_phone"),
-                data.get("contact_name"),
-                data.get("message_id"),
-                data.get("message_type"),
-                data.get("message_text"),
-                data.get("phone_number_id"),
-            )
+        # Guardamos en el hash
+        await redis.hset(REDIS_HKEY_DATA, interaction_id, json.dumps(entry))
+        # Añadimos a la lista (al principio)
+        await redis.lpush(REDIS_LKEY_ORDER, interaction_id)
+        # Recortamos la lista a MAX_STORED_INTERACTIONS para no llenar la RAM
+        await redis.ltrim(REDIS_LKEY_ORDER, 0, MAX_STORED_INTERACTIONS - 1)
+        
+        # Opcional: limpiar las viejas del HASH para no dejar basura infinita
+        # Hacemos esto async: si la lista se truncó, habría IDs huerfanos, pero está bien por ahora.
     except Exception as exc:
         logger.warning("kapso_debug insert error: %s", exc)
 
 
 async def _update_interaction(interaction_id: str, finish_data: dict[str, Any]) -> None:
-    from app.core.pg_client import get_pg_pool
-    pool = await get_pg_pool()
-    if pool is None:
+    from app.core.redis_client import get_redis
+    redis = await get_redis()
+    if not redis:
         return
-
-    # Construir SET dinámico solo con campos que vienen en finish_data
-    field_map = {
-        "status": "status",
-        "error": "error",
-        "agent_id": "agent_id",
-        "agent_name": "agent_name",
-        "model_used": "model_used",
-        "memory_session_id": "memory_session_id",
-        "reaction_emoji": "reaction_emoji",
-        "reply_type": "reply_type",
-        "response_chars": "response_chars",
-        "response_preview": "response_preview",
-    }
-    json_fields = {"mcp_servers", "timing", "tools_used"}
-
-    sets = []
-    values: list[Any] = []
-    idx = 1
-
-    for key, col in field_map.items():
-        if key in finish_data:
-            sets.append(f"{col} = ${idx}")
-            values.append(finish_data[key])
-            idx += 1
-
-    for key in json_fields:
-        if key in finish_data:
-            sets.append(f"{key} = ${idx}::jsonb")
-            values.append(_dumps(finish_data[key]))
-            idx += 1
-
-    if "status" in finish_data and finish_data["status"] in ("ok", "error"):
-        sets.append(f"finished_at = NOW()")
-        sets.append(
-            f"duration_ms = EXTRACT(EPOCH FROM (NOW() - started_at)) * 1000"
-        )
-
-    if not sets:
-        return
-
-    values.append(interaction_id)
-    sql = f"UPDATE kapso_debug_interactions SET {', '.join(sets)} WHERE id = ${idx}"
 
     try:
-        async with pool.acquire() as conn:
-            await conn.execute(sql, *values)
+        # Buscar la interacción existente
+        existing_json = await redis.hget(REDIS_HKEY_DATA, interaction_id)
+        if not existing_json:
+            return  # No se encontró, no actualizamos
+        
+        entry = json.loads(existing_json)
+        entry.update(finish_data)
+
+        if "status" in finish_data and finish_data["status"] in ("ok", "error"):
+            now = datetime.now(timezone.utc)
+            entry["finished_at"] = now.isoformat()
+            try:
+                started = datetime.fromisoformat(entry["started_at"])
+                entry["duration_ms"] = round((now - started).total_seconds() * 1000, 1)
+            except Exception:
+                pass
+
+        await redis.hset(REDIS_HKEY_DATA, interaction_id, json.dumps(entry))
     except Exception as exc:
         logger.warning("kapso_debug update error: %s", exc)
 
@@ -154,34 +144,37 @@ def finish_interaction(interaction_id: str, finish_data: dict[str, Any]) -> None
 
 
 async def get_interactions(limit: int = 50, phone: str | None = None) -> list[dict[str, Any]]:
-    """Obtiene las últimas interacciones desde Postgres."""
-    from app.core.pg_client import get_pg_pool
-    pool = await get_pg_pool()
-    if pool is None:
+    """Obtiene las últimas interacciones desde Redis resolviendo la lista de IDs."""
+    from app.core.redis_client import get_redis
+    redis = await get_redis()
+    if not redis:
         return []
 
     normalized_limit = max(1, min(limit, 100))
     try:
-        async with pool.acquire() as conn:
-            if phone:
-                rows = await conn.fetch(
-                    """
-                    SELECT * FROM kapso_debug_interactions
-                    WHERE from_phone ILIKE $1 OR contact_name ILIKE $1
-                    ORDER BY started_at DESC LIMIT $2
-                    """,
-                    f"%{phone}%",
-                    normalized_limit,
-                )
-            else:
-                rows = await conn.fetch(
-                    """
-                    SELECT * FROM kapso_debug_interactions
-                    ORDER BY started_at DESC LIMIT $1
-                    """,
-                    normalized_limit,
-                )
-        return [dict(r) for r in rows]
+        # 1. Obtener la lista de los IDs más recientes
+        ids = await redis.lrange(REDIS_LKEY_ORDER, 0, MAX_STORED_INTERACTIONS - 1)
+        if not ids:
+            return []
+
+        # 2. Hacer Multi-Get (hmget) para traer el JSON de todos
+        jsons = await redis.hmget(REDIS_HKEY_DATA, ids)
+        
+        # 3. Parsear y filtrar
+        items = []
+        for j in jsons:
+            if j:
+                items.append(json.loads(j))
+
+        if phone:
+            phone_lower = phone.lower()
+            items = [
+                i for i in items
+                if phone_lower in (i.get("from_phone") or "").lower() 
+                or phone_lower in (i.get("contact_name") or "").lower()
+            ]
+
+        return items[:normalized_limit]
     except Exception as exc:
         logger.warning("kapso_debug get_interactions error: %s", exc)
         return []

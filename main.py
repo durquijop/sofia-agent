@@ -10,7 +10,7 @@ from app.api.kapso_routes import router as kapso_router
 from app.api.routes import router
 from app.api.db_routes import router as db_router
 from app.core.config import get_settings
-from app.core.pg_client import ensure_debug_table, close_pg_pool
+from app.core.redis_client import close_redis
 
 logging.basicConfig(
     level=logging.INFO,
@@ -26,10 +26,9 @@ settings = get_settings()
 async def lifespan(app: FastAPI):
     # Startup
     logger.info("Iniciando %s", settings.APP_NAME)
-    await ensure_debug_table()
     yield
     # Shutdown
-    await close_pg_pool()
+    await close_redis()
     logger.info("Servidor apagado limpiamente")
 
 
