@@ -5,6 +5,7 @@ import uuid
 from typing import Annotated, TypedDict
 
 import httpx
+from langchain_core.callbacks.base import Callbacks
 from langchain_core.caches import BaseCache
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_openai import ChatOpenAI
@@ -19,7 +20,7 @@ from app.schemas.chat import ChatRequest, ChatResponse, TimingInfo, ToolCall
 
 logger = logging.getLogger(__name__)
 
-ChatOpenAI.model_rebuild()
+ChatOpenAI.model_rebuild(_types_namespace={"BaseCache": BaseCache, "Callbacks": Callbacks})
 
 
 class AgentState(TypedDict):
