@@ -280,19 +280,20 @@ function renderKapsoDebugHtml() {
     function renderTable(items){
       const rows=filt(items);
       if(!rows.length){document.getElementById('tbody').innerHTML='<tr><td colspan="10" class="nd">'+(items.length?'Sin resultados para ese filtro.':'Sin interacciones aún. Envía un mensaje WhatsApp para ver actividad.')+'</td></tr>';return;}
-      document.getElementById('tbody').innerHTML=rows.map((it,i)=>`
-        <tr class="${sel&&sel.id===it.id?'sel':''}" onclick="openM(${i})">
-          <td class="muted">${rel(it.started_at)}</td>
-          <td><div style="font-weight:600;color:#f1f5f9">${esc(it.contact_name||'—')}</div><div class="muted">${esc(it.from_phone||'')}</div></td>
-          <td class="muted">${esc(it.message_type||'text')}</td>
-          <td style="max-width:180px">${trunc(it.message_text)}</td>
-          <td><div style="color:#e2e8f0">${esc(it.agent_name||'—')}</div><div class="muted">#${it.agent_id||'?'}</div></td>
-          <td><span class="bm" title="${esc(it.model_used||'')}">${esc(mshort(it.model_used))}</span></td>
-          <td><span class="tp ${tcls(it.duration_ms)}">${fms(it.duration_ms)}</span></td>
-          <td>${(it.tools_used||[]).length?'<span class="bt">'+((it.tools_used||[]).length)+' tool'+(it.tools_used.length>1?'s':'')+'</span>':'<span class="muted">—</span>'}</td>
-          <td style="font-size:14px">${it.reaction_emoji||'<span class="muted">—</span>'}</td>
-          <td>${sBadge(it.status)}</td>
-        </tr>`).join('');
+      document.getElementById('tbody').innerHTML=rows.map((it,i)=>
+        '<tr class="'+(sel&&sel.id===it.id?'sel':'')+'" onclick="openM('+i+')">'+
+          '<td class="muted">'+rel(it.started_at)+'</td>'+
+          '<td><div style="font-weight:600;color:#f1f5f9">'+esc(it.contact_name||'—')+'</div><div class="muted">'+esc(it.from_phone||'')+'</div></td>'+
+          '<td class="muted">'+esc(it.message_type||'text')+'</td>'+
+          '<td style="max-width:180px">'+trunc(it.message_text)+'</td>'+
+          '<td><div style="color:#e2e8f0">'+esc(it.agent_name||'—')+'</div><div class="muted">#'+(it.agent_id||'?')+'</div></td>'+
+          '<td><span class="bm" title="'+esc(it.model_used||'')+'">'+esc(mshort(it.model_used))+'</span></td>'+
+          '<td><span class="tp '+tcls(it.duration_ms)+'">'+fms(it.duration_ms)+'</span></td>'+
+          '<td>'+((it.tools_used||[]).length?'<span class="bt">'+((it.tools_used||[]).length)+' tool'+(it.tools_used.length>1?'s':'')+'</span>':'<span class="muted">—</span>')+'</td>'+
+          '<td style="font-size:14px">'+(it.reaction_emoji||'<span class="muted">—</span>')+'</td>'+
+          '<td>'+sBadge(it.status)+'</td>'+
+        '</tr>'
+      ).join('');
     }
 
     function openM(idx){
@@ -304,59 +305,65 @@ function renderKapsoDebugHtml() {
       const maxMs=tm.total_ms||1;
       document.getElementById('mttl').innerHTML='Interacción <span id="msub">'+esc(it.contact_name||it.from_phone||'')+'</span>';
       // Overview
-      document.getElementById('tc-ov').innerHTML=`
-        <div class="msgbox"><div class="msgl">💬 Mensaje recibido</div><div class="msgt">${esc(it.message_text)||'<em style="color:#64748b">Sin texto</em>'}</div></div>
-        <div class="dg">
-          <div class="dc"><div class="dct">Contacto</div>
-            <div class="dr"><span class="dk">Nombre</span><span class="dv">${esc(it.contact_name||'—')}</span></div>
-            <div class="dr"><span class="dk">Teléfono</span><span class="dv">${esc(it.from_phone||'—')}</span></div>
-            <div class="dr"><span class="dk">Tipo msg</span><span class="dv">${esc(it.message_type||'—')}</span></div>
-            <div class="dr"><span class="dk">Message ID</span><span class="dv" style="font-size:9px;font-family:monospace">${esc(it.message_id||'—')}</span></div>
-          </div>
-          <div class="dc"><div class="dct">Agente</div>
-            <div class="dr"><span class="dk">Nombre</span><span class="dv">${esc(it.agent_name||'—')}</span></div>
-            <div class="dr"><span class="dk">ID</span><span class="dv">#${it.agent_id||'—'}</span></div>
-            <div class="dr"><span class="dk">Modelo</span><span class="dv">${esc(it.model_used||'—')}</span></div>
-            <div class="dr"><span class="dk">MCP servers</span><span class="dv">${(it.mcp_servers||[]).length?it.mcp_servers.map(u=>u.split('/').pop()).join(', '):'—'}</span></div>
-            <div class="dr"><span class="dk">Memory session</span><span class="dv" style="font-size:9px">${esc(it.memory_session_id||'—')}</span></div>
-          </div>
-        </div>
-        <div class="dg">
-          <div class="dc"><div class="dct">Resultado</div>
-            <div class="dr"><span class="dk">Status</span><span class="dv">${sBadge(it.status)}</span></div>
-            <div class="dr"><span class="dk">Duración</span><span class="dv tp ${tcls(it.duration_ms)}">${fms(it.duration_ms)}</span></div>
-            <div class="dr"><span class="dk">Tipo respuesta</span><span class="dv">${esc(it.reply_type||'text')}</span></div>
-            <div class="dr"><span class="dk">Chars respuesta</span><span class="dv">${it.response_chars??'—'}</span></div>
-            <div class="dr"><span class="dk">Reacción emoji</span><span class="dv" style="font-size:16px">${it.reaction_emoji||'—'}</span></div>
-            ${it.error?'<div class="dr"><span class="dk">Error</span><span class="dv" style="color:#f87171">'+esc(it.error)+'</span></div>':''}
-          </div>
-          <div class="dc"><div class="dct">Timestamps</div>
-            <div class="dr"><span class="dk">Inicio</span><span class="dv">${it.started_at?new Date(it.started_at).toLocaleTimeString():'—'}</span></div>
-            <div class="dr"><span class="dk">Fin</span><span class="dv">${it.finished_at?new Date(it.finished_at).toLocaleTimeString():'—'}</span></div>
-            <div class="dr"><span class="dk">Fecha</span><span class="dv">${it.started_at?new Date(it.started_at).toLocaleDateString():'—'}</span></div>
-            <div class="dr"><span class="dk">Tools usadas</span><span class="dv">${tools.length}</span></div>
-          </div>
-        </div>`;
+      document.getElementById('tc-ov').innerHTML=
+        '<div class="msgbox"><div class="msgl">💬 Mensaje recibido</div><div class="msgt">'+(esc(it.message_text)||'<em style="color:#64748b">Sin texto</em>')+'</div></div>'+
+        '<div class="dg">'+
+          '<div class="dc"><div class="dct">Contacto</div>'+
+            '<div class="dr"><span class="dk">Nombre</span><span class="dv">'+esc(it.contact_name||'—')+'</span></div>'+
+            '<div class="dr"><span class="dk">Teléfono</span><span class="dv">'+esc(it.from_phone||'—')+'</span></div>'+
+            '<div class="dr"><span class="dk">Tipo msg</span><span class="dv">'+esc(it.message_type||'—')+'</span></div>'+
+            '<div class="dr"><span class="dk">Message ID</span><span class="dv" style="font-size:9px;font-family:monospace">'+esc(it.message_id||'—')+'</span></div>'+
+          '</div>'+
+          '<div class="dc"><div class="dct">Agente</div>'+
+            '<div class="dr"><span class="dk">Nombre</span><span class="dv">'+esc(it.agent_name||'—')+'</span></div>'+
+            '<div class="dr"><span class="dk">ID</span><span class="dv">#'+(it.agent_id||'—')+'</span></div>'+
+            '<div class="dr"><span class="dk">Modelo</span><span class="dv">'+esc(it.model_used||'—')+'</span></div>'+
+            '<div class="dr"><span class="dk">MCP servers</span><span class="dv">'+((it.mcp_servers||[]).length?it.mcp_servers.map(u=>u.split('/').pop()).join(', '):'—')+'</span></div>'+
+            '<div class="dr"><span class="dk">Memory session</span><span class="dv" style="font-size:9px">'+esc(it.memory_session_id||'—')+'</span></div>'+
+          '</div>'+
+        '</div>'+
+        '<div class="dg">'+
+          '<div class="dc"><div class="dct">Resultado</div>'+
+            '<div class="dr"><span class="dk">Status</span><span class="dv">'+sBadge(it.status)+'</span></div>'+
+            '<div class="dr"><span class="dk">Duración</span><span class="dv tp '+tcls(it.duration_ms)+'">'+fms(it.duration_ms)+'</span></div>'+
+            '<div class="dr"><span class="dk">Tipo respuesta</span><span class="dv">'+esc(it.reply_type||'text')+'</span></div>'+
+            '<div class="dr"><span class="dk">Chars respuesta</span><span class="dv">'+(it.response_chars??'—')+'</span></div>'+
+            '<div class="dr"><span class="dk">Reacción emoji</span><span class="dv" style="font-size:16px">'+(it.reaction_emoji||'—')+'</span></div>'+
+            (it.error?'<div class="dr"><span class="dk">Error</span><span class="dv" style="color:#f87171">'+esc(it.error)+'</span></div>':'')+
+          '</div>'+
+          '<div class="dc"><div class="dct">Timestamps</div>'+
+            '<div class="dr"><span class="dk">Inicio</span><span class="dv">'+(it.started_at?new Date(it.started_at).toLocaleTimeString():'—')+'</span></div>'+
+            '<div class="dr"><span class="dk">Fin</span><span class="dv">'+(it.finished_at?new Date(it.finished_at).toLocaleTimeString():'—')+'</span></div>'+
+            '<div class="dr"><span class="dk">Fecha</span><span class="dv">'+(it.started_at?new Date(it.started_at).toLocaleDateString():'—')+'</span></div>'+
+            '<div class="dr"><span class="dk">Tools usadas</span><span class="dv">'+tools.length+'</span></div>'+
+          '</div>'+
+        '</div>';
       // Timing
       const bars=[
         {l:'Total',k:'total_ms',c:'c1'},{l:'LLM',k:'llm_ms',c:'c2'},
         {l:'MCP Discovery',k:'mcp_discovery_ms',c:'c3'},{l:'Graph Build',k:'graph_build_ms',c:'c4'},
       ];
-      document.getElementById('tc-tm').innerHTML='\
-        <div style="background:#0f172a;border-radius:8px;padding:16px">\
-        '+bars.map(b=>{const v=tm[b.k]||0;const p=maxMs>0?Math.min(100,(v/maxMs)*100):0;return`
-          <div class="tbr"><div class="tbh"><span class="tbl">${b.l}</span><span class="tbv">${fms(v)}</span></div>
-          <div class="tbt"><div class="tbf ${b.c}" style="width:${p.toFixed(1)}%"></div></div></div>`;}).join('')+'\
-        </div>';
+      document.getElementById('tc-tm').innerHTML=
+        '<div style="background:#0f172a;border-radius:8px;padding:16px">'+
+        bars.map(b=>{const v=tm[b.k]||0;const p=maxMs>0?Math.min(100,(v/maxMs)*100):0;return(
+          '<div class="tbr"><div class="tbh"><span class="tbl">'+b.l+'</span><span class="tbv">'+fms(v)+'</span></div>'+
+          '<div class="tbt"><div class="tbf '+b.c+'" style="width:'+p.toFixed(1)+'%"></div></div></div>'
+        );}).join('')+
+        '</div>';
       // Tools
       document.getElementById('tc-tl').innerHTML=tools.length
-        ?tools.map(t=>`<div class="tl"><div class="tln">⚙️ ${esc(t.tool_name)}</div>
-          <div class="tllbl">Input</div><pre class="cd">${esc(JSON.stringify(t.tool_input,null,2))}</pre>
-          <div class="tllbl">Output</div><pre class="cd">${esc(t.tool_output||'—')}</pre></div>`).join('')
+        ?tools.map(t=>(
+          '<div class="tl"><div class="tln">⚙️ '+esc(t.tool_name)+'</div>'+
+          '<div class="tllbl">Input</div><pre class="cd">'+esc(JSON.stringify(t.tool_input,null,2))+'</pre>'+
+          '<div class="tllbl">Output</div><pre class="cd">'+esc(t.tool_output||'—')+'</pre></div>'
+        )).join('')
         :'<div class="nd">No se usaron herramientas externas en esta interacción.</div>';
       // Response
       document.getElementById('tc-rp').innerHTML=it.response_preview
-        ?`<div class="resp"><div class="msgl">Respuesta enviada <span class="muted">(${it.response_chars||0} chars)</span></div><div class="msgt">${esc(it.response_preview)}${(it.response_chars||0)>600?'\n\n<em style="color:#64748b">[...respuesta truncada a 600 chars]</em>':''}</div></div>`
+        ?('<div class="resp"><div class="msgl">Respuesta enviada <span class="muted">('+
+          (it.response_chars||0)+' chars)</span></div><div class="msgt">'+esc(it.response_preview)+
+          ((it.response_chars||0)>600?'\n\n<em style="color:#64748b">[...respuesta truncada a 600 chars]</em>':'')+
+          '</div></div>')
         :'<div class="nd">Sin preview de respuesta disponible.</div>';
       document.getElementById('ov').classList.add('open');
       swTab('ov');
