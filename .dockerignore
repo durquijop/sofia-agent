@@ -1,0 +1,11 @@
+.env
+.git
+__pycache__/
+*.pyc
+.venv/
+venv/
+.idea/
+.vscode/
+node_modules/
+artifacts/
+Bruno/
