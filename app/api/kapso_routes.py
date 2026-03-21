@@ -14,6 +14,7 @@ from app.schemas.kapso import KapsoInboundRequest, KapsoInboundResponse
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/kapso", tags=["kapso"])
+DEFAULT_KAPSO_FALLBACK_PHONE = "14705500109"
 DEFAULT_KAPSO_FALLBACK_AGENT_ID = 4
 
 
@@ -99,6 +100,7 @@ def _get_debug_config() -> dict:
         "internal_agent_api_url": os.getenv("INTERNAL_AGENT_API_URL", "http://127.0.0.1:8000/api/v1/kapso/inbound"),
         "kapso_internal_token": mask_secret(settings.KAPSO_INTERNAL_TOKEN),
         "supabase_url": mask_secret(settings.SUPABASE_URL),
+        "fallback_phone": DEFAULT_KAPSO_FALLBACK_PHONE,
         "fallback_agent_id": DEFAULT_KAPSO_FALLBACK_AGENT_ID,
     }
 
@@ -148,6 +150,27 @@ async def kapso_inbound(
     try:
         numero = await db.get_numero_por_id_kapso(request.phone_number_id)
         resolved_via_fallback = False
+        if not numero:
+            numero = await db.get_numero_por_telefono(DEFAULT_KAPSO_FALLBACK_PHONE)
+            if numero:
+                resolved_via_fallback = True
+                add_kapso_debug_event(
+                    "fastapi",
+                    "fallback_numero",
+                    {
+                        "fallback_phone": DEFAULT_KAPSO_FALLBACK_PHONE,
+                        "resolved_numero_id": numero.get("id"),
+                        "resolved_agente_id": numero.get("agente_id"),
+                        "phone_number_id": request.phone_number_id,
+                        "message_id": request.message_id,
+                    },
+                )
+                logger.warning(
+                    "Kapso inbound usando fallback telefono=%s para phone_number_id=%s",
+                    DEFAULT_KAPSO_FALLBACK_PHONE,
+                    request.phone_number_id,
+                )
+
         if numero and numero.get("agente_id"):
             agente_id = numero.get("agente_id")
         else:

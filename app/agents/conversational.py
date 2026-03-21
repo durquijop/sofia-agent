@@ -5,6 +5,7 @@ import uuid
 from typing import Annotated, TypedDict
 
 import httpx
+from langchain_core.caches import BaseCache
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph
@@ -17,6 +18,8 @@ from app.mcp_client.client import MCPClient, mcp_tools_to_langchain
 from app.schemas.chat import ChatRequest, ChatResponse, TimingInfo, ToolCall
 
 logger = logging.getLogger(__name__)
+
+ChatOpenAI.model_rebuild()
 
 
 class AgentState(TypedDict):
