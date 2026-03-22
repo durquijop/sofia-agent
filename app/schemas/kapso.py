@@ -1,6 +1,6 @@
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.schemas.chat import TimingInfo
+from app.schemas.chat import TimingInfo, ToolCall
 
 
 class KapsoButton(BaseModel):
@@ -67,3 +67,4 @@ class KapsoInboundResponse(BaseModel):
     agent_name: str = Field(..., description="Nombre del agente resuelto para este canal")
     model_used: str = Field(..., description="Modelo utilizado por el backend")
     timing: TimingInfo = Field(..., description="Métricas del procesamiento del agente")
+    tools_used: list[ToolCall] = Field(default_factory=list, description="Herramientas usadas por el backend")

@@ -77,6 +77,117 @@ function getBridgeDebugConfig() {
   };
 }
 
+function buildKapsoInteractions(bridgeEvents = [], fastapiEvents = []) {
+  const allEvents = [...bridgeEvents, ...fastapiEvents]
+    .filter(event => event && event.timestamp && event.stage)
+    .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+  const interactionMap = new Map();
+
+  for (const event of allEvents) {
+    const payload = event.payload || {};
+    const messageId = payload.message_id || payload.wa_id || payload.id;
+    if (!messageId) continue;
+
+    if (!interactionMap.has(messageId)) {
+      interactionMap.set(messageId, {
+        id: messageId,
+        message_id: messageId,
+        started_at: event.timestamp,
+        status: 'processing',
+        tools_used: [],
+        mcp_servers: [],
+      });
+    }
+
+    const interaction = interactionMap.get(messageId);
+
+    if (event.source === 'fastapi') {
+      if (event.stage === 'inbound_received') {
+        if (payload.from) interaction.from_phone = payload.from;
+        if (payload.contact_name) interaction.contact_name = payload.contact_name;
+        if (payload.message_type) interaction.message_type = payload.message_type;
+        if (payload.text) interaction.message_text = payload.text;
+        if (payload.phone_number_id) interaction.phone_number_id = payload.phone_number_id;
+      }
+
+      if (event.stage === 'run_agent_start') {
+        interaction.agent_id = payload.agent_id;
+        interaction.memory_session_id = payload.memory_session_id;
+        if (payload.model) interaction.model_used = payload.model;
+        if (payload.mcp_servers) interaction.mcp_servers = [`${payload.mcp_servers} servers`];
+      }
+
+      if (event.stage === 'run_agent_done') {
+        interaction.agent_id = payload.agent_id;
+        if (payload.agent_name) interaction.agent_name = payload.agent_name;
+        if (payload.model_used) interaction.model_used = payload.model_used;
+        if (payload.response_chars !== undefined) interaction.response_chars = payload.response_chars;
+        if (payload.response_preview) interaction.response_preview = payload.response_preview;
+        if (payload.reaction_emoji) interaction.reaction_emoji = payload.reaction_emoji;
+        if (Array.isArray(payload.tools_used)) interaction.tools_used = payload.tools_used;
+        if (payload.timing) interaction.timing = Object.assign(interaction.timing || {}, payload.timing);
+      }
+
+      if (event.stage === 'http_error' || event.stage === 'exception') {
+        interaction.status = 'error';
+        interaction.error = payload.error || payload.detail || 'Error en FastAPI';
+        interaction.finished_at = event.timestamp;
+      }
+    }
+
+    if (event.source === 'bridge') {
+      if (event.stage === 'message_processing_start') {
+        if (payload.from) interaction.from_phone = payload.from;
+        if (payload.contact_name) interaction.contact_name = payload.contact_name;
+        if (payload.message_type) interaction.message_type = payload.message_type;
+        if (payload.text) interaction.message_text = payload.text;
+        if (payload.phone_number_id) interaction.phone_number_id = payload.phone_number_id;
+      }
+
+      if (event.stage === 'call_fastapi_done') {
+        if (payload.reply_type) interaction.reply_type = payload.reply_type;
+        if (payload.agent_id) interaction.agent_id = payload.agent_id;
+        if (payload.agent_name) interaction.agent_name = payload.agent_name;
+        if (payload.model_used) interaction.model_used = payload.model_used;
+        if (payload.response_chars !== undefined) interaction.response_chars = payload.response_chars;
+        if (payload.response_preview) interaction.response_preview = payload.response_preview;
+        if (payload.reaction_emoji) interaction.reaction_emoji = payload.reaction_emoji;
+        if (Array.isArray(payload.tools_used)) interaction.tools_used = payload.tools_used;
+        if (payload.timing) interaction.timing = Object.assign(interaction.timing || {}, payload.timing);
+      }
+
+      if (event.stage === 'kapso_send_start') {
+        if (payload.to) interaction.from_phone = payload.to;
+        if (payload.reply_type) interaction.reply_type = payload.reply_type;
+        if (payload.has_reaction && !interaction.reaction_emoji) interaction.reaction_emoji = 'sent';
+      }
+
+      if (event.stage === 'kapso_send_reaction_with_text') {
+        if (payload.emoji) interaction.reaction_emoji = payload.emoji;
+      }
+
+      if (event.stage === 'message_processing_done') {
+        interaction.finished_at = event.timestamp;
+        interaction.status = (payload.error || payload.send_result?.error) ? 'error' : 'ok';
+        if (payload.send_result) interaction.send_result = payload.send_result;
+      }
+
+      if (event.stage === 'message_processing_error' || event.stage === 'kapso_presence_error') {
+        interaction.status = 'error';
+        interaction.error = payload.error || payload.detail || 'Error en bridge';
+        interaction.finished_at = event.timestamp;
+      }
+    }
+
+    if (interaction.started_at && interaction.finished_at) {
+      interaction.duration_ms = new Date(interaction.finished_at) - new Date(interaction.started_at);
+    }
+  }
+
+  return Array.from(interactionMap.values()).sort((a, b) => new Date(b.started_at) - new Date(a.started_at));
+}
+
 async function fetchFastApiDebugJson(pathname) {
   const targetUrl = new URL(pathname, INTERNAL_AGENT_API_URL).toString();
   const response = await fetch(targetUrl, {
@@ -377,85 +488,7 @@ function renderKapsoDebugHtml() {
       try{
         const r=await fetch('/debug/kapso/data');
         D=await r.json();
-
-        // Computar interacciones en el cliente usando los eventos crudos
-        const allEvents = [...(D.bridge_events||[]), ...(D.fastapi_events||[])]
-          .sort((a,b)=>new Date(a.timestamp)-new Date(b.timestamp));
-          
-        const imap = {};
-        allEvents.forEach(e => {
-          const p = e.payload || {};
-          const mid = p.message_id || p.wa_id || p.id;
-          if (!mid) return;
-          
-          if (!imap[mid]) {
-             imap[mid] = {
-               id: mid,
-               started_at: e.timestamp,
-               status: 'processing',
-               tools_used: [],
-               mcp_servers: []
-             };
-          }
-          const it = imap[mid];
-          
-          // Bridge
-          if (e.stage === 'message_processing_start' || e.stage === 'kapso_send_start') {
-             if (p.from) it.from_phone = p.from;
-             if (p.to) it.from_phone = p.to; // a veces envia a 'to'
-             if (p.phone_number_id) it.phone_number_id = p.phone_number_id;
-             if (p.type) it.message_type = p.type;
-             if (!it.started_at) it.started_at = e.timestamp;
-          }
-          
-          // FastAPI
-          if (e.source==='fastapi') {
-             if (e.stage === 'inbound_received') {
-               if (p.from) it.from_phone = p.from;
-               if (p.message_type) it.message_type = p.message_type;
-             }
-             if (e.stage === 'run_agent_start') {
-               if (p.model) it.model_used = p.model;
-               it.agent_id = p.agent_id;
-               it.memory_session_id = p.memory_session_id;
-               if (!it.mcp_servers.length && p.mcp_servers) it.mcp_servers.push(p.mcp_servers + " servers");
-             }
-             if (e.stage === 'run_agent_done') {
-               it.agent_id = p.agent_id;
-               it.model_used = p.model_used;
-               it.response_chars = p.response_chars;
-             }
-             if (p.timing) it.timing = Object.assign(it.timing||{}, p.timing);
-          }
-          
-          // Respuestas y finalización
-          if (e.stage === 'kapso_send_start' || e.stage === 'call_fastapi_done') {
-             if (p.reply_type) it.reply_type = p.reply_type;
-             if (p.has_reaction) it.has_reaction = p.has_reaction; 
-          }
-          if (e.stage === 'call_fastapi_done' && p.payload && p.payload.tools_used) {
-             it.tools_used = p.payload.tools_used;
-          }
-          if (e.stage === 'message_processing_done') {
-             it.finished_at = e.timestamp;
-             it.status = (p.error || p.send_result?.error) ? 'error' : 'ok';
-             if (p.send_result) {
-                 it.response_preview = JSON.stringify(p.send_result);
-             }
-          }
-          if (e.stage === 'message_processing_error' || e.stage.includes('error')) {
-             it.status = 'error';
-             it.error = p.error || p.detail || 'Error en proceso';
-             it.finished_at = e.timestamp;
-          }
-          
-          if (it.started_at && it.finished_at) {
-             it.duration_ms = new Date(it.finished_at) - new Date(it.started_at);
-          }
-        });
-        
-        // Reemplazar la data del servidor con la calculada localmente
-        D.interactions = Object.values(imap).sort((a,b)=>new Date(b.started_at)-new Date(a.started_at));
+        D.interactions = Array.isArray(D.interactions) ? D.interactions : [];
 
         renderCfg('bcfg',D.bridge_config);
         renderCfg('fcfg',D.fastapi_config);
@@ -702,9 +735,16 @@ async function callInternalAgent(sqlPayload) {
   const reply = await response.json();
   addBridgeDebugEvent('call_fastapi_done', {
     agent_id: reply.agent_id,
+    agent_name: reply.agent_name,
     conversation_id: reply.conversation_id,
     reply_type: reply.reply_type,
     message_id: sqlPayload.message_id,
+    model_used: reply.model_used,
+    response_chars: String(reply.reply_text || '').length,
+    response_preview: String(reply.reply_text || '').slice(0, 600),
+    timing: reply.timing || null,
+    tools_used: reply.tools_used || [],
+    reaction_emoji: reply.reaction?.emoji || null,
   });
   console.log(
     `[KapsoBridge] <- FastAPI agent_id=${reply.agent_id} conversation_id=${reply.conversation_id} reply_type=${reply.reply_type} chars=${String(reply.reply_text || '').length}`,
@@ -774,11 +814,13 @@ async function dispatchKapsoResponse(reply) {
 
   if (replyType === 'reaction' && reply.reaction?.message_id && reply.reaction?.emoji) {
     return withKapsoRetry(
-      () => client.messages.reactionSender.send({
+      () => client.messages.sendReaction({
         phoneNumberId,
         to: recipientPhone,
-        messageId: reply.reaction.message_id,
-        emoji: reply.reaction.emoji,
+        reaction: {
+          messageId: reply.reaction.message_id,
+          emoji: reply.reaction.emoji,
+        },
       }),
       `sendReaction(${recipientPhone})`,
     );
@@ -821,11 +863,13 @@ async function dispatchKapsoResponse(reply) {
     );
     try {
       await withKapsoRetry(
-        () => client.messages.reactionSender.send({
+        () => client.messages.sendReaction({
           phoneNumberId,
           to: recipientPhone,
-          messageId: reply.reaction.message_id,
-          emoji: reply.reaction.emoji,
+          reaction: {
+            messageId: reply.reaction.message_id,
+            emoji: reply.reaction.emoji,
+          },
         }),
         `sendReaction(${recipientPhone})`,
       );
@@ -876,23 +920,24 @@ app.get('/debug/kapso', (_req, res) => {
 
 app.get('/debug/kapso/data', async (_req, res) => {
   try {
-    const [fastapiEventsResult, fastapiConfigResult, interactionsResult] = await Promise.allSettled([
+    const [fastapiEventsResult, fastapiConfigResult] = await Promise.allSettled([
       fetchFastApiDebugJson('/api/v1/kapso/debug/events?limit=100'),
       fetchFastApiDebugJson('/api/v1/kapso/debug/config'),
-      fetchFastApiDebugJson('/api/v1/kapso/debug/interactions?limit=50'),
     ]);
+
+    const fastapiEvents = fastapiEventsResult.status === 'fulfilled' ? fastapiEventsResult.value.events : [{
+      timestamp: new Date().toISOString(),
+      source: 'bridge',
+      stage: 'fastapi_debug_error',
+      payload: { error: String(fastapiEventsResult.reason) },
+    }];
 
     res.status(200).json({
       bridge_config: getBridgeDebugConfig(),
       bridge_events: bridgeDebugEvents,
       fastapi_config: fastapiConfigResult.status === 'fulfilled' ? fastapiConfigResult.value : { error: String(fastapiConfigResult.reason) },
-      fastapi_events: fastapiEventsResult.status === 'fulfilled' ? fastapiEventsResult.value.events : [{
-        timestamp: new Date().toISOString(),
-        source: 'bridge',
-        stage: 'fastapi_debug_error',
-        payload: { error: String(fastapiEventsResult.reason) },
-      }],
-      interactions: interactionsResult.status === 'fulfilled' ? (interactionsResult.value.interactions || []) : [],
+      fastapi_events: fastapiEvents,
+      interactions: buildKapsoInteractions(bridgeDebugEvents, fastapiEvents),
     });
   } catch (error) {
     res.status(500).json({ error: String(error) });
@@ -952,8 +997,11 @@ app.post('/webhook/kapso', async (req, res) => {
         .then(async () => {
           addBridgeDebugEvent('message_processing_start', {
             from: sqlPayload.from,
+            contact_name: sqlPayload.contact_name,
             phone_number_id: sqlPayload.phone_number_id,
             message_id: sqlPayload.message_id,
+            message_type: sqlPayload.message_type,
+            text: sqlPayload.text,
           });
           console.log(
             `[KapsoBridge] procesando from=${sqlPayload.from} phone_number_id=${sqlPayload.phone_number_id} message_id=${sqlPayload.message_id}`,

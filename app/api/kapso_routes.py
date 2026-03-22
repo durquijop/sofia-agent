@@ -151,9 +151,11 @@ async def kapso_inbound(
         {
             "phone_number_id": request.phone_number_id,
             "from": request.from_phone,
+            "contact_name": request.contact_name,
             "conversation_id": request.kapso_conversation_id,
             "message_id": request.message_id,
             "message_type": request.message_type,
+            "text": request.text,
         },
     )
     logger.info(
@@ -276,15 +278,26 @@ async def kapso_inbound(
             )
         )
 
+        reaction_emoji: str | None = None
+        for tool_call in result.tools_used:
+            if tool_call.tool_name == "send_reaction" and tool_call.tool_input.get("emoji"):
+                reaction_emoji = tool_call.tool_input["emoji"]
+                break
+
         add_kapso_debug_event(
             "fastapi",
             "run_agent_done",
             {
                 "agent_id": int(agente_id),
+                "agent_name": agent.get("nombre_agente") or str(agente_id),
                 "conversation_id": result.conversation_id,
                 "model_used": result.model_used,
                 "response_chars": len(result.response or ""),
+                "response_preview": (result.response or "")[:600],
                 "message_id": request.message_id,
+                "timing": result.timing.model_dump(),
+                "tools_used": [tool.model_dump() for tool in result.tools_used],
+                "reaction_emoji": reaction_emoji,
             },
         )
         logger.info(
@@ -294,13 +307,6 @@ async def kapso_inbound(
             result.model_used,
             len(result.response or ""),
         )
-
-        # Extraer emoji de reacción si el agente lo usó
-        reaction_emoji: str | None = None
-        for tool_call in result.tools_used:
-            if tool_call.tool_name == "send_reaction" and tool_call.tool_input.get("emoji"):
-                reaction_emoji = tool_call.tool_input["emoji"]
-                break
 
         reaction_payload = None
         if reaction_emoji:
@@ -322,6 +328,7 @@ async def kapso_inbound(
             agent_name=agent.get("nombre_agente") or str(agente_id),
             model_used=result.model_used,
             timing=result.timing,
+            tools_used=result.tools_used,
         )
     except HTTPException as exc:
         add_kapso_debug_event(
