@@ -310,8 +310,8 @@ function renderKapsoDebugHtml() {
     <span class="pill">LIVE</span>
     <div class="hdr-r">
       <span class="muted" id="upd">cargando...</span>
-      <button class="btn btn-g" id="ar-btn" onclick="toggleAR()">⏸ Pausar</button>
-      <button class="btn" onclick="loadAll()">↻ Refrescar</button>
+      <button class="btn btn-g" id="ar-btn">⏸ Pausar</button>
+      <button class="btn" id="refresh-btn">↻ Refrescar</button>
     </div>
   </div>
   <div class="layout">
@@ -330,7 +330,7 @@ function renderKapsoDebugHtml() {
     <div class="main">
       <div class="tbar">
         <h2>Interacciones</h2>
-        <input class="fi" id="fi" placeholder="Filtrar por teléfono o nombre..." oninput="onFilter()">
+        <input class="fi" id="fi" placeholder="Filtrar por teléfono o nombre...">
       </div>
       <table>
         <thead><tr>
@@ -342,19 +342,19 @@ function renderKapsoDebugHtml() {
     </div>
   </div>
   <!-- Detail modal -->
-  <div class="ov" id="ov" onclick="if(event.target===this)closeM()">
+  <div class="ov" id="ov">
     <div class="modal">
       <div class="mhdr">
         <div>
           <div class="mttl" id="mttl">Interacción <span id="msub"></span></div>
         </div>
-        <button class="mcls" onclick="closeM()">&#x2715;</button>
+        <button class="mcls" id="close-btn">&#x2715;</button>
       </div>
       <div class="tabs">
-        <div class="tab a" data-t="ov" onclick="swTab('ov')">Overview</div>
-        <div class="tab" data-t="tm" onclick="swTab('tm')">Timing</div>
-        <div class="tab" data-t="tl" onclick="swTab('tl')">Herramientas</div>
-        <div class="tab" data-t="rp" onclick="swTab('rp')">Respuesta</div>
+        <div class="tab a" data-t="ov">Overview</div>
+        <div class="tab" data-t="tm">Timing</div>
+        <div class="tab" data-t="tl">Herramientas</div>
+        <div class="tab" data-t="rp">Respuesta</div>
       </div>
       <div class="tc a" id="tc-ov"></div>
       <div class="tc" id="tc-tm"></div>
@@ -362,153 +362,172 @@ function renderKapsoDebugHtml() {
       <div class="tc" id="tc-rp"></div>
     </div>
   </div>
-  <script>
-    let D={},sel=null,ar=true,arT=null,fq='';
-
-    const esc=s=>String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-    const trunc=(s,n=45)=>!s?'<span class="muted">—</span>':s.length>n?esc(s.slice(0,n))+'&hellip;':esc(s);
-    function rel(t){if(!t)return'—';const d=Date.now()-new Date(t);if(d<60e3)return Math.round(d/1e3)+'s';if(d<3600e3)return Math.round(d/60e3)+'m ago';return new Date(t).toLocaleTimeString();}
-    function fms(ms){if(!ms&&ms!==0)return'—';if(ms<1e3)return Math.round(ms)+'ms';return(ms/1e3).toFixed(1)+'s';}
-    function tcls(ms){if(!ms)return'';if(ms<1500)return'tf';if(ms<4e3)return'tm';return'ts';}
-    function sBadge(s){if(s==='ok')return'<span class="bok"><span class="dot"></span>OK</span>';if(s==='error')return'<span class="berr"><span class="dot"></span>Error</span>';return'<span class="bprc"><span class="sp"></span></span>';}
-    function mshort(m){if(!m)return'—';const p=m.split('/');return p[p.length-1];}
-
-    function filt(items){return fq?items.filter(i=>(i.from_phone||'').includes(fq)||(i.contact_name||'').toLowerCase().includes(fq.toLowerCase())):items;}
-
-    function renderCfg(id,obj){document.getElementById(id).innerHTML=Object.entries(obj||{}).map(([k,v])=>'<div class="cfg-row"><div class="cfg-k">'+esc(k)+'</div><div class="cfg-v">'+esc(v??'—')+'</div></div>').join('');}
-
-    function renderStats(items){
-      const ok=items.filter(i=>i.status==='ok').length;
-      const err=items.filter(i=>i.status==='error').length;
-      const dms=items.filter(i=>i.duration_ms).map(i=>i.duration_ms);
-      const avg=dms.length?dms.reduce((a,b)=>a+b,0)/dms.length:null;
-      document.getElementById('st').textContent=items.length;
-      document.getElementById('sk').textContent=ok;
-      document.getElementById('se').textContent=err;
-      document.getElementById('sa').textContent=fms(avg);
-    }
-
-    function renderTable(items){
-      const rows=filt(items);
-      if(!rows.length){document.getElementById('tbody').innerHTML='<tr><td colspan="10" class="nd">'+(items.length?'Sin resultados para ese filtro.':'Sin interacciones aún. Envía un mensaje WhatsApp para ver actividad.')+'</td></tr>';return;}
-      document.getElementById('tbody').innerHTML=rows.map((it,i)=>
-        '<tr class="'+(sel&&sel.id===it.id?'sel':'')+'" onclick="openM('+i+')">'+
-          '<td class="muted">'+rel(it.started_at)+'</td>'+
-          '<td><div style="font-weight:600;color:#f1f5f9">'+esc(it.contact_name||'—')+'</div><div class="muted">'+esc(it.from_phone||'')+'</div></td>'+
-          '<td class="muted">'+esc(it.message_type||'text')+'</td>'+
-          '<td style="max-width:180px">'+trunc(it.message_text)+'</td>'+
-          '<td><div style="color:#e2e8f0">'+esc(it.agent_name||'—')+'</div><div class="muted">#'+(it.agent_id||'?')+'</div></td>'+
-          '<td><span class="bm" title="'+esc(it.model_used||'')+'">'+esc(mshort(it.model_used))+'</span></td>'+
-          '<td><span class="tp '+tcls(it.duration_ms)+'">'+fms(it.duration_ms)+'</span></td>'+
-          '<td>'+((it.tools_used||[]).length?'<span class="bt">'+((it.tools_used||[]).length)+' tool'+(it.tools_used.length>1?'s':'')+'</span>':'<span class="muted">—</span>')+'</td>'+
-          '<td style="font-size:14px">'+(it.reaction_emoji||'<span class="muted">—</span>')+'</td>'+
-          '<td>'+sBadge(it.status)+'</td>'+
-        '</tr>'
-      ).join('');
-    }
-
-    function openM(idx){
-      const rows=filt(D.interactions||[]);
-      const it=rows[idx];if(!it)return;
-      sel=it;
-      const tm=it.timing||{};
-      const tools=it.tools_used||[];
-      const maxMs=tm.total_ms||1;
-      document.getElementById('mttl').innerHTML='Interacción <span id="msub">'+esc(it.contact_name||it.from_phone||'')+'</span>';
-      // Overview
-      document.getElementById('tc-ov').innerHTML=
-        '<div class="msgbox"><div class="msgl">💬 Mensaje recibido</div><div class="msgt">'+(esc(it.message_text)||'<em style="color:#64748b">Sin texto</em>')+'</div></div>'+
-        '<div class="dg">'+
-          '<div class="dc"><div class="dct">Contacto</div>'+
-            '<div class="dr"><span class="dk">Nombre</span><span class="dv">'+esc(it.contact_name||'—')+'</span></div>'+
-            '<div class="dr"><span class="dk">Teléfono</span><span class="dv">'+esc(it.from_phone||'—')+'</span></div>'+
-            '<div class="dr"><span class="dk">Tipo msg</span><span class="dv">'+esc(it.message_type||'—')+'</span></div>'+
-            '<div class="dr"><span class="dk">Message ID</span><span class="dv" style="font-size:9px;font-family:monospace">'+esc(it.message_id||'—')+'</span></div>'+
-          '</div>'+
-          '<div class="dc"><div class="dct">Agente</div>'+
-            '<div class="dr"><span class="dk">Nombre</span><span class="dv">'+esc(it.agent_name||'—')+'</span></div>'+
-            '<div class="dr"><span class="dk">ID</span><span class="dv">#'+(it.agent_id||'—')+'</span></div>'+
-            '<div class="dr"><span class="dk">Modelo</span><span class="dv">'+esc(it.model_used||'—')+'</span></div>'+
-            '<div class="dr"><span class="dk">MCP servers</span><span class="dv">'+((it.mcp_servers||[]).length?it.mcp_servers.map(u=>u.split('/').pop()).join(', '):'—')+'</span></div>'+
-            '<div class="dr"><span class="dk">Memory session</span><span class="dv" style="font-size:9px">'+esc(it.memory_session_id||'—')+'</span></div>'+
-          '</div>'+
-        '</div>'+
-        '<div class="dg">'+
-          '<div class="dc"><div class="dct">Resultado</div>'+
-            '<div class="dr"><span class="dk">Status</span><span class="dv">'+sBadge(it.status)+'</span></div>'+
-            '<div class="dr"><span class="dk">Duración</span><span class="dv tp '+tcls(it.duration_ms)+'">'+fms(it.duration_ms)+'</span></div>'+
-            '<div class="dr"><span class="dk">Tipo respuesta</span><span class="dv">'+esc(it.reply_type||'text')+'</span></div>'+
-            '<div class="dr"><span class="dk">Chars respuesta</span><span class="dv">'+(it.response_chars??'—')+'</span></div>'+
-            '<div class="dr"><span class="dk">Reacción emoji</span><span class="dv" style="font-size:16px">'+(it.reaction_emoji||'—')+'</span></div>'+
-            (it.error?'<div class="dr"><span class="dk">Error</span><span class="dv" style="color:#f87171">'+esc(it.error)+'</span></div>':'')+
-          '</div>'+
-          '<div class="dc"><div class="dct">Timestamps</div>'+
-            '<div class="dr"><span class="dk">Inicio</span><span class="dv">'+(it.started_at?new Date(it.started_at).toLocaleTimeString():'—')+'</span></div>'+
-            '<div class="dr"><span class="dk">Fin</span><span class="dv">'+(it.finished_at?new Date(it.finished_at).toLocaleTimeString():'—')+'</span></div>'+
-            '<div class="dr"><span class="dk">Fecha</span><span class="dv">'+(it.started_at?new Date(it.started_at).toLocaleDateString():'—')+'</span></div>'+
-            '<div class="dr"><span class="dk">Tools usadas</span><span class="dv">'+tools.length+'</span></div>'+
-          '</div>'+
-        '</div>';
-      // Timing
-      const bars=[
-        {l:'Total',k:'total_ms',c:'c1'},{l:'LLM',k:'llm_ms',c:'c2'},
-        {l:'MCP Discovery',k:'mcp_discovery_ms',c:'c3'},{l:'Graph Build',k:'graph_build_ms',c:'c4'},
-      ];
-      document.getElementById('tc-tm').innerHTML=
-        '<div style="background:#0f172a;border-radius:8px;padding:16px">'+
-        bars.map(b=>{const v=tm[b.k]||0;const p=maxMs>0?Math.min(100,(v/maxMs)*100):0;return(
-          '<div class="tbr"><div class="tbh"><span class="tbl">'+b.l+'</span><span class="tbv">'+fms(v)+'</span></div>'+
-          '<div class="tbt"><div class="tbf '+b.c+'" style="width:'+p.toFixed(1)+'%"></div></div></div>'
-        );}).join('')+
-        '</div>';
-      // Tools
-      document.getElementById('tc-tl').innerHTML=tools.length
-        ?tools.map(t=>(
-          '<div class="tl"><div class="tln">⚙️ '+esc(t.tool_name)+'</div>'+
-          '<div class="tllbl">Input</div><pre class="cd">'+esc(JSON.stringify(t.tool_input,null,2))+'</pre>'+
-          '<div class="tllbl">Output</div><pre class="cd">'+esc(t.tool_output||'—')+'</pre></div>'
-        )).join('')
-        :'<div class="nd">No se usaron herramientas externas en esta interacción.</div>';
-      // Response
-      document.getElementById('tc-rp').innerHTML=it.response_preview
-        ?('<div class="resp"><div class="msgl">Respuesta enviada <span class="muted">('+
-          (it.response_chars||0)+' chars)</span></div><div class="msgt">'+esc(it.response_preview)+
-          ((it.response_chars||0)>600?'\n\n<em style="color:#64748b">[...respuesta truncada a 600 chars]</em>':'')+
-          '</div></div>')
-        :'<div class="nd">Sin preview de respuesta disponible.</div>';
-      document.getElementById('ov').classList.add('open');
-      swTab('ov');
-    }
-
-    function closeM(){document.getElementById('ov').classList.remove('open');sel=null;}
-    function swTab(n){document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('a',t.dataset.t===n));document.querySelectorAll('.tc').forEach(t=>t.classList.toggle('a',t.id==='tc-'+n));}
-    function onFilter(){fq=document.getElementById('fi').value.trim();renderTable(D.interactions||[]);}
-
-    async function loadAll(){
-      try{
-        const r=await fetch('/debug/kapso/data');
-        D=await r.json();
-        D.interactions = Array.isArray(D.interactions) ? D.interactions : [];
-
-        renderCfg('bcfg',D.bridge_config);
-        renderCfg('fcfg',D.fastapi_config);
-        renderStats(D.interactions);
-        renderTable(D.interactions);
-        document.getElementById('upd').textContent='actualizado '+new Date().toLocaleTimeString();
-      }catch(e){document.getElementById('upd').textContent='error al cargar';}
-    }
-
-    function toggleAR(){
-      ar=!ar;
-      document.getElementById('ar-btn').textContent=ar?'⏸ Pausar':'▶ Reanudar';
-      if(ar){arT=setInterval(loadAll,4000);}else{clearInterval(arT);}
-    }
-
-    loadAll();
-    arT=setInterval(loadAll,4000);
-  </script>
+  <script src="/debug/kapso/app.js"></script>
 </body>
 </html>`;
+}
+
+function renderKapsoDebugScript() {
+  return `let D={},sel=null,ar=true,arT=null,fq='';
+
+const esc=s=>String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const trunc=(s,n=45)=>!s?'<span class="muted">—</span>':s.length>n?esc(s.slice(0,n))+'&hellip;':esc(s);
+function rel(t){if(!t)return'—';const d=Date.now()-new Date(t);if(d<60e3)return Math.round(d/1e3)+'s';if(d<3600e3)return Math.round(d/60e3)+'m ago';return new Date(t).toLocaleTimeString();}
+function fms(ms){if(!ms&&ms!==0)return'—';if(ms<1e3)return Math.round(ms)+'ms';return(ms/1e3).toFixed(1)+'s';}
+function tcls(ms){if(!ms)return'';if(ms<1500)return'tf';if(ms<4e3)return'tm';return'ts';}
+function sBadge(s){if(s==='ok')return'<span class="bok"><span class="dot"></span>OK</span>';if(s==='error')return'<span class="berr"><span class="dot"></span>Error</span>';return'<span class="bprc"><span class="sp"></span></span>';}
+function mshort(m){if(!m)return'—';const p=m.split('/');return p[p.length-1];}
+
+function filt(items){return fq?items.filter(i=>(i.from_phone||'').includes(fq)||(i.contact_name||'').toLowerCase().includes(fq.toLowerCase())):items;}
+
+function renderCfg(id,obj){document.getElementById(id).innerHTML=Object.entries(obj||{}).map(([k,v])=>'<div class="cfg-row"><div class="cfg-k">'+esc(k)+'</div><div class="cfg-v">'+esc(v??'—')+'</div></div>').join('');}
+
+function renderStats(items){
+  const ok=items.filter(i=>i.status==='ok').length;
+  const err=items.filter(i=>i.status==='error').length;
+  const dms=items.filter(i=>i.duration_ms).map(i=>i.duration_ms);
+  const avg=dms.length?dms.reduce((a,b)=>a+b,0)/dms.length:null;
+  document.getElementById('st').textContent=items.length;
+  document.getElementById('sk').textContent=ok;
+  document.getElementById('se').textContent=err;
+  document.getElementById('sa').textContent=fms(avg);
+}
+
+function renderTable(items){
+  const rows=filt(items);
+  const tbody=document.getElementById('tbody');
+  if(!rows.length){tbody.innerHTML='<tr><td colspan="10" class="nd">'+(items.length?'Sin resultados para ese filtro.':'Sin interacciones aún. Envía un mensaje WhatsApp para ver actividad.')+'</td></tr>';return;}
+  tbody.innerHTML=rows.map((it,i)=>
+    '<tr class="'+(sel&&sel.id===it.id?'sel':'')+'" data-row-idx="'+i+'">'+
+      '<td class="muted">'+rel(it.started_at)+'</td>'+
+      '<td><div style="font-weight:600;color:#f1f5f9">'+esc(it.contact_name||'—')+'</div><div class="muted">'+esc(it.from_phone||'')+'</div></td>'+
+      '<td class="muted">'+esc(it.message_type||'text')+'</td>'+
+      '<td style="max-width:180px">'+trunc(it.message_text)+'</td>'+
+      '<td><div style="color:#e2e8f0">'+esc(it.agent_name||'—')+'</div><div class="muted">#'+(it.agent_id||'?')+'</div></td>'+
+      '<td><span class="bm" title="'+esc(it.model_used||'')+'">'+esc(mshort(it.model_used))+'</span></td>'+
+      '<td><span class="tp '+tcls(it.duration_ms)+'">'+fms(it.duration_ms)+'</span></td>'+
+      '<td>'+((it.tools_used||[]).length?'<span class="bt">'+((it.tools_used||[]).length)+' tool'+((it.tools_used||[]).length>1?'s':'')+'</span>':'<span class="muted">—</span>')+'</td>'+
+      '<td style="font-size:14px">'+(it.reaction_emoji||'<span class="muted">—</span>')+'</td>'+
+      '<td>'+sBadge(it.status)+'</td>'+
+    '</tr>'
+  ).join('');
+  document.querySelectorAll('#tbody tr[data-row-idx]').forEach(row=>{
+    row.addEventListener('click',()=>openM(Number(row.dataset.rowIdx)));
+  });
+}
+
+function openM(idx){
+  const rows=filt(D.interactions||[]);
+  const it=rows[idx];if(!it)return;
+  sel=it;
+  const tm=it.timing||{};
+  const tools=it.tools_used||[];
+  const maxMs=tm.total_ms||1;
+  document.getElementById('mttl').innerHTML='Interacción <span id="msub">'+esc(it.contact_name||it.from_phone||'')+'</span>';
+  document.getElementById('tc-ov').innerHTML=
+    '<div class="msgbox"><div class="msgl">💬 Mensaje recibido</div><div class="msgt">'+(esc(it.message_text)||'<em style="color:#64748b">Sin texto</em>')+'</div></div>'+
+    '<div class="dg">'+
+      '<div class="dc"><div class="dct">Contacto</div>'+
+        '<div class="dr"><span class="dk">Nombre</span><span class="dv">'+esc(it.contact_name||'—')+'</span></div>'+
+        '<div class="dr"><span class="dk">Teléfono</span><span class="dv">'+esc(it.from_phone||'—')+'</span></div>'+
+        '<div class="dr"><span class="dk">Tipo msg</span><span class="dv">'+esc(it.message_type||'—')+'</span></div>'+
+        '<div class="dr"><span class="dk">Message ID</span><span class="dv" style="font-size:9px;font-family:monospace">'+esc(it.message_id||'—')+'</span></div>'+
+      '</div>'+
+      '<div class="dc"><div class="dct">Agente</div>'+
+        '<div class="dr"><span class="dk">Nombre</span><span class="dv">'+esc(it.agent_name||'—')+'</span></div>'+
+        '<div class="dr"><span class="dk">ID</span><span class="dv">#'+(it.agent_id||'—')+'</span></div>'+
+        '<div class="dr"><span class="dk">Modelo</span><span class="dv">'+esc(it.model_used||'—')+'</span></div>'+
+        '<div class="dr"><span class="dk">MCP servers</span><span class="dv">'+((it.mcp_servers||[]).length?it.mcp_servers.map(u=>u.split('/').pop()).join(', '):'—')+'</span></div>'+
+        '<div class="dr"><span class="dk">Memory session</span><span class="dv" style="font-size:9px">'+esc(it.memory_session_id||'—')+'</span></div>'+
+      '</div>'+
+    '</div>'+
+    '<div class="dg">'+
+      '<div class="dc"><div class="dct">Resultado</div>'+
+        '<div class="dr"><span class="dk">Status</span><span class="dv">'+sBadge(it.status)+'</span></div>'+
+        '<div class="dr"><span class="dk">Duración</span><span class="dv tp '+tcls(it.duration_ms)+'">'+fms(it.duration_ms)+'</span></div>'+
+        '<div class="dr"><span class="dk">Tipo respuesta</span><span class="dv">'+esc(it.reply_type||'text')+'</span></div>'+
+        '<div class="dr"><span class="dk">Chars respuesta</span><span class="dv">'+(it.response_chars??'—')+'</span></div>'+
+        '<div class="dr"><span class="dk">Reacción emoji</span><span class="dv" style="font-size:16px">'+(it.reaction_emoji||'—')+'</span></div>'+
+        (it.error?'<div class="dr"><span class="dk">Error</span><span class="dv" style="color:#f87171">'+esc(it.error)+'</span></div>':'')+
+      '</div>'+
+      '<div class="dc"><div class="dct">Timestamps</div>'+
+        '<div class="dr"><span class="dk">Inicio</span><span class="dv">'+(it.started_at?new Date(it.started_at).toLocaleTimeString():'—')+'</span></div>'+
+        '<div class="dr"><span class="dk">Fin</span><span class="dv">'+(it.finished_at?new Date(it.finished_at).toLocaleTimeString():'—')+'</span></div>'+
+        '<div class="dr"><span class="dk">Fecha</span><span class="dv">'+(it.started_at?new Date(it.started_at).toLocaleDateString():'—')+'</span></div>'+
+        '<div class="dr"><span class="dk">Tools usadas</span><span class="dv">'+tools.length+'</span></div>'+
+      '</div>'+
+    '</div>';
+  const bars=[
+    {l:'Total',k:'total_ms',c:'c1'},{l:'LLM',k:'llm_ms',c:'c2'},
+    {l:'MCP Discovery',k:'mcp_discovery_ms',c:'c3'},{l:'Graph Build',k:'graph_build_ms',c:'c4'},
+  ];
+  document.getElementById('tc-tm').innerHTML=
+    '<div style="background:#0f172a;border-radius:8px;padding:16px">'+
+    bars.map(b=>{const v=tm[b.k]||0;const p=maxMs>0?Math.min(100,(v/maxMs)*100):0;return(
+      '<div class="tbr"><div class="tbh"><span class="tbl">'+b.l+'</span><span class="tbv">'+fms(v)+'</span></div>'+
+      '<div class="tbt"><div class="tbf '+b.c+'" style="width:'+p.toFixed(1)+'%"></div></div></div>'
+    );}).join('')+
+    '</div>';
+  document.getElementById('tc-tl').innerHTML=tools.length
+    ?tools.map(t=>(
+      '<div class="tl"><div class="tln">⚙️ '+esc(t.tool_name)+'</div>'+
+      '<div class="tllbl">Input</div><pre class="cd">'+esc(JSON.stringify(t.tool_input,null,2))+'</pre>'+
+      '<div class="tllbl">Output</div><pre class="cd">'+esc(t.tool_output||'—')+'</pre></div>'
+    )).join('')
+    :'<div class="nd">No se usaron herramientas externas en esta interacción.</div>';
+  document.getElementById('tc-rp').innerHTML=it.response_preview
+    ?('<div class="resp"><div class="msgl">Respuesta enviada <span class="muted">('+
+      (it.response_chars||0)+' chars)</span></div><div class="msgt">'+esc(it.response_preview)+
+      ((it.response_chars||0)>600?'\n\n<em style="color:#64748b">[...respuesta truncada a 600 chars]</em>':'')+
+      '</div></div>')
+    :'<div class="nd">Sin preview de respuesta disponible.</div>';
+  document.getElementById('ov').classList.add('open');
+  swTab('ov');
+}
+
+function closeM(){document.getElementById('ov').classList.remove('open');sel=null;}
+function swTab(n){document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('a',t.dataset.t===n));document.querySelectorAll('.tc').forEach(t=>t.classList.toggle('a',t.id==='tc-'+n));}
+function onFilter(){fq=document.getElementById('fi').value.trim();renderTable(D.interactions||[]);}
+
+async function loadAll(){
+  try{
+    const r=await fetch('/debug/kapso/data',{cache:'no-store'});
+    D=await r.json();
+    D.interactions = Array.isArray(D.interactions) ? D.interactions : [];
+
+    renderCfg('bcfg',D.bridge_config);
+    renderCfg('fcfg',D.fastapi_config);
+    renderStats(D.interactions);
+    renderTable(D.interactions);
+    document.getElementById('upd').textContent='actualizado '+new Date().toLocaleTimeString();
+  }catch(e){document.getElementById('upd').textContent='error al cargar';}
+}
+
+function toggleAR(){
+  ar=!ar;
+  document.getElementById('ar-btn').textContent=ar?'⏸ Pausar':'▶ Reanudar';
+  if(ar){arT=setInterval(loadAll,4000);}else{clearInterval(arT);}
+}
+
+function bindEvents(){
+  const refreshBtn=document.getElementById('refresh-btn');
+  const arBtn=document.getElementById('ar-btn');
+  const fi=document.getElementById('fi');
+  const ov=document.getElementById('ov');
+  const closeBtn=document.getElementById('close-btn');
+  if(refreshBtn) refreshBtn.addEventListener('click',loadAll);
+  if(arBtn) arBtn.addEventListener('click',toggleAR);
+  if(fi) fi.addEventListener('input',onFilter);
+  if(closeBtn) closeBtn.addEventListener('click',closeM);
+  if(ov) ov.addEventListener('click',event=>{if(event.target===ov) closeM();});
+  document.querySelectorAll('.tab').forEach(tab=>{
+    tab.addEventListener('click',()=>swTab(tab.dataset.t));
+  });
+}
+
+bindEvents();
+loadAll();
+arT=setInterval(loadAll,4000);`;
 }
 
 function normalizeTimestamp(raw) {
@@ -915,7 +934,13 @@ app.get('/health', (_req, res) => {
 });
 
 app.get('/debug/kapso', (_req, res) => {
+  res.set('Cache-Control', 'no-store, max-age=0');
   res.status(200).type('html').send(renderKapsoDebugHtml());
+});
+
+app.get('/debug/kapso/app.js', (_req, res) => {
+  res.set('Cache-Control', 'no-store, max-age=0');
+  res.status(200).type('application/javascript').send(renderKapsoDebugScript());
 });
 
 app.get('/debug/kapso/data', async (_req, res) => {
@@ -932,6 +957,7 @@ app.get('/debug/kapso/data', async (_req, res) => {
       payload: { error: String(fastapiEventsResult.reason) },
     }];
 
+    res.set('Cache-Control', 'no-store, max-age=0');
     res.status(200).json({
       bridge_config: getBridgeDebugConfig(),
       bridge_events: bridgeDebugEvents,
