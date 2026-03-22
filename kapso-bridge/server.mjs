@@ -377,10 +377,90 @@ function renderKapsoDebugHtml() {
       try{
         const r=await fetch('/debug/kapso/data');
         D=await r.json();
+
+        // Computar interacciones en el cliente usando los eventos crudos
+        const allEvents = [...(D.bridge_events||[]), ...(D.fastapi_events||[])]
+          .sort((a,b)=>new Date(a.timestamp)-new Date(b.timestamp));
+          
+        const imap = {};
+        allEvents.forEach(e => {
+          const p = e.payload || {};
+          const mid = p.message_id || p.wa_id || p.id;
+          if (!mid) return;
+          
+          if (!imap[mid]) {
+             imap[mid] = {
+               id: mid,
+               started_at: e.timestamp,
+               status: 'processing',
+               tools_used: [],
+               mcp_servers: []
+             };
+          }
+          const it = imap[mid];
+          
+          // Bridge
+          if (e.stage === 'message_processing_start' || e.stage === 'kapso_send_start') {
+             if (p.from) it.from_phone = p.from;
+             if (p.to) it.from_phone = p.to; // a veces envia a 'to'
+             if (p.phone_number_id) it.phone_number_id = p.phone_number_id;
+             if (p.type) it.message_type = p.type;
+             if (!it.started_at) it.started_at = e.timestamp;
+          }
+          
+          // FastAPI
+          if (e.source==='fastapi') {
+             if (e.stage === 'inbound_received') {
+               if (p.from) it.from_phone = p.from;
+               if (p.message_type) it.message_type = p.message_type;
+             }
+             if (e.stage === 'run_agent_start') {
+               if (p.model) it.model_used = p.model;
+               it.agent_id = p.agent_id;
+               it.memory_session_id = p.memory_session_id;
+               if (!it.mcp_servers.length && p.mcp_servers) it.mcp_servers.push(p.mcp_servers + " servers");
+             }
+             if (e.stage === 'run_agent_done') {
+               it.agent_id = p.agent_id;
+               it.model_used = p.model_used;
+               it.response_chars = p.response_chars;
+             }
+             if (p.timing) it.timing = Object.assign(it.timing||{}, p.timing);
+          }
+          
+          // Respuestas y finalización
+          if (e.stage === 'kapso_send_start' || e.stage === 'call_fastapi_done') {
+             if (p.reply_type) it.reply_type = p.reply_type;
+             if (p.has_reaction) it.has_reaction = p.has_reaction; 
+          }
+          if (e.stage === 'call_fastapi_done' && p.payload && p.payload.tools_used) {
+             it.tools_used = p.payload.tools_used;
+          }
+          if (e.stage === 'message_processing_done') {
+             it.finished_at = e.timestamp;
+             it.status = (p.error || p.send_result?.error) ? 'error' : 'ok';
+             if (p.send_result) {
+                 it.response_preview = JSON.stringify(p.send_result);
+             }
+          }
+          if (e.stage === 'message_processing_error' || e.stage.includes('error')) {
+             it.status = 'error';
+             it.error = p.error || p.detail || 'Error en proceso';
+             it.finished_at = e.timestamp;
+          }
+          
+          if (it.started_at && it.finished_at) {
+             it.duration_ms = new Date(it.finished_at) - new Date(it.started_at);
+          }
+        });
+        
+        // Reemplazar la data del servidor con la calculada localmente
+        D.interactions = Object.values(imap).sort((a,b)=>new Date(b.started_at)-new Date(a.started_at));
+
         renderCfg('bcfg',D.bridge_config);
         renderCfg('fcfg',D.fastapi_config);
-        renderStats(D.interactions||[]);
-        renderTable(D.interactions||[]);
+        renderStats(D.interactions);
+        renderTable(D.interactions);
         document.getElementById('upd').textContent='actualizado '+new Date().toLocaleTimeString();
       }catch(e){document.getElementById('upd').textContent='error al cargar';}
     }
