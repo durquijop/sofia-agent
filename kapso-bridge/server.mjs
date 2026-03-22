@@ -200,6 +200,141 @@ async function fetchFastApiDebugJson(pathname) {
   return response.json();
 }
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+async function collectKapsoDebugPayload() {
+  const [fastapiEventsResult, fastapiConfigResult] = await Promise.allSettled([
+    fetchFastApiDebugJson('/api/v1/kapso/debug/events?limit=100'),
+    fetchFastApiDebugJson('/api/v1/kapso/debug/config'),
+  ]);
+
+  const fastapiEvents = fastapiEventsResult.status === 'fulfilled' ? fastapiEventsResult.value.events : [{
+    timestamp: new Date().toISOString(),
+    source: 'bridge',
+    stage: 'fastapi_debug_error',
+    payload: { error: String(fastapiEventsResult.reason) },
+  }];
+
+  return {
+    bridge_config: getBridgeDebugConfig(),
+    bridge_events: bridgeDebugEvents,
+    fastapi_config: fastapiConfigResult.status === 'fulfilled' ? fastapiConfigResult.value : { error: String(fastapiConfigResult.reason) },
+    fastapi_events: fastapiEvents,
+    interactions: buildKapsoInteractions(bridgeDebugEvents, fastapiEvents),
+  };
+}
+
+function renderKapsoBasicHtml(debugData) {
+  const interactions = Array.isArray(debugData?.interactions) ? debugData.interactions : [];
+  const okCount = interactions.filter(item => item.status === 'ok').length;
+  const errorCount = interactions.filter(item => item.status === 'error').length;
+  const avgDuration = interactions.length
+    ? Math.round(interactions.reduce((acc, item) => acc + (item.duration_ms || 0), 0) / interactions.length)
+    : null;
+
+  const interactionRows = interactions.length
+    ? interactions.map(item => `
+        <tr>
+          <td>${escapeHtml(item.started_at ? new Date(item.started_at).toLocaleString() : '—')}</td>
+          <td>${escapeHtml(item.contact_name || '—')}</td>
+          <td>${escapeHtml(item.from_phone || '—')}</td>
+          <td>${escapeHtml(item.message_type || 'text')}</td>
+          <td style="white-space:pre-wrap;max-width:320px">${escapeHtml(item.message_text || '—')}</td>
+          <td>${escapeHtml(item.agent_name || '—')}</td>
+          <td>${escapeHtml(item.model_used || '—')}</td>
+          <td>${escapeHtml(item.reply_type || 'text')}</td>
+          <td>${escapeHtml(item.reaction_emoji || '—')}</td>
+          <td>${escapeHtml(item.duration_ms != null ? `${item.duration_ms} ms` : '—')}</td>
+          <td>${escapeHtml(item.status || 'processing')}</td>
+        </tr>`).join('')
+    : '<tr><td colspan="11" style="padding:20px;color:#94a3b8">Sin interacciones todavía.</td></tr>';
+
+  return `<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kapso Debug Básico</title>
+  <style>
+    body{font-family:Arial,sans-serif;background:#0f172a;color:#e2e8f0;margin:0;padding:16px}
+    .top{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px}
+    .title{font-size:20px;font-weight:700}
+    .actions a{color:#93c5fd;text-decoration:none;margin-left:12px}
+    .stats{display:grid;grid-template-columns:repeat(4,minmax(120px,1fr));gap:12px;margin-bottom:16px}
+    .card{background:#1e293b;border:1px solid #334155;border-radius:10px;padding:12px}
+    .label{font-size:11px;color:#94a3b8;text-transform:uppercase}
+    .value{font-size:22px;font-weight:700;margin-top:6px}
+    table{width:100%;border-collapse:collapse;background:#111827;border:1px solid #334155}
+    th,td{padding:10px;border-bottom:1px solid #334155;text-align:left;vertical-align:top;font-size:12px}
+    th{background:#1e293b;color:#93c5fd}
+    .section{margin-top:18px}
+    details{margin-top:12px;background:#111827;border:1px solid #334155;border-radius:8px;padding:12px}
+    summary{cursor:pointer;font-weight:700}
+    pre{white-space:pre-wrap;word-break:break-word;color:#cbd5e1;font-size:12px}
+  </style>
+</head>
+<body>
+  <div class="top">
+    <div class="title">Kapso Debug Básico</div>
+    <div class="actions">
+      <a href="/debug/kapso">Refrescar</a>
+      <a href="/debug/kapso/data" target="_blank" rel="noreferrer">Ver JSON</a>
+    </div>
+  </div>
+
+  <div class="stats">
+    <div class="card"><div class="label">Total</div><div class="value">${interactions.length}</div></div>
+    <div class="card"><div class="label">OK</div><div class="value">${okCount}</div></div>
+    <div class="card"><div class="label">Errores</div><div class="value">${errorCount}</div></div>
+    <div class="card"><div class="label">Tiempo avg</div><div class="value">${avgDuration != null ? `${avgDuration} ms` : '—'}</div></div>
+  </div>
+
+  <div class="section">
+    <table>
+      <thead>
+        <tr>
+          <th>Hora</th>
+          <th>Contacto</th>
+          <th>Teléfono</th>
+          <th>Tipo</th>
+          <th>Mensaje</th>
+          <th>Agente</th>
+          <th>Modelo</th>
+          <th>Reply</th>
+          <th>Rx</th>
+          <th>Tiempo</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>${interactionRows}</tbody>
+    </table>
+  </div>
+
+  <details class="section">
+    <summary>Bridge Config</summary>
+    <pre>${escapeHtml(JSON.stringify(debugData.bridge_config, null, 2))}</pre>
+  </details>
+
+  <details class="section">
+    <summary>FastAPI Config</summary>
+    <pre>${escapeHtml(JSON.stringify(debugData.fastapi_config, null, 2))}</pre>
+  </details>
+
+  <details class="section">
+    <summary>JSON completo</summary>
+    <pre>${escapeHtml(JSON.stringify(debugData, null, 2))}</pre>
+  </details>
+</body>
+</html>`;
+}
+
 function renderKapsoDebugHtml() {
   return `<!doctype html>
 <html lang="es">
@@ -933,9 +1068,14 @@ app.get('/health', (_req, res) => {
   res.status(200).json({ status: 'ok', bridge: 'kapso', timestamp: new Date().toISOString() });
 });
 
-app.get('/debug/kapso', (_req, res) => {
-  res.set('Cache-Control', 'no-store, max-age=0');
-  res.status(200).type('html').send(renderKapsoDebugHtml());
+app.get('/debug/kapso', async (_req, res) => {
+  try {
+    const debugData = await collectKapsoDebugPayload();
+    res.set('Cache-Control', 'no-store, max-age=0');
+    res.status(200).type('html').send(renderKapsoBasicHtml(debugData));
+  } catch (error) {
+    res.status(500).type('html').send(`<pre>${escapeHtml(String(error))}</pre>`);
+  }
 });
 
 app.get('/debug/kapso/app.js', (_req, res) => {
@@ -945,26 +1085,9 @@ app.get('/debug/kapso/app.js', (_req, res) => {
 
 app.get('/debug/kapso/data', async (_req, res) => {
   try {
-    const [fastapiEventsResult, fastapiConfigResult] = await Promise.allSettled([
-      fetchFastApiDebugJson('/api/v1/kapso/debug/events?limit=100'),
-      fetchFastApiDebugJson('/api/v1/kapso/debug/config'),
-    ]);
-
-    const fastapiEvents = fastapiEventsResult.status === 'fulfilled' ? fastapiEventsResult.value.events : [{
-      timestamp: new Date().toISOString(),
-      source: 'bridge',
-      stage: 'fastapi_debug_error',
-      payload: { error: String(fastapiEventsResult.reason) },
-    }];
-
+    const debugData = await collectKapsoDebugPayload();
     res.set('Cache-Control', 'no-store, max-age=0');
-    res.status(200).json({
-      bridge_config: getBridgeDebugConfig(),
-      bridge_events: bridgeDebugEvents,
-      fastapi_config: fastapiConfigResult.status === 'fulfilled' ? fastapiConfigResult.value : { error: String(fastapiConfigResult.reason) },
-      fastapi_events: fastapiEvents,
-      interactions: buildKapsoInteractions(bridgeDebugEvents, fastapiEvents),
-    });
+    res.status(200).json(debugData);
   } catch (error) {
     res.status(500).json({ error: String(error) });
   }
