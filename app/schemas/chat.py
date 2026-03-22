@@ -23,6 +23,17 @@ class ToolCall(BaseModel):
     tool_name: str
     tool_input: dict
     tool_output: str
+    duration_ms: float | None = None
+    status: str = "ok"
+    error: str | None = None
+    source: str | None = None
+    description: str | None = None
+
+
+class ToolDefinition(BaseModel):
+    tool_name: str
+    description: str | None = None
+    source: str | None = None
 
 
 class TimingInfo(BaseModel):
@@ -33,9 +44,25 @@ class TimingInfo(BaseModel):
     tool_execution_ms: float = Field(default=0, description="Tiempo ejecutando herramientas en milisegundos")
 
 
+class AgentRunTrace(BaseModel):
+    agent_key: str
+    agent_name: str
+    agent_kind: str = Field(default="response", description="Tipo lógico del agente dentro del flujo")
+    conversation_id: str | None = None
+    memory_session_id: str | None = None
+    model_used: str
+    system_prompt: str = ""
+    user_prompt: str = ""
+    available_tools: list[ToolDefinition] = Field(default_factory=list)
+    tools_used: list[ToolCall] = Field(default_factory=list)
+    timing: TimingInfo
+    llm_iterations: int = 0
+
+
 class ChatResponse(BaseModel):
     response: str = Field(..., description="Respuesta del agente")
     conversation_id: str = Field(..., description="ID de la conversación")
     model_used: str = Field(..., description="Modelo utilizado")
     tools_used: list[ToolCall] = Field(default_factory=list, description="Herramientas utilizadas durante la respuesta")
     timing: TimingInfo = Field(..., description="Métricas de tiempo de cada fase del procesamiento")
+    agent_runs: list[AgentRunTrace] = Field(default_factory=list, description="Traza detallada de cada agente ejecutado en la interacción")

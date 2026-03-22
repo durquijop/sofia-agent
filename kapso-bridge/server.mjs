@@ -96,6 +96,7 @@ function buildKapsoInteractions(bridgeEvents = [], fastapiEvents = []) {
         started_at: event.timestamp,
         status: 'processing',
         tools_used: [],
+        agent_runs: [],
         mcp_servers: [],
       });
     }
@@ -126,6 +127,7 @@ function buildKapsoInteractions(bridgeEvents = [], fastapiEvents = []) {
         if (payload.response_preview) interaction.response_preview = payload.response_preview;
         if (payload.reaction_emoji) interaction.reaction_emoji = payload.reaction_emoji;
         if (Array.isArray(payload.tools_used)) interaction.tools_used = payload.tools_used;
+        if (Array.isArray(payload.agent_runs)) interaction.agent_runs = payload.agent_runs;
         if (payload.timing) interaction.timing = Object.assign(interaction.timing || {}, payload.timing);
       }
 
@@ -154,6 +156,7 @@ function buildKapsoInteractions(bridgeEvents = [], fastapiEvents = []) {
         if (payload.response_preview) interaction.response_preview = payload.response_preview;
         if (payload.reaction_emoji) interaction.reaction_emoji = payload.reaction_emoji;
         if (Array.isArray(payload.tools_used)) interaction.tools_used = payload.tools_used;
+        if (Array.isArray(payload.agent_runs)) interaction.agent_runs = payload.agent_runs;
         if (payload.timing) interaction.timing = Object.assign(interaction.timing || {}, payload.timing);
       }
 
@@ -231,6 +234,122 @@ async function collectKapsoDebugPayload() {
   };
 }
 
+function renderToolList(items = []) {
+  if (!Array.isArray(items) || !items.length) {
+    return '<div style="color:#94a3b8">Sin herramientas.</div>';
+  }
+
+  return `
+    <table style="margin-top:8px">
+      <thead>
+        <tr>
+          <th>Tool</th>
+          <th>Source</th>
+          <th>Estado</th>
+          <th>Tiempo</th>
+          <th>Descripción</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${items.map(item => `
+          <tr>
+            <td>${escapeHtml(item.tool_name || '—')}</td>
+            <td>${escapeHtml(item.source || '—')}</td>
+            <td>${escapeHtml(item.status || 'ok')}</td>
+            <td>${escapeHtml(item.duration_ms != null ? `${item.duration_ms} ms` : '—')}</td>
+            <td>${escapeHtml(item.description || '—')}</td>
+          </tr>
+          <tr>
+            <td colspan="5">
+              <div style="margin-bottom:8px"><strong>Input</strong></div>
+              <pre>${escapeHtml(JSON.stringify(item.tool_input || {}, null, 2))}</pre>
+              <div style="margin:8px 0 8px"><strong>Output</strong></div>
+              <pre>${escapeHtml(item.tool_output || '—')}</pre>
+              ${item.error ? `<div style="margin-top:8px;color:#fca5a5"><strong>Error:</strong> ${escapeHtml(item.error)}</div>` : ''}
+            </td>
+          </tr>`).join('')}
+      </tbody>
+    </table>`;
+}
+
+function renderAvailableToolList(items = []) {
+  if (!Array.isArray(items) || !items.length) {
+    return '<div style="color:#94a3b8">Sin herramientas disponibles.</div>';
+  }
+
+  return `
+    <table style="margin-top:8px">
+      <thead>
+        <tr>
+          <th>Tool</th>
+          <th>Source</th>
+          <th>Descripción</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${items.map(item => `
+          <tr>
+            <td>${escapeHtml(item.tool_name || '—')}</td>
+            <td>${escapeHtml(item.source || '—')}</td>
+            <td>${escapeHtml(item.description || '—')}</td>
+          </tr>`).join('')}
+      </tbody>
+    </table>`;
+}
+
+function renderTimingTable(timing = {}) {
+  return `
+    <table style="margin-top:8px">
+      <thead>
+        <tr>
+          <th>Total</th>
+          <th>LLM</th>
+          <th>MCP</th>
+          <th>Graph</th>
+          <th>Tools</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>${escapeHtml(timing.total_ms != null ? `${timing.total_ms} ms` : '—')}</td>
+          <td>${escapeHtml(timing.llm_ms != null ? `${timing.llm_ms} ms` : '—')}</td>
+          <td>${escapeHtml(timing.mcp_discovery_ms != null ? `${timing.mcp_discovery_ms} ms` : '—')}</td>
+          <td>${escapeHtml(timing.graph_build_ms != null ? `${timing.graph_build_ms} ms` : '—')}</td>
+          <td>${escapeHtml(timing.tool_execution_ms != null ? `${timing.tool_execution_ms} ms` : '—')}</td>
+        </tr>
+      </tbody>
+    </table>`;
+}
+
+function renderAgentRuns(agentRuns = []) {
+  if (!Array.isArray(agentRuns) || !agentRuns.length) {
+    return '<div style="color:#94a3b8">Esta interacción no tiene trazas detalladas de agentes todavía.</div>';
+  }
+
+  return agentRuns.map((run, index) => `
+    <details style="margin-top:12px">
+      <summary>${escapeHtml(run.agent_name || run.agent_key || `Agente ${index + 1}`)} · ${escapeHtml(run.agent_kind || 'agent')} · ${escapeHtml(run.model_used || '—')}</summary>
+      <div style="margin-top:12px">
+        <div style="margin-bottom:10px"><strong>Agent key:</strong> ${escapeHtml(run.agent_key || '—')}</div>
+        <div style="margin-bottom:10px"><strong>Conversation:</strong> ${escapeHtml(run.conversation_id || '—')}</div>
+        <div style="margin-bottom:10px"><strong>Memory session:</strong> ${escapeHtml(run.memory_session_id || '—')}</div>
+        <div style="margin-bottom:10px"><strong>LLM iterations:</strong> ${escapeHtml(run.llm_iterations ?? 0)}</div>
+        <div style="margin:12px 0 6px"><strong>Timing</strong></div>
+        ${renderTimingTable(run.timing || {})}
+        <div style="margin:12px 0 6px"><strong>System prompt</strong></div>
+        <pre>${escapeHtml(run.system_prompt || '')}</pre>
+        <div style="margin:12px 0 6px"><strong>User prompt</strong></div>
+        <pre>${escapeHtml(run.user_prompt || '')}</pre>
+        <div style="margin:12px 0 6px"><strong>Herramientas disponibles</strong></div>
+        ${renderAvailableToolList(run.available_tools || [])}
+        <div style="margin:12px 0 6px"><strong>Herramientas ejecutadas</strong></div>
+        ${renderToolList(run.tools_used || [])}
+        <div style="margin:12px 0 6px"><strong>Trace raw</strong></div>
+        <pre>${escapeHtml(JSON.stringify(run, null, 2))}</pre>
+      </div>
+    </details>`).join('');
+}
+
 function renderKapsoBasicHtml(debugData) {
   const interactions = Array.isArray(debugData?.interactions) ? debugData.interactions : [];
   const okCount = interactions.filter(item => item.status === 'ok').length;
@@ -240,7 +359,7 @@ function renderKapsoBasicHtml(debugData) {
     : null;
 
   const interactionRows = interactions.length
-    ? interactions.map(item => `
+    ? interactions.map((item, index) => `
         <tr>
           <td>${escapeHtml(item.started_at ? new Date(item.started_at).toLocaleString() : '—')}</td>
           <td>${escapeHtml(item.contact_name || '—')}</td>
@@ -253,8 +372,31 @@ function renderKapsoBasicHtml(debugData) {
           <td>${escapeHtml(item.reaction_emoji || '—')}</td>
           <td>${escapeHtml(item.duration_ms != null ? `${item.duration_ms} ms` : '—')}</td>
           <td>${escapeHtml(item.status || 'processing')}</td>
+           <td><a href="#interaction-${index}" style="color:#93c5fd">Ver detalle</a></td>
         </tr>`).join('')
-    : '<tr><td colspan="11" style="padding:20px;color:#94a3b8">Sin interacciones todavía.</td></tr>';
+    : '<tr><td colspan="12" style="padding:20px;color:#94a3b8">Sin interacciones todavía.</td></tr>';
+
+  const interactionDetails = interactions.length
+    ? interactions.map((item, index) => `
+      <details class="section" id="interaction-${index}">
+        <summary>${escapeHtml(item.contact_name || item.from_phone || item.message_id || `Interacción ${index + 1}`)} · ${escapeHtml(item.status || 'processing')} · ${escapeHtml(item.duration_ms != null ? `${item.duration_ms} ms` : '—')}</summary>
+        <div style="margin-top:12px">
+          <div style="margin-bottom:8px"><strong>Message ID:</strong> ${escapeHtml(item.message_id || '—')}</div>
+          <div style="margin-bottom:8px"><strong>Mensaje:</strong></div>
+          <pre>${escapeHtml(item.message_text || '—')}</pre>
+          <div style="margin:12px 0 6px"><strong>Respuesta preview</strong></div>
+          <pre>${escapeHtml(item.response_preview || '—')}</pre>
+          <div style="margin:12px 0 6px"><strong>Timing global</strong></div>
+          ${renderTimingTable(item.timing || {})}
+          <div style="margin:12px 0 6px"><strong>Tools globales</strong></div>
+          ${renderToolList(item.tools_used || [])}
+          <div style="margin:12px 0 6px"><strong>Agentes ejecutados</strong></div>
+          ${renderAgentRuns(item.agent_runs || [])}
+          <div style="margin:12px 0 6px"><strong>Interacción raw</strong></div>
+          <pre>${escapeHtml(JSON.stringify(item, null, 2))}</pre>
+        </div>
+      </details>`).join('')
+    : '';
 
   return `<!doctype html>
 <html lang="es">
@@ -311,11 +453,14 @@ function renderKapsoBasicHtml(debugData) {
           <th>Rx</th>
           <th>Tiempo</th>
           <th>Status</th>
+          <th>Detalle</th>
         </tr>
       </thead>
       <tbody>${interactionRows}</tbody>
     </table>
   </div>
+
+  ${interactionDetails}
 
   <details class="section">
     <summary>Bridge Config</summary>
@@ -898,6 +1043,7 @@ async function callInternalAgent(sqlPayload) {
     response_preview: String(reply.reply_text || '').slice(0, 600),
     timing: reply.timing || null,
     tools_used: reply.tools_used || [],
+    agent_runs: reply.agent_runs || [],
     reaction_emoji: reply.reaction?.emoji || null,
   });
   console.log(

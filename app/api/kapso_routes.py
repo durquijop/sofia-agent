@@ -297,6 +297,7 @@ async def kapso_inbound(
                 "message_id": request.message_id,
                 "timing": result.timing.model_dump(),
                 "tools_used": [tool.model_dump() for tool in result.tools_used],
+                "agent_runs": [agent_run.model_dump() for agent_run in result.agent_runs],
                 "reaction_emoji": reaction_emoji,
             },
         )
@@ -329,6 +330,7 @@ async def kapso_inbound(
             model_used=result.model_used,
             timing=result.timing,
             tools_used=result.tools_used,
+            agent_runs=result.agent_runs,
         )
     except HTTPException as exc:
         add_kapso_debug_event(

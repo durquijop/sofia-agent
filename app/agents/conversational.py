@@ -12,13 +12,12 @@ from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
-from langgraph.prebuilt import ToolNode
 
 from app.core.cache import response_cache
 from app.core.config import get_settings
 from app.db import queries as db
 from app.mcp_client.client import MCPClient, mcp_tools_to_langchain
-from app.schemas.chat import ChatRequest, ChatResponse, TimingInfo, ToolCall
+from app.schemas.chat import AgentRunTrace, ChatRequest, ChatResponse, TimingInfo, ToolCall, ToolDefinition
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +28,9 @@ class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
     tools_used: list[ToolCall]
     reaction_emoji: str | None
+    tool_execution_ms: float
+    llm_elapsed_ms: float
+    llm_iterations: int
 
 
 _llm_cache: dict[str, ChatOpenAI] = {}
@@ -109,47 +111,120 @@ def _should_use_tools(state: AgentState) -> str:
     return END
 
 
+def _tool_source(tool_obj) -> str:
+    name = getattr(tool_obj, "name", "") or ""
+    if name == SEND_REACTION_TOOL_NAME:
+        return "kapso"
+    return "mcp"
+
+
+def _tool_description(tool_obj) -> str | None:
+    description = getattr(tool_obj, "description", None)
+    return str(description).strip() if description else None
+
+
+def _describe_available_tools(tools: list) -> list[ToolDefinition]:
+    return [
+        ToolDefinition(
+            tool_name=getattr(tool_obj, "name", "unknown"),
+            description=_tool_description(tool_obj),
+            source=_tool_source(tool_obj),
+        )
+        for tool_obj in tools
+    ]
+
+
 def _build_graph(llm_with_tools, tools: list) -> StateGraph:
     """Construye el grafo LangGraph para el agente conversacional."""
 
+    tool_map = {getattr(tool_obj, "name", ""): tool_obj for tool_obj in tools}
+
     async def agent_node(state: AgentState) -> dict:
         """Nodo principal del agente: genera respuesta o decide usar herramientas."""
+        t_llm = time.perf_counter()
         response = await llm_with_tools.ainvoke(state["messages"])
-        return {"messages": [response]}
+        llm_elapsed_ms = (time.perf_counter() - t_llm) * 1000
+        return {
+            "messages": [response],
+            "llm_elapsed_ms": round(float(state.get("llm_elapsed_ms", 0)) + llm_elapsed_ms, 1),
+            "llm_iterations": int(state.get("llm_iterations", 0)) + 1,
+        }
 
-    async def tool_tracker_node(state: AgentState) -> dict:
-        """Nodo que trackea las herramientas usadas después de ejecutarlas."""
+    async def tool_execution_node(state: AgentState) -> dict:
+        """Ejecuta herramientas y captura trazas detalladas por invocación."""
         tools_used = list(state.get("tools_used", []))
         reaction_emoji: str | None = state.get("reaction_emoji") or None
-        for msg in state["messages"]:
-            if isinstance(msg, ToolMessage):
-                ai_messages = [m for m in state["messages"] if isinstance(m, AIMessage) and m.tool_calls]
-                for ai_msg in ai_messages:
-                    for tc in ai_msg.tool_calls:
-                        if tc["name"] == msg.name or (hasattr(msg, 'tool_call_id') and tc.get("id") == msg.tool_call_id):
-                            tool_call = ToolCall(
-                                tool_name=tc["name"],
-                                tool_input=tc["args"],
-                                tool_output=str(msg.content)[:500],
-                            )
-                            if not any(t.tool_name == tool_call.tool_name and t.tool_input == tool_call.tool_input for t in tools_used):
-                                tools_used.append(tool_call)
-                            # Capturar el emoji de reacción si se usó send_reaction
-                            if tc["name"] == "send_reaction" and tc["args"].get("emoji"):
-                                reaction_emoji = tc["args"]["emoji"]
-        return {"tools_used": tools_used, "reaction_emoji": reaction_emoji}
+        tool_messages: list[ToolMessage] = []
+        tool_execution_ms = float(state.get("tool_execution_ms", 0))
+        last_message = state["messages"][-1]
 
-    tool_node = ToolNode(tools)
+        if not isinstance(last_message, AIMessage) or not last_message.tool_calls:
+            return {
+                "messages": tool_messages,
+                "tools_used": tools_used,
+                "reaction_emoji": reaction_emoji,
+                "tool_execution_ms": round(tool_execution_ms, 1),
+            }
+
+        for tc in last_message.tool_calls:
+            tool_name = tc.get("name") or "unknown"
+            raw_args = tc.get("args") or {}
+            tool_input = raw_args if isinstance(raw_args, dict) else {"input": raw_args}
+            tool_obj = tool_map.get(tool_name)
+            tool_start = time.perf_counter()
+            status = "ok"
+            error_text: str | None = None
+
+            try:
+                if tool_obj is None:
+                    raise ValueError(f"Tool no encontrada: {tool_name}")
+                result = await tool_obj.ainvoke(tool_input)
+                tool_output = str(result)[:1000]
+            except Exception as exc:
+                status = "error"
+                error_text = str(exc)
+                tool_output = f"Error ejecutando {tool_name}: {exc}"
+
+            duration_ms = (time.perf_counter() - tool_start) * 1000
+            tool_execution_ms += duration_ms
+
+            tool_messages.append(
+                ToolMessage(
+                    content=tool_output,
+                    name=tool_name,
+                    tool_call_id=tc.get("id"),
+                )
+            )
+
+            tool_call = ToolCall(
+                tool_name=tool_name,
+                tool_input=tool_input,
+                tool_output=tool_output,
+                duration_ms=round(duration_ms, 1),
+                status=status,
+                error=error_text,
+                source=_tool_source(tool_obj) if tool_obj is not None else "unknown",
+                description=_tool_description(tool_obj) if tool_obj is not None else None,
+            )
+            tools_used.append(tool_call)
+
+            if tool_name == SEND_REACTION_TOOL_NAME and tool_input.get("emoji"):
+                reaction_emoji = str(tool_input["emoji"])
+
+        return {
+            "messages": tool_messages,
+            "tools_used": tools_used,
+            "reaction_emoji": reaction_emoji,
+            "tool_execution_ms": round(tool_execution_ms, 1),
+        }
 
     graph = StateGraph(AgentState)
     graph.add_node("agent", agent_node)
-    graph.add_node("tools", tool_node)
-    graph.add_node("tool_tracker", tool_tracker_node)
+    graph.add_node("tools", tool_execution_node)
 
     graph.set_entry_point("agent")
     graph.add_conditional_edges("agent", _should_use_tools, {"tools": "tools", END: END})
-    graph.add_edge("tools", "tool_tracker")
-    graph.add_edge("tool_tracker", "agent")
+    graph.add_edge("tools", "agent")
 
     return graph
 
@@ -238,6 +313,7 @@ async def run_agent(request: ChatRequest) -> ChatResponse:
                 model_used=model,
                 tools_used=[],
                 timing=TimingInfo(total_ms=round(total_ms, 1), llm_ms=0, mcp_discovery_ms=0, graph_build_ms=0),
+                agent_runs=[],
             )
 
     # Cargar herramientas MCP (en paralelo)
@@ -248,6 +324,7 @@ async def run_agent(request: ChatRequest) -> ChatResponse:
         tools.extend(await _load_mcp_tools(mcp_configs))
         logger.info(f"Total herramientas cargadas: {len(tools)}")
     mcp_discovery_ms = (time.perf_counter() - t_mcp) * 1000
+    available_tools = _describe_available_tools(tools)
 
     # Crear LLM con parámetros del request
     llm = _create_llm(model, max_tokens, temperature)
@@ -271,11 +348,12 @@ async def run_agent(request: ChatRequest) -> ChatResponse:
         "messages": messages,
         "tools_used": [],
         "reaction_emoji": None,
+        "tool_execution_ms": 0,
+        "llm_elapsed_ms": 0,
+        "llm_iterations": 0,
     }
 
-    t_llm = time.perf_counter()
     final_state = await compiled.ainvoke(initial_state)
-    llm_ms = (time.perf_counter() - t_llm) * 1000
 
     # Extraer respuesta final
     last_message = final_state["messages"][-1]
@@ -289,14 +367,34 @@ async def run_agent(request: ChatRequest) -> ChatResponse:
         response_cache.set(request.system_prompt, request.message, model, response_text)
 
     total_ms = (time.perf_counter() - t_start) * 1000
+    llm_ms = float(final_state.get("llm_elapsed_ms", 0))
+    tool_execution_ms = float(final_state.get("tool_execution_ms", 0))
 
     timing = TimingInfo(
         total_ms=round(total_ms, 1),
         llm_ms=round(llm_ms, 1),
         mcp_discovery_ms=round(mcp_discovery_ms, 1),
         graph_build_ms=round(graph_build_ms, 1),
+        tool_execution_ms=round(tool_execution_ms, 1),
     )
     logger.info(f"Timing - total: {timing.total_ms}ms | llm: {timing.llm_ms}ms | mcp: {timing.mcp_discovery_ms}ms | graph: {timing.graph_build_ms}ms")
+
+    agent_runs = [
+        AgentRunTrace(
+            agent_key="conversational_agent",
+            agent_name="Agente Conversacional",
+            agent_kind="response",
+            conversation_id=conversation_id,
+            memory_session_id=memory_session_id,
+            model_used=model,
+            system_prompt=request.system_prompt,
+            user_prompt=request.message,
+            available_tools=available_tools,
+            tools_used=final_state.get("tools_used", []),
+            timing=timing,
+            llm_iterations=int(final_state.get("llm_iterations", 0)),
+        )
+    ]
 
     return ChatResponse(
         response=response_text,
@@ -304,4 +402,5 @@ async def run_agent(request: ChatRequest) -> ChatResponse:
         model_used=model,
         tools_used=final_state.get("tools_used", []),
         timing=timing,
+        agent_runs=agent_runs,
     )
