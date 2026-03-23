@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from typing import Any
 
 import httpx
@@ -161,6 +162,14 @@ def _build_tool_schema(tool_def: dict) -> dict:
     return schema
 
 
+def _sanitize_param_name(name: str) -> str:
+    """Convert MCP parameter name to a valid Python identifier."""
+    sanitized = re.sub(r"[^a-zA-Z0-9_]", "_", name)
+    if sanitized and sanitized[0].isdigit():
+        sanitized = f"p_{sanitized}"
+    return sanitized or "param"
+
+
 async def mcp_tools_to_langchain(mcp_client: MCPClient) -> list[StructuredTool]:
     """Convierte herramientas MCP en herramientas LangChain compatibles con LangGraph."""
     mcp_tools_defs = await mcp_client.discover_tools()
@@ -174,16 +183,27 @@ async def mcp_tools_to_langchain(mcp_client: MCPClient) -> list[StructuredTool]:
         captured_client = mcp_client
         captured_name = tool_name
 
-        async def _invoke_tool(captured_c=captured_client, captured_n=captured_name, **kwargs) -> str:
-            result = await captured_c.call_tool(captured_n, kwargs)
+        # Build mapping: sanitized_name -> original_name for MCP call
+        properties = input_schema.get("properties", {})
+        param_name_map: dict[str, str] = {}
+        for orig_name in properties:
+            safe_name = _sanitize_param_name(orig_name)
+            param_name_map[safe_name] = orig_name
+
+        captured_map = param_name_map
+
+        async def _invoke_tool(captured_c=captured_client, captured_n=captured_name, captured_m=captured_map, **kwargs) -> str:
+            # Restore original MCP parameter names before calling
+            original_kwargs = {captured_m.get(k, k): v for k, v in kwargs.items()}
+            result = await captured_c.call_tool(captured_n, original_kwargs)
             return str(result)
 
         from pydantic import create_model, Field as PydanticField
         fields = {}
-        properties = input_schema.get("properties", {})
         required_fields = input_schema.get("required", [])
 
         for prop_name, prop_def in properties.items():
+            safe_name = _sanitize_param_name(prop_name)
             prop_type = prop_def.get("type", "string")
             python_type = {
                 "string": str, "integer": int, "number": float,
@@ -191,10 +211,13 @@ async def mcp_tools_to_langchain(mcp_client: MCPClient) -> list[StructuredTool]:
             }.get(prop_type, str)
 
             description = prop_def.get("description", f"Parameter {prop_name}")
+            # Include original name in description if it was sanitized
+            if safe_name != prop_name:
+                description = f"[MCP: {prop_name}] {description}"
             if prop_name in required_fields:
-                fields[prop_name] = (python_type, PydanticField(description=description))
+                fields[safe_name] = (python_type, PydanticField(description=description))
             else:
-                fields[prop_name] = (python_type, PydanticField(default=None, description=description))
+                fields[safe_name] = (python_type, PydanticField(default=None, description=description))
 
         if fields:
             ArgsModel = create_model(f"{tool_name}_args", **fields)
