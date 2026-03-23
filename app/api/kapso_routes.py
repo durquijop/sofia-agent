@@ -274,7 +274,7 @@ async def _run_both_agents(
                     agente_id=agente_id,
                     conversacion_id=conversacion_db_id,
                     memory_session_id=memory_session_id,
-                    memory_window=8,
+                    memory_window=20,
                     model=model,
                 )
             )

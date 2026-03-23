@@ -436,18 +436,18 @@ async def test_funnel_user_prompt_uses_persistent_agent_memory_turns() -> None:
         ],
     }
     memory_turns = [
-        {"speaker": "agente", "content": "Hola, ¿me compartes tu nombre completo?"},
-        {"speaker": "usuario", "content": "Agustin Peralta Guarin"},
-        {"speaker": "agente", "content": "Perfecto, ahora compárteme tu correo."},
-        {"speaker": "usuario", "content": "apg@urpeailab.com"},
+        {"speaker": "agente", "content": "Hola, ¿me compartes tu nombre completo?", "timestamp": "2026-03-23T08:20:00+00:00"},
+        {"speaker": "usuario", "content": "Agustin Peralta Guarin", "timestamp": "2026-03-23T08:26:23+00:00"},
+        {"speaker": "agente", "content": "Perfecto, ahora compárteme tu correo.", "timestamp": "2026-03-23T08:40:00+00:00"},
+        {"speaker": "usuario", "content": "apg@urpeailab.com", "timestamp": "2026-03-23T08:46:47+00:00"},
     ]
 
     prompt = _build_funnel_user_message(payload, memory_turns)
 
     assert '"memory_turns": 4' in prompt
-    assert '- [memoria 1] agente: Hola, ¿me compartes tu nombre completo?' in prompt
-    assert '- [memoria 2] usuario: Agustin Peralta Guarin' in prompt
-    assert '- [memoria 3] agente: Perfecto, ahora compárteme tu correo.' in prompt
+    assert '- [08:20:00] agente: Hola, ¿me compartes tu nombre completo?' in prompt
+    assert '- [08:26:23] usuario: Agustin Peralta Guarin' in prompt
+    assert '- [08:40:00] agente: Perfecto, ahora compárteme tu correo.' in prompt
     assert '- Agustin Peralta Guarin' in prompt
     assert '- apg@urpeailab.com' in prompt
 

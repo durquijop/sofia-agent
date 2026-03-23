@@ -75,6 +75,19 @@ def _build_conversation_history_payload(mensajes: list[dict] | None) -> list[dic
     return history
 
 
+def _format_memory_timestamp(value) -> str:
+    if not value:
+        return "sin hora"
+    try:
+        text = str(value).strip()
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        dt = datetime.fromisoformat(text)
+        return dt.strftime("%H:%M:%S")
+    except ValueError:
+        return str(value)
+
+
 async def _load_agent_memory_turns(memory_session_id: str | None, memory_window: int) -> list[dict]:
     if not memory_session_id:
         return []
@@ -100,6 +113,7 @@ async def _load_agent_memory_turns(memory_session_id: str | None, memory_window:
                 "speaker": "agente" if role in {"assistant", "ai"} else "usuario",
                 "content": content,
                 "conversation_id": payload.get("conversation_id"),
+                "timestamp": row.get("created_at") if isinstance(row, dict) else None,
             }
         )
     return turns
@@ -249,14 +263,15 @@ def _build_funnel_user_message(conversacion_memoria_payload: dict, memory_turns:
     memory_turns = list(memory_turns or [])
 
     if memory_turns:
-        for index, turn in enumerate(memory_turns[-12:], start=1):
+        for turn in memory_turns:
             speaker = str(turn.get("speaker") or "desconocido").strip()
             content = str(turn.get("content") or "").strip()
             if not content:
                 continue
-            transcript_lines.append(f"- [memoria {index}] {speaker}: {content}")
+            hora = _format_memory_timestamp(turn.get("timestamp"))
+            transcript_lines.append(f"- [{hora}] {speaker}: {content}")
     else:
-        for msg in mensajes[-12:]:
+        for msg in mensajes:
             speaker = _normalize_conversation_speaker(msg.get("remitente"))
             hora = str(msg.get("hora") or msg.get("fecha_hora") or msg.get("timestamp") or "?").strip()
             content = str(msg.get("mensaje") or msg.get("contenido") or "").strip()
@@ -915,7 +930,7 @@ async def run_funnel_agent(request: FunnelAgentRequest) -> FunnelAgentResponse:
         }
         memory_turns = await _load_agent_memory_turns(
             request.memory_session_id,
-            max(1, request.memory_window or 8),
+            max(1, request.memory_window or 20),
         )
         etapas_payload = ((context.etapas_embudo or {}).get("data") or {}).get("etapas") or [
             etapa.model_dump() for etapa in context.todas_etapas

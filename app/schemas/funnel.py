@@ -75,7 +75,7 @@ class FunnelAgentRequest(BaseModel):
     agente_id: int = Field(..., description="ID del agente que ejecuta")
     conversacion_id: Optional[int] = Field(default=None, description="ID de conversación para contexto")
     memory_session_id: Optional[str] = Field(default=None, description="ID de memoria persistente para recuperar turnos previos")
-    memory_window: Optional[int] = Field(default=8, description="Cantidad de turnos persistentes a cargar")
+    memory_window: Optional[int] = Field(default=20, description="Cantidad de turnos persistentes a cargar")
     model: Optional[str] = Field(default=None, description="Modelo LLM a usar")
     max_tokens: Optional[int] = Field(default=512, description="Máximo de tokens")
     temperature: Optional[float] = Field(default=0.5, description="Temperatura del modelo")
