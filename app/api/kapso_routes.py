@@ -69,13 +69,16 @@ MULTIMEDIA_EXTENSIONS = (
 )
 MULTIMEDIA_URL_REGEX = re.compile(r"https?://[^\s]+", re.IGNORECASE)
 
-# Regex to parse Kapso audio enrichment text
-_AUDIO_URL_RE = re.compile(r"URL:\s*(https?://[^\s]+)", re.IGNORECASE)
+# Regex to parse Kapso media enrichment text
+_MEDIA_URL_RE = re.compile(r"URL:\s*(https?://[^\s]+)", re.IGNORECASE)
 _AUDIO_TRANSCRIPT_RE = re.compile(r"Transcript:\s*(.+)", re.IGNORECASE | re.DOTALL)
-_AUDIO_FILENAME_RE = re.compile(r"\(([^)]+\.ogg)\)", re.IGNORECASE)
+_MEDIA_FILENAME_RE = re.compile(r"\(([^)]+\.[a-z0-9]{2,5})\)", re.IGNORECASE)
 SUPABASE_STORAGE_BUCKET = "multimedia"
 SUPABASE_EDGE_CREAR_MULTIMEDIA = "crear-multimedia-inicial-v1"
 SUPABASE_EDGE_GUARDAR_MULTIMEDIA = "guardar-multimedia-v4"
+VISION_MODEL = "google/gemini-2.0-flash-001"
+_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
+_DOCUMENT_EXTENSIONS = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv"}
 
 
 def _normalize_phone(value: str | None) -> str | None:
@@ -103,7 +106,7 @@ def _parse_audio_content(text: str) -> tuple[str | None, str | None, str | None]
     transcript = None
     filename = None
 
-    url_match = _AUDIO_URL_RE.search(text)
+    url_match = _MEDIA_URL_RE.search(text)
     if url_match:
         audio_url = url_match.group(1).strip()
 
@@ -111,11 +114,80 @@ def _parse_audio_content(text: str) -> tuple[str | None, str | None, str | None]
     if transcript_match:
         transcript = transcript_match.group(1).strip()
 
-    filename_match = _AUDIO_FILENAME_RE.search(text)
+    filename_match = _MEDIA_FILENAME_RE.search(text)
     if filename_match:
         filename = filename_match.group(1).strip()
 
     return audio_url, transcript, filename
+
+
+def _parse_media_content(text: str) -> tuple[str | None, str | None]:
+    """Parse Kapso-enriched image/document text into (media_url, filename)."""
+    media_url = None
+    filename = None
+
+    url_match = _MEDIA_URL_RE.search(text)
+    if url_match:
+        media_url = url_match.group(1).strip()
+
+    filename_match = _MEDIA_FILENAME_RE.search(text)
+    if filename_match:
+        filename = filename_match.group(1).strip()
+
+    return media_url, filename
+
+
+def _detect_media_type(filename: str | None) -> str | None:
+    """Return 'image', 'document', or None based on filename extension."""
+    if not filename:
+        return None
+    ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if ext in _IMAGE_EXTENSIONS:
+        return "image"
+    if ext in _DOCUMENT_EXTENSIONS:
+        return "document"
+    return None
+
+
+async def _describe_image_with_vision(image_url: str, instructions: str | None = None) -> str | None:
+    """Call OpenRouter vision model to describe an image.
+
+    Uses Gemini Flash via OpenRouter.  Returns the description text or None.
+    """
+    settings = get_settings()
+    prompt = instructions or "Describe la imagen de forma detallada y útil."
+    payload = {
+        "model": VISION_MODEL,
+        "max_tokens": 1024,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": image_url}},
+                ],
+            }
+        ],
+    }
+    headers = {
+        "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as http:
+            resp = await http.post(
+                f"{settings.OPENROUTER_BASE_URL}/chat/completions",
+                json=payload,
+                headers=headers,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            description = data["choices"][0]["message"]["content"]
+            logger.info("Vision description obtained: %d chars", len(description))
+            return description
+    except Exception as exc:
+        logger.error("Vision description failed: %s", exc, exc_info=True)
+        return None
 
 
 async def _upload_audio_to_storage(audio_url: str, filename: str) -> str | None:
@@ -259,6 +331,77 @@ async def _process_audio_message(inbound: KapsoInboundRequest, contacto_id: int 
         asyncio.create_task(_multimedia_pipeline(contacto_id, storage_url, transcript))
 
     return transcript, storage_url
+
+
+async def _process_image_message(
+    inbound: KapsoInboundRequest,
+    contacto_id: int | None = None,
+    instrucciones_multimedia: str | None = None,
+) -> tuple[str | None, str | None]:
+    """Process an image message: upload to storage, describe via vision model.
+
+    Returns (description, storage_url).  Description is SYNC (needed by agent).
+    """
+    text = inbound.text or ""
+    media_url, filename = _parse_media_content(text)
+    if not media_url:
+        logger.warning("Image message but no URL found. Raw text: %s", text[:200])
+        return None, None
+
+    if not filename:
+        filename = f"image_{inbound.message_id.replace('=', '').replace('.', '_')[-20:]}.jpg"
+
+    logger.info("Image parse result: url=%s, filename=%s", media_url[:80], filename)
+
+    # Upload to Supabase Storage (reuse audio uploader — same logic)
+    storage_url = await _upload_audio_to_storage(media_url, filename)
+
+    # Describe image via vision model (SYNC — result needed by agent)
+    vision_prompt = instrucciones_multimedia or "Describe la imagen de forma detallada y útil."
+    # Use the public storage URL if available, otherwise the original Kapso URL
+    image_for_vision = storage_url or media_url
+    description = await _describe_image_with_vision(image_for_vision, vision_prompt)
+
+    # Multimedia pipeline (async, non-blocking)
+    if storage_url and contacto_id:
+        contenido_for_edge = description or f"Imagen: {storage_url}"
+        asyncio.create_task(_multimedia_pipeline(contacto_id, storage_url, contenido_for_edge))
+
+    return description, storage_url
+
+
+async def _process_document_message(
+    inbound: KapsoInboundRequest,
+    contacto_id: int | None = None,
+) -> tuple[str | None, str | None]:
+    """Process a document message: upload to storage.
+
+    Returns (doc_reference_text, storage_url).
+    """
+    text = inbound.text or ""
+    media_url, filename = _parse_media_content(text)
+    if not media_url:
+        logger.warning("Document message but no URL found. Raw text: %s", text[:200])
+        return None, None
+
+    if not filename:
+        filename = f"doc_{inbound.message_id.replace('=', '').replace('.', '_')[-20:]}.pdf"
+
+    logger.info("Document parse result: url=%s, filename=%s", media_url[:80], filename)
+
+    # Upload to Supabase Storage
+    storage_url = await _upload_audio_to_storage(media_url, filename)
+
+    # Build reference text for the agent
+    doc_ref = f"El contacto envió un documento: {filename}"
+    if storage_url:
+        doc_ref += f"\nURL del documento: {storage_url}"
+
+    # Multimedia pipeline (async, non-blocking)
+    if storage_url and contacto_id:
+        asyncio.create_task(_multimedia_pipeline(contacto_id, storage_url, doc_ref))
+
+    return doc_ref, storage_url
 
 
 def _extract_media_reference(inbound: KapsoInboundRequest) -> str:
@@ -902,6 +1045,60 @@ async def kapso_inbound(
                 )
             elif audio_storage_url:
                 logger.info("Audio subido pero sin transcript. storage_url=%s", audio_storage_url)
+
+        # Procesar imagen: subir a Storage + describir con vision model (SYNC)
+        msg_type_lower = str(request.message_type or "").strip().lower()
+        is_image = msg_type_lower == "image"
+        is_document = msg_type_lower == "document"
+
+        if is_image:
+            contacto_id_for_media = contacto.get("id") if contacto else None
+            instrucciones_mm = agent.get("instrucciones_multimedia") or None
+            img_description, img_storage_url = await _process_image_message(
+                request, contacto_id_for_media, instrucciones_mm,
+            )
+            add_kapso_debug_event(
+                "fastapi",
+                "image_processing",
+                {
+                    "description": (img_description or "")[:150],
+                    "storage_url": img_storage_url,
+                    "upload_ok": img_storage_url is not None,
+                    "vision_ok": img_description is not None,
+                },
+            )
+            if img_description:
+                message_parts = [{"contenido": img_description, "tipo": "texto"}]
+                if img_storage_url:
+                    message_parts.append({"contenido": img_storage_url, "tipo": "multimedia"})
+                logger.info(
+                    "Imagen procesada → description=%s... storage_url=%s",
+                    img_description[:80],
+                    img_storage_url,
+                )
+
+        # Procesar documento: subir a Storage (referencia para el agente)
+        if is_document:
+            contacto_id_for_media = contacto.get("id") if contacto else None
+            doc_ref, doc_storage_url = await _process_document_message(request, contacto_id_for_media)
+            add_kapso_debug_event(
+                "fastapi",
+                "document_processing",
+                {
+                    "reference": (doc_ref or "")[:150],
+                    "storage_url": doc_storage_url,
+                    "upload_ok": doc_storage_url is not None,
+                },
+            )
+            if doc_ref:
+                message_parts = [{"contenido": doc_ref, "tipo": "texto"}]
+                if doc_storage_url:
+                    message_parts.append({"contenido": doc_storage_url, "tipo": "multimedia"})
+                logger.info(
+                    "Documento procesado → ref=%s... storage_url=%s",
+                    doc_ref[:80],
+                    doc_storage_url,
+                )
 
         # Marcar origen como Whatsapp si aún no tiene valor
         if contacto and contacto.get("id") is not None and not contacto.get("origen"):
