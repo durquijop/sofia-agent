@@ -47,7 +47,7 @@ class ContactInfo(BaseModel):
     etapa_emocional: Optional[str] = None
     timezone: Optional[str] = None
     estado: Optional[str] = None
-    es_calificado: Optional[bool] = None
+    es_calificado: Optional[bool | str] = None
     is_active: Optional[bool] = None
     team_humano_id: Optional[int] = None
     url_drive: Optional[str] = None

@@ -298,6 +298,64 @@ async def test_funnel_system_prompt_renders_image_snapshot_data() -> None:
     assert "// CONTEXTO TEMPORAL COMPLETO" in prompt
 
 
+async def test_load_funnel_context_accepts_textual_es_calificado() -> None:
+    snapshot = {
+        "contexto_embudo": {
+            "success": True,
+            "data": {
+                "informacion_contacto": {
+                    "contacto_id": 555001,
+                    "nombre": "Laura",
+                    "apellido": "Diaz",
+                    "nombre_completo": "Laura Diaz",
+                    "telefono": "573001112233",
+                    "email": "laura@example.com",
+                    "es_calificado": "evaluando",
+                    "etapa_actual_orden": None,
+                    "metadata": {},
+                },
+                "etapa_actual": None,
+                "tiene_embudo": True,
+            },
+        },
+        "etapas_embudo": {
+            "success": True,
+            "data": {
+                "contacto": {
+                    "id": 555001,
+                    "nombre": "Laura",
+                    "apellido": "Diaz",
+                    "nombre_completo": "Laura Diaz",
+                    "telefono": "573001112233",
+                    "email": "laura@example.com",
+                    "etapa_actual_orden": None,
+                },
+                "etapas": [],
+            },
+        },
+        "conversacion_memoria": {
+            "success": True,
+            "data": {
+                "id": 90001,
+                "mensajes": [],
+            },
+        },
+    }
+
+    with patch("app.agents.funnel.db.load_contexto_completo_local", return_value=snapshot):
+        context = await _load_funnel_context(contacto_id=555001, empresa_id=4, conversacion_id=90001)
+
+    assert context.contacto.es_calificado == "evaluando"
+
+    prompt = _build_funnel_system_prompt(
+        context=context,
+        etapas_payload=snapshot["etapas_embudo"]["data"]["etapas"],
+        contexto_embudo_payload=snapshot["contexto_embudo"]["data"],
+    )
+
+    assert '"es_calificado": "evaluando"' in prompt
+
+
 async def test_run_funnel_agent_keeps_full_system_prompt_in_trace() -> None:
     request = FunnelAgentRequest(contacto_id=333358, empresa_id=4, agente_id=7, conversacion_id=64368)
 
@@ -341,6 +399,7 @@ async def main() -> int:
     await test_run_funnel_agent_returns_diagnostic_trace_on_error()
     await test_funnel_system_prompt_includes_operational_sections()
     await test_funnel_system_prompt_renders_image_snapshot_data()
+    await test_load_funnel_context_accepts_textual_es_calificado()
     await test_run_funnel_agent_keeps_full_system_prompt_in_trace()
     print("OK - funnel regression tests passed")
     return 0
