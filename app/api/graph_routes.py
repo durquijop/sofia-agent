@@ -1,8 +1,11 @@
 """Dynamic graph schema endpoint — introspects agents, tools, and orchestration at runtime."""
 from __future__ import annotations
 
+import json
 import logging
-from fastapi import APIRouter
+from typing import Optional
+
+from fastapi import APIRouter, Query
 
 from app.agents.conversational import MAX_CONVERSATIONAL_LLM_ITERATIONS
 from app.agents.contact_update import (
@@ -10,6 +13,7 @@ from app.agents.contact_update import (
     CONTACT_UPDATE_MODEL,
     MAX_CONTACT_UPDATE_ITERATIONS,
 )
+from app.db import queries as db
 
 logger = logging.getLogger(__name__)
 
@@ -17,30 +21,91 @@ router = APIRouter(prefix="/api/v1/graph", tags=["graph"])
 
 
 # ---------------------------------------------------------------------------
+# Parse mcp_url into list of URLs (same logic as kapso_routes._build_mcp_servers)
+# ---------------------------------------------------------------------------
+
+def _parse_mcp_urls(raw) -> list[dict]:
+    """Parse mcp_url field into list of {url, name} dicts."""
+    if not raw:
+        return []
+    if isinstance(raw, str):
+        value = raw.strip()
+        if not value:
+            return []
+        if value.startswith("["):
+            try:
+                parsed = json.loads(value)
+                results = []
+                for item in parsed:
+                    if isinstance(item, dict) and item.get("url"):
+                        results.append({"url": item["url"], "name": item.get("name", "")})
+                    elif isinstance(item, str) and item.strip():
+                        results.append({"url": item.strip(), "name": ""})
+                return results
+            except json.JSONDecodeError:
+                pass
+        if "," in value:
+            return [{"url": u.strip(), "name": ""} for u in value.split(",") if u.strip()]
+        return [{"url": value, "name": ""}]
+    return []
+
+
+# ---------------------------------------------------------------------------
 # Graph introspection helpers
 # ---------------------------------------------------------------------------
 
-def _build_graph_schema() -> dict:
-    """Build the full graph schema by introspecting actual agent definitions."""
+async def _build_graph_schema(empresa_id: int | None = None) -> dict:
+    """Build the full graph schema by introspecting actual agent definitions.
+    
+    If empresa_id is provided, fetches agent data from Supabase to enrich
+    the MCP and LLM details dynamically.
+    """
 
     nodes: list[dict] = []
     edges: list[dict] = []
 
-    # ── External services (always present) ──
+    # ── Fetch live agent data from Supabase if possible ──
+    agent_data: dict | None = None
+    mcp_urls: list[dict] = []
+    llm_model = "grok-4.1-fast"
+    manejo_herramientas = ""
+
+    if empresa_id:
+        try:
+            agentes = await db.get_agentes_por_empresa(empresa_id)
+            if agentes:
+                # Use first agent (primary) — fetch full details
+                agent_data = await db.get_agente(agentes[0]["id"])
+                if agent_data:
+                    llm_model = agent_data.get("llm") or "grok-4.1-fast"
+                    mcp_urls = _parse_mcp_urls(agent_data.get("mcp_url"))
+                    manejo_herramientas = (agent_data.get("manejo_herramientas") or "").strip()
+        except Exception as e:
+            logger.warning("Could not fetch agent data for graph: %s", e)
+
+    # ── External services ──
     nodes.append({
         "id": "whatsapp", "label": "WhatsApp", "kind": "external",
         "desc": "WhatsApp via Kapso Bridge",
         "detail": "Bridge: kapso-bridge/server.mjs\nFunciones: envío texto, reacciones,\nbotones, listas, media\nTyping keepalive cada 20s",
     })
+
+    openrouter_detail = f"Base URL: openrouter.ai/api/v1\nModelo activo: {llm_model}\nProvee inferencia LLM para los agentes"
     nodes.append({
         "id": "openrouter", "label": "OpenRouter", "kind": "external",
         "desc": "OpenRouter LLM API",
-        "detail": "Base URL: openrouter.ai/api/v1\nModelo: x-ai/grok-4.1-fast\nProvee inferencia LLM para los agentes",
+        "detail": openrouter_detail,
     })
+
+    # MCP Servers — show actual URLs if available
+    mcp_srv_detail = "Configurados por agente en BD\nDescubrimiento dinámico de herramientas\nConexión vía StreamableHTTPTransport"
+    if mcp_urls:
+        url_lines = "\n".join(f"· {m['url']}" for m in mcp_urls)
+        mcp_srv_detail = f"URLs activas:\n{url_lines}\n\nConexión vía StreamableHTTPTransport"
     nodes.append({
         "id": "mcp_srv", "label": "MCP Servers", "kind": "external",
         "desc": "Servidores MCP externos",
-        "detail": "Configurados por agente en BD\nDescubrimiento dinámico de herramientas\nConexión vía StreamableHTTPTransport",
+        "detail": mcp_srv_detail,
     })
 
     # ── Database ──
@@ -58,11 +123,16 @@ def _build_graph_schema() -> dict:
     })
     edges.append({"from": "whatsapp", "to": "orch", "label": "mensaje entrante"})
 
-    # ── Conversational Agent ──
+    # ── Conversational Agent — with live LLM model ──
+    conv_detail = (
+        f"Modelo: {llm_model}\nTemp: 0.7 · Max tokens: 1024\n"
+        f"Iteraciones LLM: hasta {MAX_CONVERSATIONAL_LLM_ITERATIONS}\n"
+        f"Memoria: agent_memory (8 turnos)\nRecibe prompt enriquecido del funnel"
+    )
     nodes.append({
         "id": "conv", "label": "Conversacional", "kind": "agent",
         "desc": "Agente Conversacional",
-        "detail": f"Modelo: grok-4.1-fast\nTemp: 0.7 · Max tokens: 1024\nIteraciones LLM: hasta {MAX_CONVERSATIONAL_LLM_ITERATIONS}\nMemoria: agent_memory (8 turnos)\nRecibe prompt enriquecido del funnel",
+        "detail": conv_detail,
     })
     edges.append({"from": "orch", "to": "conv", "label": "Phase 3 (prompt enriquecido)"})
     edges.append({"from": "conv", "to": "whatsapp", "label": "respuesta final"})
@@ -77,10 +147,23 @@ def _build_graph_schema() -> dict:
     })
     edges.append({"from": "conv", "to": "t_reaction", "label": ""})
 
+    # MCP Tools — with live instructions
+    mcp_detail = "Descubrimiento vía JSON-RPC\nProtocolo: initialize → tools/list → tools/call\nTimeout discovery: 15s\nCache por servidor"
+    if mcp_urls:
+        mcp_detail += f"\n\nServidores: {len(mcp_urls)}"
+        for m in mcp_urls:
+            name_part = f" ({m['name']})" if m.get("name") else ""
+            mcp_detail += f"\n· {m['url']}{name_part}"
+    if manejo_herramientas:
+        # Truncate to keep tooltip readable
+        instrucciones_preview = manejo_herramientas[:500]
+        if len(manejo_herramientas) > 500:
+            instrucciones_preview += "…"
+        mcp_detail += f"\n\n📋 Instrucciones:\n{instrucciones_preview}"
     nodes.append({
         "id": "t_mcp", "label": "MCP Tools", "kind": "tool",
         "desc": "Herramientas MCP (dinámicas)",
-        "detail": "Descubrimiento vía JSON-RPC\nProtocolo: initialize → tools/list → tools/call\nTimeout discovery: 15s\nCache por servidor",
+        "detail": mcp_detail,
     })
     edges.append({"from": "conv", "to": "t_mcp", "label": ""})
     edges.append({"from": "t_mcp", "to": "mcp_srv", "label": "JSON-RPC"})
@@ -89,7 +172,7 @@ def _build_graph_schema() -> dict:
     nodes.append({
         "id": "funnel", "label": "Embudo", "kind": "agent",
         "desc": "Agente de Embudo",
-        "detail": "Modelo: grok-4.1-fast\nTemp: 0.5 · Max tokens: 512\nIteraciones LLM: hasta 2\nTimeout: 25s\nAnaliza etapa del contacto en el funnel",
+        "detail": f"Modelo: {llm_model}\nTemp: 0.5 · Max tokens: 512\nIteraciones LLM: hasta 2\nTimeout: 25s\nAnaliza etapa del contacto en el funnel",
     })
     edges.append({"from": "orch", "to": "funnel", "label": "Phase 1 (paralelo)"})
     edges.append({"from": "funnel", "to": "orch", "label": "resultado embudo", "dash": True})
@@ -186,9 +269,9 @@ def _enrich_node(node: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 @router.get("/schema")
-async def get_graph_schema():
+async def get_graph_schema(empresa_id: Optional[int] = Query(None, description="ID de empresa para obtener datos reales del agente")):
     """Return the full graph schema for the constellation visualization."""
-    schema = _build_graph_schema()
+    schema = await _build_graph_schema(empresa_id=empresa_id)
     schema["nodes"] = [_enrich_node(n) for n in schema["nodes"]]
     # Ensure every edge has a dash field
     for e in schema["edges"]:

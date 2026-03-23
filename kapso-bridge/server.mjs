@@ -17,6 +17,7 @@ const KAPSO_BASE_URL = process.env.KAPSO_BASE_URL || 'https://api.kapso.ai/meta/
 const KAPSO_WEBHOOK_SECRET = process.env.KAPSO_WEBHOOK_SECRET || '';
 const INTERNAL_AGENT_API_URL = process.env.INTERNAL_AGENT_API_URL || 'http://127.0.0.1:8000/api/v1/kapso/inbound';
 const KAPSO_INTERNAL_TOKEN = process.env.KAPSO_INTERNAL_TOKEN || '';
+const DEFAULT_EMPRESA_ID = process.env.DEFAULT_EMPRESA_ID || '1';
 
 const client = new WhatsAppClient({
   baseUrl: KAPSO_BASE_URL,
@@ -1644,13 +1645,15 @@ app.get('/debug/kapso', async (_req, res) => {
   }
 });
 
-app.get('/debug/kapso/visual', async (_req, res) => {
+app.get('/debug/kapso/visual', async (req, res) => {
   res.set('Cache-Control', 'no-store, max-age=0');
   // Fetch graph schema from Python backend and inject it into the HTML
   let graphData = null;
   try {
     const baseUrl = INTERNAL_AGENT_API_URL.replace(/\/api\/v1\/kapso\/inbound$/, '');
-    const r = await fetch(`${baseUrl}/api/v1/graph/schema`);
+    const eid = req.query.empresa_id || DEFAULT_EMPRESA_ID;
+    const empresaParam = eid ? `?empresa_id=${encodeURIComponent(eid)}` : '';
+    const r = await fetch(`${baseUrl}/api/v1/graph/schema${empresaParam}`);
     if (r.ok) graphData = await r.json();
   } catch (err) {
     console.warn('[visual] Could not fetch graph schema:', err.message);
