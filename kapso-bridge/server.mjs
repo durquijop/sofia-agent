@@ -543,6 +543,7 @@ function renderKapsoBasicHtml(debugData) {
     <div class="actions">
       <a href="/debug/kapso">Refrescar</a>
       <a href="/debug/kapso/data" target="_blank" rel="noreferrer">Ver JSON</a>
+      <a href="/debug/kapso/visual" style="background:#6366f1;color:#fff;padding:4px 10px;border-radius:6px;text-decoration:none;font-size:12px">🔍 Ver visual</a>
     </div>
   </div>
 
@@ -591,6 +592,238 @@ function renderKapsoBasicHtml(debugData) {
     <summary>JSON completo</summary>
     <pre>${escapeHtml(JSON.stringify(debugData, null, 2))}</pre>
   </details>
+</body>
+</html>`;
+}
+
+function renderConstellationHtml() {
+  return `<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Kapso — Constellation</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:'Inter','SF Pro',system-ui,sans-serif;color:#e2e8f0}
+canvas{display:block;position:absolute;top:0;left:0}
+#back{position:fixed;top:16px;left:16px;z-index:20;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);color:#93c5fd;padding:6px 14px;border-radius:8px;font-size:12px;cursor:pointer;text-decoration:none;backdrop-filter:blur(8px)}
+#back:hover{background:rgba(255,255,255,.12)}
+#title{position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:20;font-size:13px;letter-spacing:2px;text-transform:uppercase;color:rgba(255,255,255,.25);pointer-events:none}
+#tooltip{position:fixed;display:none;z-index:30;background:rgba(15,23,42,.92);border:1px solid rgba(99,102,241,.4);border-radius:10px;padding:14px 18px;max-width:340px;font-size:12px;line-height:1.6;backdrop-filter:blur(12px);box-shadow:0 8px 32px rgba(0,0,0,.5);pointer-events:none}
+#tooltip h3{font-size:14px;margin-bottom:6px;font-weight:600}
+#tooltip .tag{display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;letter-spacing:.5px;margin-bottom:8px}
+#tooltip .detail{color:#94a3b8;font-size:11px}
+#tooltip .detail b{color:#e2e8f0}
+#legend{position:fixed;bottom:16px;left:16px;z-index:20;display:flex;gap:14px;font-size:11px;color:rgba(255,255,255,.4)}
+#legend span{display:flex;align-items:center;gap:5px}
+#legend i{display:inline-block;width:10px;height:10px;border-radius:50%}
+</style>
+</head>
+<body>
+<a href="/debug/kapso" id="back">← Panel</a>
+<div id="title">Agent Constellation</div>
+<canvas id="c"></canvas>
+<div id="tooltip"></div>
+<div id="legend">
+  <span><i style="background:#6366f1"></i> Orquestador</span>
+  <span><i style="background:#f59e0b"></i> Agente</span>
+  <span><i style="background:#10b981"></i> Herramienta</span>
+  <span><i style="background:#3b82f6"></i> Externo</span>
+  <span><i style="background:#ec4899"></i> Base de datos</span>
+</div>
+<script>
+const C=document.getElementById('c'),X=C.getContext('2d'),TT=document.getElementById('tooltip');
+let W,H,mx=-1,my=-1,hovered=null,t=0,dpr=1;
+
+/* ── Graph data ── */
+const NODES=[
+  // Orchestrator
+  {id:'orch',label:'Orquestador',kind:'orchestrator',x:.5,y:.18,r:28,
+   color:'#6366f1',glow:'rgba(99,102,241,.35)',
+   desc:'Kapso Inbound Handler',detail:'POST /api/v1/kapso/inbound\\nPhase 1: Funnel + Contact Update (paralelo)\\nPhase 2: Enriquecimiento del prompt\\nPhase 3: Agente Conversacional\\nPhase 4: Merge de resultados'},
+
+  // Agents
+  {id:'conv',label:'Conversacional',kind:'agent',x:.5,y:.48,r:24,
+   color:'#f59e0b',glow:'rgba(245,158,11,.3)',
+   desc:'Agente Conversacional',detail:'Modelo: grok-4.1-fast\\nTemp: 0.7 · Max tokens: 1024\\nIteraciones LLM: hasta 4\\nMemoria: agent_memory (8 turnos)\\nRecibe prompt enriquecido del funnel'},
+  {id:'funnel',label:'Embudo',kind:'agent',x:.25,y:.42,r:22,
+   color:'#f59e0b',glow:'rgba(245,158,11,.3)',
+   desc:'Agente de Embudo',detail:'Modelo: grok-4.1-fast\\nTemp: 0.5 · Max tokens: 512\\nIteraciones LLM: hasta 2\\nTimeout: 25s\\nAnaliza etapa del contacto en el funnel'},
+  {id:'contact',label:'Contacto',kind:'agent',x:.75,y:.42,r:22,
+   color:'#f59e0b',glow:'rgba(245,158,11,.3)',
+   desc:'Agente de Actualización de Contacto',detail:'Modelo: grok-4.1-fast\\nTemp: 0.2 · Max tokens: 512\\nIteraciones LLM: hasta 2\\nTimeout: 20s\\nCaptura nombre, email, teléfono, etc.'},
+
+  // Tools
+  {id:'t_reaction',label:'send_reaction',kind:'tool',x:.62,y:.64,r:14,
+   color:'#10b981',glow:'rgba(16,185,129,.25)',
+   desc:'Herramienta: send_reaction',detail:'Envía emoji de reacción al mensaje\\nParámetro: emoji (❤️ 🙏 😂 🎉 👍 🔥)\\nActiva en mensajes emotivos'},
+  {id:'t_mcp',label:'MCP Tools',kind:'tool',x:.38,y:.64,r:14,
+   color:'#10b981',glow:'rgba(16,185,129,.25)',
+   desc:'Herramientas MCP (dinámicas)',detail:'Descubrimiento vía JSON-RPC\\nProtocolo: initialize → tools/list → tools/call\\nTimeout discovery: 15s\\nCache por servidor'},
+  {id:'t_metadata',label:'update_metadata',kind:'tool',x:.15,y:.58,r:14,
+   color:'#10b981',glow:'rgba(16,185,129,.25)',
+   desc:'Herramienta: update_metadata',detail:'Registra información capturada\\nParámetros: informacion_capturada, seccion,\\nid_etapa (opcional), razon_etapa\\nEscribe en wp_contactos.metadata'},
+  {id:'t_update',label:'update_contact',kind:'tool',x:.85,y:.58,r:14,
+   color:'#10b981',glow:'rgba(16,185,129,.25)',
+   desc:'Herramienta: update_contact_info',detail:'Actualiza columnas de wp_contactos\\nCampos: nombre, apellido, email, teléfono,\\netapa_emocional, timezone, es_calificado, estado'},
+
+  // External services
+  {id:'whatsapp',label:'WhatsApp',kind:'external',x:.5,y:.04,r:18,
+   color:'#3b82f6',glow:'rgba(59,130,246,.3)',
+   desc:'WhatsApp via Kapso Bridge',detail:'Bridge: kapso-bridge/server.mjs\\nFunciones: envío texto, reacciones,\\nbotones, listas, media\\nTyping keepalive cada 20s'},
+  {id:'openrouter',label:'OpenRouter',kind:'external',x:.12,y:.22,r:16,
+   color:'#3b82f6',glow:'rgba(59,130,246,.3)',
+   desc:'OpenRouter LLM API',detail:'Base URL: openrouter.ai/api/v1\\nModelo: x-ai/grok-4.1-fast\\nProvee inferencia LLM para los 3 agentes'},
+  {id:'mcp_srv',label:'MCP Servers',kind:'external',x:.25,y:.72,r:16,
+   color:'#3b82f6',glow:'rgba(59,130,246,.3)',
+   desc:'Servidores MCP externos',detail:'Configurados por agente en BD\\nDescubrimiento dinámico de herramientas\\nConexión vía StreamableHTTPTransport'},
+
+  // Database
+  {id:'supabase',label:'Supabase',kind:'database',x:.88,y:.22,r:20,
+   color:'#ec4899',glow:'rgba(236,72,153,.3)',
+   desc:'Supabase (PostgreSQL + REST)',detail:'Tablas principales:\\n· wp_contactos (perfil + metadata)\\n· agent_memory (memoria conversacional)\\n· wp_conversaciones\\n· wp_mensajes\\n· wp_citas\\n· wp_contactos_nota'},
+];
+
+const EDGES=[
+  // Orchestrator connections
+  {from:'whatsapp',to:'orch',label:'mensaje entrante',dash:false},
+  {from:'orch',to:'funnel',label:'Phase 1 (paralelo)',dash:true},
+  {from:'orch',to:'contact',label:'Phase 1 (paralelo)',dash:true},
+  {from:'funnel',to:'orch',label:'resultado embudo',dash:true},
+  {from:'orch',to:'conv',label:'Phase 3 (prompt enriquecido)',dash:false},
+  {from:'conv',to:'whatsapp',label:'respuesta final',dash:false},
+
+  // Agent → Tools
+  {from:'conv',to:'t_reaction',label:'',dash:true},
+  {from:'conv',to:'t_mcp',label:'',dash:true},
+  {from:'funnel',to:'t_metadata',label:'',dash:true},
+  {from:'contact',to:'t_update',label:'',dash:true},
+
+  // Tools → External
+  {from:'t_mcp',to:'mcp_srv',label:'JSON-RPC',dash:true},
+  {from:'t_metadata',to:'supabase',label:'PATCH wp_contactos',dash:true},
+  {from:'t_update',to:'supabase',label:'PATCH wp_contactos',dash:true},
+
+  // Agents → LLM
+  {from:'conv',to:'openrouter',label:'LLM',dash:true},
+  {from:'funnel',to:'openrouter',label:'LLM',dash:true},
+  {from:'contact',to:'openrouter',label:'LLM',dash:true},
+
+  // Agents → DB (memory)
+  {from:'conv',to:'supabase',label:'agent_memory',dash:true},
+];
+
+/* ── Stars background ── */
+const stars=Array.from({length:280},()=>({x:Math.random(),y:Math.random(),s:Math.random()*.8+.2,b:Math.random()}));
+
+function resize(){
+  dpr=window.devicePixelRatio||1;
+  W=window.innerWidth;H=window.innerHeight;
+  C.width=W*dpr;C.height=H*dpr;
+  C.style.width=W+'px';C.style.height=H+'px';
+  X.setTransform(dpr,0,0,dpr,0,0);
+}
+window.addEventListener('resize',resize);resize();
+
+function nodePos(n){return{x:n.x*W,y:n.y*H}}
+
+/* ── Draw ── */
+function draw(){
+  t+=.003;
+  X.clearRect(0,0,W,H);
+
+  // Stars
+  for(const s of stars){
+    const bri=.15+.12*Math.sin(t*2+s.b*6.28);
+    X.fillStyle='rgba(255,255,255,'+bri+')';
+    X.beginPath();X.arc(s.x*W,s.y*H,s.s*dpr,0,6.28);X.fill();
+  }
+
+  // Edges
+  for(const e of EDGES){
+    const a=NODES.find(n=>n.id===e.from),b=NODES.find(n=>n.id===e.to);
+    if(!a||!b)continue;
+    const p1=nodePos(a),p2=nodePos(b);
+    const isHov=hovered&&(hovered.id===a.id||hovered.id===b.id);
+    X.save();
+    X.strokeStyle=isHov?'rgba(255,255,255,.35)':'rgba(255,255,255,.08)';
+    X.lineWidth=isHov?1.5:0.7;
+    if(e.dash){X.setLineDash([4,6]);}else{X.setLineDash([]);}
+    X.beginPath();X.moveTo(p1.x,p1.y);X.lineTo(p2.x,p2.y);X.stroke();
+    X.restore();
+
+    // Edge label
+    if(e.label&&isHov){
+      const mx2=(p1.x+p2.x)/2,my2=(p1.y+p2.y)/2;
+      X.font='10px Inter,system-ui,sans-serif';
+      X.fillStyle='rgba(255,255,255,.45)';
+      X.textAlign='center';X.textBaseline='middle';
+      X.fillText(e.label,mx2,my2-8);
+    }
+  }
+
+  // Nodes
+  for(const n of NODES){
+    const p=nodePos(n);
+    const isHov=hovered&&hovered.id===n.id;
+    const pulse=1+.08*Math.sin(t*3+n.x*10);
+    const R=n.r*pulse*(isHov?1.15:1);
+
+    // Glow
+    const g=X.createRadialGradient(p.x,p.y,R*.3,p.x,p.y,R*2.2);
+    g.addColorStop(0,n.glow);g.addColorStop(1,'transparent');
+    X.fillStyle=g;X.beginPath();X.arc(p.x,p.y,R*2.2,0,6.28);X.fill();
+
+    // Core
+    X.fillStyle=n.color;X.globalAlpha=isHov?1:.7;
+    X.beginPath();X.arc(p.x,p.y,R,0,6.28);X.fill();
+    X.globalAlpha=1;
+
+    // Border ring
+    X.strokeStyle=isHov?'rgba(255,255,255,.5)':'rgba(255,255,255,.12)';
+    X.lineWidth=isHov?2:1;
+    X.beginPath();X.arc(p.x,p.y,R+2,0,6.28);X.stroke();
+
+    // Label
+    X.font=(n.kind==='orchestrator'?'bold ':n.kind==='agent'?'600 ':'')+'11px Inter,system-ui,sans-serif';
+    X.fillStyle='#fff';X.textAlign='center';X.textBaseline='middle';
+    X.fillText(n.label,p.x,p.y+R+14);
+  }
+
+  requestAnimationFrame(draw);
+}
+requestAnimationFrame(draw);
+
+/* ── Interaction ── */
+C.addEventListener('mousemove',e=>{
+  mx=e.clientX;my=e.clientY;
+  hovered=null;
+  for(const n of NODES){
+    const p=nodePos(n);
+    const dx=mx-p.x,dy=my-p.y;
+    if(dx*dx+dy*dy<(n.r+10)*(n.r+10)){hovered=n;break;}
+  }
+  if(hovered){
+    C.style.cursor='pointer';
+    const n=hovered,p=nodePos(n);
+    const colors={orchestrator:'#6366f1',agent:'#f59e0b',tool:'#10b981',external:'#3b82f6',database:'#ec4899'};
+    const labels={orchestrator:'ORQUESTADOR',agent:'AGENTE',tool:'HERRAMIENTA',external:'SERVICIO EXTERNO',database:'BASE DE DATOS'};
+    TT.innerHTML='<h3>'+n.desc+'</h3>'
+      +'<span class="tag" style="background:'+colors[n.kind]+'22;color:'+colors[n.kind]+'">'+labels[n.kind]+'</span>'
+      +'<div class="detail">'+n.detail.replace(/\\n/g,'<br>')+'</div>';
+    TT.style.display='block';
+    let tx=mx+16,ty=my+16;
+    if(tx+350>W)tx=mx-360;
+    if(ty+200>H)ty=my-200;
+    TT.style.left=tx+'px';TT.style.top=ty+'px';
+  }else{
+    C.style.cursor='default';
+    TT.style.display='none';
+  }
+});
+C.addEventListener('mouseleave',()=>{hovered=null;TT.style.display='none';});
+</script>
 </body>
 </html>`;
 }
@@ -1389,7 +1622,7 @@ app.get('/debug/kapso', async (_req, res) => {
 
 app.get('/debug/kapso/visual', async (_req, res) => {
   res.set('Cache-Control', 'no-store, max-age=0');
-  res.status(200).type('html').send('<!DOCTYPE html><html><head><meta charset="utf-8"><title>Kapso Visual</title></head><body><h1>Visual — próximamente</h1><a href="/debug/kapso">← Volver al panel</a></body></html>');
+  res.status(200).type('html').send(renderConstellationHtml());
 });
 
 app.get('/debug/kapso/app.js', (_req, res) => {
