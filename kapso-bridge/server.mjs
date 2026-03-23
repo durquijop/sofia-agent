@@ -596,7 +596,8 @@ function renderKapsoBasicHtml(debugData) {
 </html>`;
 }
 
-function renderConstellationHtml() {
+function renderConstellationHtml(graphData) {
+  const injectedData = graphData ? JSON.stringify(graphData) : 'null';
   return `<!doctype html>
 <html lang="es">
 <head>
@@ -621,6 +622,7 @@ canvas{display:block;position:absolute;top:0;left:0}
 #legend{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);z-index:20;display:flex;gap:20px;font-size:12px;color:rgba(255,255,255,.35);background:rgba(8,4,28,.6);border:1px solid rgba(255,255,255,.06);border-radius:12px;padding:10px 24px;backdrop-filter:blur(12px)}
 #legend span{display:flex;align-items:center;gap:6px}
 #legend i{display:inline-block;width:10px;height:10px;border-radius:50%;box-shadow:0 0 6px currentColor}
+#loader{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:25;color:rgba(167,139,250,.6);font-size:14px;letter-spacing:2px;text-transform:uppercase;pointer-events:none}
 </style>
 </head>
 <body>
@@ -630,6 +632,7 @@ canvas{display:block;position:absolute;top:0;left:0}
   <p>Neural Architecture Map</p>
 </div>
 <canvas id="c"></canvas>
+<div id="loader">Cargando grafo…</div>
 <div id="tooltip"></div>
 <div id="legend">
   <span><i style="background:#a78bfa;color:#a78bfa"></i> Orquestador</span>
@@ -640,70 +643,20 @@ canvas{display:block;position:absolute;top:0;left:0}
 </div>
 <script>
 const C=document.getElementById('c'),X=C.getContext('2d'),TT=document.getElementById('tooltip');
+const LOADER=document.getElementById('loader');
 let W,H,mx=-1,my=-1,hovered=null,dragging=null,dragOff={x:0,y:0},t=0,dpr=1;
 
-const NODES=[
-  {id:'orch',label:'Orquestador',kind:'orchestrator',x:.5,y:.22,r:38,
-   color:'#a78bfa',glow:'rgba(167,139,250,.4)',
-   desc:'Kapso Inbound Handler',detail:'POST /api/v1/kapso/inbound\\nPhase 1: Funnel + Contact Update (paralelo)\\nPhase 2: Enriquecimiento del prompt\\nPhase 3: Agente Conversacional\\nPhase 4: Merge de resultados'},
+let NODES=[], EDGES=[];
 
-  {id:'conv',label:'Conversacional',kind:'agent',x:.5,y:.52,r:32,
-   color:'#fb923c',glow:'rgba(251,146,60,.35)',
-   desc:'Agente Conversacional',detail:'Modelo: grok-4.1-fast\\nTemp: 0.7 · Max tokens: 1024\\nIteraciones LLM: hasta 4\\nMemoria: agent_memory (8 turnos)\\nRecibe prompt enriquecido del funnel'},
-  {id:'funnel',label:'Embudo',kind:'agent',x:.24,y:.45,r:30,
-   color:'#fb923c',glow:'rgba(251,146,60,.35)',
-   desc:'Agente de Embudo',detail:'Modelo: grok-4.1-fast\\nTemp: 0.5 · Max tokens: 512\\nIteraciones LLM: hasta 2\\nTimeout: 25s\\nAnaliza etapa del contacto en el funnel'},
-  {id:'contact',label:'Contacto',kind:'agent',x:.76,y:.45,r:30,
-   color:'#fb923c',glow:'rgba(251,146,60,.35)',
-   desc:'Agente de Actualización de Contacto',detail:'Modelo: grok-4.1-fast\\nTemp: 0.2 · Max tokens: 512\\nIteraciones LLM: hasta 2\\nTimeout: 20s\\nCaptura nombre, email, teléfono, etc.'},
-
-  {id:'t_reaction',label:'send_reaction',kind:'tool',x:.64,y:.67,r:20,
-   color:'#34d399',glow:'rgba(52,211,153,.3)',
-   desc:'Herramienta: send_reaction',detail:'Envía emoji de reacción al mensaje\\nParámetro: emoji (❤️ 🙏 😂 🎉 👍 🔥)\\nActiva en mensajes emotivos'},
-  {id:'t_mcp',label:'MCP Tools',kind:'tool',x:.36,y:.67,r:20,
-   color:'#34d399',glow:'rgba(52,211,153,.3)',
-   desc:'Herramientas MCP (dinámicas)',detail:'Descubrimiento vía JSON-RPC\\nProtocolo: initialize → tools/list → tools/call\\nTimeout discovery: 15s\\nCache por servidor'},
-  {id:'t_metadata',label:'update_metadata',kind:'tool',x:.12,y:.60,r:20,
-   color:'#34d399',glow:'rgba(52,211,153,.3)',
-   desc:'Herramienta: update_metadata',detail:'Registra información capturada\\nParámetros: informacion_capturada, seccion,\\nid_etapa (opcional), razon_etapa\\nEscribe en wp_contactos.metadata'},
-  {id:'t_update',label:'update_contact',kind:'tool',x:.88,y:.60,r:20,
-   color:'#34d399',glow:'rgba(52,211,153,.3)',
-   desc:'Herramienta: update_contact_info',detail:'Actualiza columnas de wp_contactos\\nCampos: nombre, apellido, email, teléfono,\\netapa_emocional, timezone, es_calificado, estado'},
-
-  {id:'whatsapp',label:'WhatsApp',kind:'external',x:.5,y:.10,r:26,
-   color:'#60a5fa',glow:'rgba(96,165,250,.35)',
-   desc:'WhatsApp via Kapso Bridge',detail:'Bridge: kapso-bridge/server.mjs\\nFunciones: envío texto, reacciones,\\nbotones, listas, media\\nTyping keepalive cada 20s'},
-  {id:'openrouter',label:'OpenRouter',kind:'external',x:.10,y:.28,r:22,
-   color:'#60a5fa',glow:'rgba(96,165,250,.35)',
-   desc:'OpenRouter LLM API',detail:'Base URL: openrouter.ai/api/v1\\nModelo: x-ai/grok-4.1-fast\\nProvee inferencia LLM para los 3 agentes'},
-  {id:'mcp_srv',label:'MCP Servers',kind:'external',x:.22,y:.80,r:22,
-   color:'#60a5fa',glow:'rgba(96,165,250,.35)',
-   desc:'Servidores MCP externos',detail:'Configurados por agente en BD\\nDescubrimiento dinámico de herramientas\\nConexión vía StreamableHTTPTransport'},
-
-  {id:'supabase',label:'Supabase',kind:'database',x:.90,y:.28,r:28,
-   color:'#f472b6',glow:'rgba(244,114,182,.35)',
-   desc:'Supabase (PostgreSQL + REST)',detail:'Tablas principales:\\n· wp_contactos (perfil + metadata)\\n· agent_memory (memoria conversacional)\\n· wp_conversaciones\\n· wp_mensajes\\n· wp_citas\\n· wp_contactos_nota'},
-];
-
-const EDGES=[
-  {from:'whatsapp',to:'orch',label:'mensaje entrante',dash:false},
-  {from:'orch',to:'funnel',label:'Phase 1 (paralelo)',dash:false},
-  {from:'orch',to:'contact',label:'Phase 1 (paralelo)',dash:false},
-  {from:'funnel',to:'orch',label:'resultado embudo',dash:true},
-  {from:'orch',to:'conv',label:'Phase 3 (prompt enriquecido)',dash:false},
-  {from:'conv',to:'whatsapp',label:'respuesta final',dash:false},
-  {from:'conv',to:'t_reaction',label:'',dash:false},
-  {from:'conv',to:'t_mcp',label:'',dash:false},
-  {from:'funnel',to:'t_metadata',label:'',dash:false},
-  {from:'contact',to:'t_update',label:'',dash:false},
-  {from:'t_mcp',to:'mcp_srv',label:'JSON-RPC',dash:false},
-  {from:'t_metadata',to:'supabase',label:'PATCH metadata',dash:false},
-  {from:'t_update',to:'supabase',label:'PATCH contacto',dash:false},
-  {from:'conv',to:'openrouter',label:'LLM',dash:false},
-  {from:'funnel',to:'openrouter',label:'LLM',dash:false},
-  {from:'contact',to:'openrouter',label:'LLM',dash:false},
-  {from:'conv',to:'supabase',label:'agent_memory',dash:true},
-];
+/* ── Load graph schema (injected server-side) ── */
+const _injected = ${injectedData};
+if(_injected && _injected.nodes){
+  NODES=_injected.nodes;
+  EDGES=_injected.edges||[];
+  if(LOADER)LOADER.style.display='none';
+}else{
+  if(LOADER)LOADER.textContent='Grafo no disponible — reinicia el servidor Python';
+}
 
 /* ── Nebula & stars ── */
 const stars=Array.from({length:400},()=>({x:Math.random(),y:Math.random(),s:Math.random()*1.2+.3,b:Math.random(),sp:Math.random()*.5+.5}));
@@ -1693,7 +1646,16 @@ app.get('/debug/kapso', async (_req, res) => {
 
 app.get('/debug/kapso/visual', async (_req, res) => {
   res.set('Cache-Control', 'no-store, max-age=0');
-  res.status(200).type('html').send(renderConstellationHtml());
+  // Fetch graph schema from Python backend and inject it into the HTML
+  let graphData = null;
+  try {
+    const baseUrl = INTERNAL_AGENT_API_URL.replace(/\/api\/v1\/kapso\/inbound$/, '');
+    const r = await fetch(`${baseUrl}/api/v1/graph/schema`);
+    if (r.ok) graphData = await r.json();
+  } catch (err) {
+    console.warn('[visual] Could not fetch graph schema:', err.message);
+  }
+  res.status(200).type('html').send(renderConstellationHtml(graphData));
 });
 
 app.get('/debug/kapso/app.js', (_req, res) => {

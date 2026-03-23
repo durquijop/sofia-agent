@@ -10,6 +10,7 @@ from app.api.kapso_routes import router as kapso_router
 from app.api.routes import router
 from app.api.db_routes import router as db_router
 from app.api.funnel_routes import router as funnel_router
+from app.api.graph_routes import router as graph_router
 from app.core.config import get_settings
 
 logging.basicConfig(
@@ -52,6 +53,7 @@ app.include_router(router)
 app.include_router(kapso_router)
 app.include_router(db_router)
 app.include_router(funnel_router)
+app.include_router(graph_router)
 
 
 @app.get("/")
