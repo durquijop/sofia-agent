@@ -134,6 +134,13 @@ function buildKapsoInteractions(bridgeEvents = [], fastapiEvents = []) {
         if (payload.timing) interaction.timing = Object.assign(interaction.timing || {}, payload.timing);
       }
 
+      if (event.stage === 'run_funnel_done') {
+        if (payload.timing) interaction.funnel_timing = Object.assign(interaction.funnel_timing || {}, payload.timing);
+        if (payload.etapa_nueva !== undefined) interaction.funnel_etapa_nueva = payload.etapa_nueva;
+        if (payload.metadata_actualizada) interaction.funnel_metadata_actualizada = payload.metadata_actualizada;
+        if (payload.error) interaction.funnel_error = payload.error;
+      }
+
       if (event.stage === 'http_error' || event.stage === 'exception') {
         interaction.status = 'error';
         interaction.error = payload.error || payload.detail || 'Error en FastAPI';
@@ -488,6 +495,12 @@ function renderKapsoBasicHtml(debugData) {
           <pre>${escapeHtml(item.message_text || '—')}</pre>
           <div style="margin:12px 0 6px"><strong>Respuesta preview</strong></div>
           <pre>${escapeHtml(item.response_preview || '—')}</pre>
+          <div style="margin:12px 0 6px"><strong>Embudo en metadata</strong></div>
+          <pre>${escapeHtml(JSON.stringify({
+            etapa_nueva: item.funnel_etapa_nueva ?? null,
+            metadata_actualizada: item.funnel_metadata_actualizada ?? null,
+            error: item.funnel_error ?? null,
+          }, null, 2))}</pre>
           <div style="margin:12px 0 6px"><strong>Timing global</strong></div>
           ${renderTimingTable(item.timing || {})}
           <div style="margin:12px 0 6px"><strong>Resumen de ejecución</strong></div>

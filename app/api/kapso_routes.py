@@ -795,6 +795,7 @@ async def kapso_inbound(
                 "tools_used": [tool.model_dump() for tool in (funnel_result.tools_used if funnel_result else [])],
                 "agent_runs": [agent_run.model_dump() for agent_run in (funnel_result.agent_runs if funnel_result else [])],
                 "etapa_nueva": funnel_result.etapa_nueva if funnel_result else None,
+                "metadata_actualizada": funnel_result.metadata_actualizada if funnel_result else None,
             },
         )
 
