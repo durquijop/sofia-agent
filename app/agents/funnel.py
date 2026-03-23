@@ -3,6 +3,7 @@ import asyncio
 from datetime import datetime, timedelta
 import json
 import logging
+import re
 import time
 from typing import Annotated, TypedDict
 
@@ -161,6 +162,87 @@ def _create_llm(model: str, max_tokens: int = 512, temperature: float = 0.5) -> 
 
 def _stringify_safe(value) -> str:
     return json.dumps(value if value is not None else None, ensure_ascii=False, indent=2)
+
+
+_EMAIL_REGEX = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.IGNORECASE)
+_GENERIC_USER_MESSAGES = {
+    "hola",
+    "ok",
+    "oki",
+    "dale",
+    "si",
+    "sí",
+    "asi es",
+    "así es",
+    "pendiente",
+}
+
+
+def _normalize_conversation_speaker(remitente: str | None) -> str:
+    value = str(remitente or "desconocido").strip().lower()
+    if value in {"usuario", "user", "cliente", "contacto"}:
+        return "usuario"
+    if value in {"agente", "assistant", "asistente", "bot", "ia", "ai"}:
+        return "agente"
+    return value or "desconocido"
+
+
+def _extract_user_highlights(mensajes: list[dict]) -> list[str]:
+    highlights: list[str] = []
+    seen: set[str] = set()
+    for msg in mensajes:
+        if _normalize_conversation_speaker(msg.get("remitente")) != "usuario":
+            continue
+        text = str(msg.get("mensaje") or msg.get("contenido") or "").strip()
+        if not text:
+            continue
+        normalized = text.casefold()
+        if normalized in _GENERIC_USER_MESSAGES:
+            continue
+        looks_like_name = (
+            len(text.split()) >= 2
+            and len(text) <= 80
+            and not any(char.isdigit() for char in text)
+            and all(token[:1].isupper() for token in text.split() if token[:1].isalpha())
+        )
+        has_email = bool(_EMAIL_REGEX.search(text))
+        if has_email or looks_like_name or len(text) >= 10:
+            if text not in seen:
+                seen.add(text)
+                highlights.append(text)
+    return highlights[:8]
+
+
+def _build_funnel_user_message(conversacion_memoria_payload: dict) -> str:
+    mensajes = list((conversacion_memoria_payload or {}).get("mensajes") or [])
+    transcript_lines: list[str] = []
+    for msg in mensajes[-12:]:
+        speaker = _normalize_conversation_speaker(msg.get("remitente"))
+        hora = str(msg.get("hora") or msg.get("fecha_hora") or msg.get("timestamp") or "?").strip()
+        content = str(msg.get("mensaje") or msg.get("contenido") or "").strip()
+        if not content:
+            continue
+        transcript_lines.append(f"- [{hora}] {speaker}: {content}")
+
+    highlights = _extract_user_highlights(mensajes)
+    transcript_block = "\n".join(transcript_lines) if transcript_lines else "- Sin mensajes previos"
+    highlights_block = "\n".join(f"- {item}" for item in highlights) if highlights else "- No se detectaron datos claros"
+    summary_payload = {
+        "conversacion_id": conversacion_memoria_payload.get("id"),
+        "contacto_id": conversacion_memoria_payload.get("contacto_id"),
+        "canal": conversacion_memoria_payload.get("canal"),
+        "total_mensajes": conversacion_memoria_payload.get("total_mensajes"),
+        "mensajes_retornados": conversacion_memoria_payload.get("mensajes_retornados"),
+    }
+    return (
+        "Resumen de la conversación:\n"
+        f"{_stringify_safe(summary_payload)}\n\n"
+        "Transcript útil reciente:\n"
+        f"{transcript_block}\n\n"
+        "Datos potenciales mencionados por el usuario:\n"
+        f"{highlights_block}\n\n"
+        "Usa las tools si es necesario."
+    )
 
 
 def _build_temporal_context() -> str:
@@ -366,16 +448,6 @@ Output esperado:
 Tu respuesta final debe estar orientada a guiar al equipo en el estado actual del embudo. La respuesta debe ser de máximo 3 líneas.
 
 No le respondas al prospecto. Ese no es tu trabajo."""
-
-
-def _build_funnel_user_message(conversacion_memoria_payload: dict) -> str:
-    return (
-        "Historial de la conversación:\n"
-        f"{_stringify_safe(conversacion_memoria_payload)}\n\n"
-        "Usa las tools si es necesario."
-    )
-
-
 def _format_context_para_prompt(context: FunnelContextResponse) -> str:
     """Formatea el contexto del embudo para incluir en el system prompt."""
     lines = []

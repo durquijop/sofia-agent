@@ -792,6 +792,22 @@ async def kapso_inbound(
             bool(funnel_result and funnel_result.success),
         )
 
+        if conversacion_db_id and (conversational_result.response or "").strip():
+            await db.insertar_mensaje(
+                conversacion_id=int(conversacion_db_id),
+                contenido=(conversational_result.response or "").strip(),
+                remitente="agente",
+                tipo="texto",
+                status="sent",
+                modelo_llm=conversational_result.model_used,
+                metadata={
+                    "source": "kapso_outbound",
+                    "message_id": request.message_id,
+                    "agent_id": int(agente_id),
+                },
+                empresa_id=empresa_id,
+            )
+
         reaction_payload = None
         if reaction_emoji:
             reaction_payload = KapsoReactionPayload(

@@ -10,7 +10,7 @@ from langchain_core.messages import AIMessage
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from app.agents.funnel import _build_funnel_system_prompt, _load_funnel_context, run_funnel_agent
+from app.agents.funnel import _build_funnel_system_prompt, _build_funnel_user_message, _load_funnel_context, run_funnel_agent
 from app.schemas.funnel import FunnelAgentRequest
 IMAGE_SNAPSHOT = {
     "contexto_embudo": {
@@ -394,6 +394,35 @@ async def test_run_funnel_agent_keeps_full_system_prompt_in_trace() -> None:
     assert '"telefono": "573197956965"' in trace.system_prompt
 
 
+async def test_funnel_user_prompt_compacts_transcript_and_keeps_key_data() -> None:
+    payload = {
+        "id": 64368,
+        "empresa_id": 4,
+        "agente_id": 7,
+        "contacto_id": 133678,
+        "canal": "Kapso",
+        "total_mensajes": 6,
+        "mensajes_retornados": 6,
+        "mensajes": [
+            {"hora": "08:18:26", "remitente": "usuario", "mensaje": "Hola"},
+            {"hora": "08:20:00", "remitente": "agente", "mensaje": "Hola, ¿me compartes tu nombre completo?"},
+            {"hora": "08:26:23", "remitente": "usuario", "mensaje": "Agustin Peralta Guarin"},
+            {"hora": "08:40:00", "remitente": "agente", "mensaje": "Perfecto, ahora compárteme tu correo."},
+            {"hora": "08:46:47", "remitente": "usuario", "mensaje": "apg@urpeailab.com"},
+            {"hora": "08:50:39", "remitente": "usuario", "mensaje": "Soy colombiano"},
+        ],
+    }
+
+    prompt = _build_funnel_user_message(payload)
+
+    assert '"conversacion_id": 64368' in prompt
+    assert '- [08:20:00] agente: Hola, ¿me compartes tu nombre completo?' in prompt
+    assert '- [08:26:23] usuario: Agustin Peralta Guarin' in prompt
+    assert '- Agustin Peralta Guarin' in prompt
+    assert '- apg@urpeailab.com' in prompt
+    assert '"mensajes": [' not in prompt
+
+
 async def main() -> int:
     await test_load_funnel_context_normalizes_local_snapshot()
     await test_run_funnel_agent_returns_diagnostic_trace_on_error()
@@ -401,6 +430,7 @@ async def main() -> int:
     await test_funnel_system_prompt_renders_image_snapshot_data()
     await test_load_funnel_context_accepts_textual_es_calificado()
     await test_run_funnel_agent_keeps_full_system_prompt_in_trace()
+    await test_funnel_user_prompt_compacts_transcript_and_keeps_key_data()
     print("OK - funnel regression tests passed")
     return 0
 
