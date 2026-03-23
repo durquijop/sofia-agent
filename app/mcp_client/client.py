@@ -15,24 +15,38 @@ class MCPClient:
         self.server_url = server_url.rstrip("/")
         self.server_name = server_name or self.server_url.split("/")[-1][:12]
         self._tools_cache: list[dict] | None = None
+        self._session_id: str | None = None
+        self._request_id: int = 0
+
+    def _next_id(self) -> int:
+        self._request_id += 1
+        return self._request_id
 
     async def _send_jsonrpc(self, method: str, params: dict | None = None) -> dict:
-        """Envía una request JSON-RPC al MCP server."""
+        """Envía una request JSON-RPC al MCP server, manteniendo session ID."""
         payload = {
             "jsonrpc": "2.0",
-            "id": 1,
+            "id": self._next_id(),
             "method": method,
         }
         if params:
             payload["params"] = params
 
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        }
+        if self._session_id:
+            headers["mcp-session-id"] = self._session_id
+
         async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                self.server_url,
-                json=payload,
-                headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
-            )
+            response = await client.post(self.server_url, json=payload, headers=headers)
             response.raise_for_status()
+
+            # Capture session ID from server
+            new_session = response.headers.get("mcp-session-id")
+            if new_session:
+                self._session_id = new_session
 
             content_type = response.headers.get("content-type", "")
 
@@ -90,27 +104,36 @@ class MCPClient:
             return []
 
     async def call_tool(self, tool_name: str, arguments: dict) -> Any:
-        """Ejecuta una herramienta en el MCP server."""
-        try:
-            result = await self._send_jsonrpc("tools/call", {
-                "name": tool_name,
-                "arguments": arguments,
-            })
-            tool_result = result.get("result", {})
-            content = tool_result.get("content", [])
+        """Ejecuta una herramienta en el MCP server. Re-initializes session on 400."""
+        for attempt in range(2):
+            try:
+                result = await self._send_jsonrpc("tools/call", {
+                    "name": tool_name,
+                    "arguments": arguments,
+                })
+                tool_result = result.get("result", {})
+                content = tool_result.get("content", [])
 
-            text_parts = []
-            for item in content:
-                if isinstance(item, dict) and item.get("type") == "text":
-                    text_parts.append(item.get("text", ""))
-                elif isinstance(item, str):
-                    text_parts.append(item)
+                text_parts = []
+                for item in content:
+                    if isinstance(item, dict) and item.get("type") == "text":
+                        text_parts.append(item.get("text", ""))
+                    elif isinstance(item, str):
+                        text_parts.append(item)
 
-            return "\n".join(text_parts) if text_parts else json.dumps(tool_result)
-        except Exception as e:
-            error_msg = f"Error ejecutando herramienta '{tool_name}': {e}"
-            logger.error(error_msg)
-            return error_msg
+                return "\n".join(text_parts) if text_parts else json.dumps(tool_result)
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 400 and attempt == 0:
+                    logger.warning(f"MCP session expired for '{tool_name}', re-initializing...")
+                    self._session_id = None
+                    await self.initialize()
+                    continue
+                raise
+            except Exception as e:
+                error_msg = f"Error ejecutando herramienta '{tool_name}': {e}"
+                logger.error(error_msg)
+                return error_msg
+        return f"Error: tool '{tool_name}' failed after retry"
 
 
 def _build_tool_schema(tool_def: dict) -> dict:

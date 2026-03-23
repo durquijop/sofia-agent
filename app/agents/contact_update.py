@@ -1,6 +1,7 @@
 """Agente de actualización de contacto - analiza conversación y actualiza wp_contactos."""
 import asyncio
 from datetime import datetime, timezone
+import re
 import time
 import logging
 from typing import Annotated, Any, TypedDict
@@ -380,7 +381,10 @@ async def run_contact_update_agent(request: ContactUpdateAgentRequest) -> Contac
             )
         else:
             response_text = last_message.content if isinstance(last_message, AIMessage) else str(last_message.content)
-        response_text = "\n".join(str(response_text).split("\n")[:2]).strip()
+        # Strip tool-leak lines before truncating
+        from app.agents.conversational import _clean_tool_leaks
+        response_text = _clean_tool_leaks(str(response_text))
+        response_text = "\n".join(response_text.split("\n")[:2]).strip()
 
         timing = TimingInfo(
             total_ms=round((time.perf_counter() - t_start) * 1000, 1),

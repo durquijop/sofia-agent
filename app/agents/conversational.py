@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 import time
 import unicodedata
 import uuid
@@ -151,6 +152,32 @@ def _normalize_text(value: str | None) -> str:
     normalized = unicodedata.normalize("NFKD", str(value))
     without_accents = "".join(char for char in normalized if not unicodedata.combining(char))
     return " ".join(without_accents.lower().split())
+
+
+# Patterns that indicate the LLM leaked tool-calling instructions into text
+_TOOL_LEAK_PATTERNS = re.compile(
+    r"^("
+    r"[Uu]sar\s+herramienta[s]?\s*[:：].*"
+    r"|[Ll]lamar\s+herramienta[s]?\s*[:：].*"
+    r"|[Uu]se\s+tool[s]?\s*[:：].*"
+    r"|[Cc]all\s+tool[s]?\s*[:：].*"
+    r"|[Tt]ool\s+call[s]?\s*[:：].*"
+    r"|[Hh]erramienta\s*[:：]\s*\w+.*"
+    r"|[Aa]cción\s*[:：]\s*\w+.*"
+    r"|→\s*\w+\(.*\).*"
+    r")$",
+    re.MULTILINE,
+)
+
+
+def _clean_tool_leaks(text: str) -> str:
+    """Remove lines where the LLM leaked tool usage instructions into the response."""
+    if not text:
+        return text
+    cleaned = _TOOL_LEAK_PATTERNS.sub("", text)
+    # Collapse multiple blank lines
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    return cleaned
 
 
 def _is_reaction_only_request(message: str | None) -> bool:
@@ -486,6 +513,29 @@ async def run_agent(request: ChatRequest) -> ChatResponse:
     mcp_discovery_ms = (time.perf_counter() - t_mcp) * 1000
     available_tools = _describe_available_tools(tools)
 
+    # Enrich system prompt with explicit tool descriptions so the LLM knows what it can do
+    system_prompt = request.system_prompt
+    if tools:
+        tool_lines = []
+        for t in tools:
+            name = getattr(t, "name", "unknown")
+            desc = getattr(t, "description", "") or ""
+            # Gather parameter names from the schema
+            schema = getattr(t, "args_schema", None)
+            if schema and hasattr(schema, "model_fields"):
+                params = ", ".join(schema.model_fields.keys())
+            else:
+                params = ""
+            tool_lines.append(f"- **{name}**({params}): {desc}")
+        tool_section = (
+            "\n\n---\n\n"
+            "## 🔧 HERRAMIENTAS DISPONIBLES (MCP)\n"
+            "Tienes acceso a las siguientes herramientas. DEBES usarlas cuando la situación lo requiera. "
+            "No describas la herramienta al usuario ni menciones que la vas a usar; simplemente ejecútala internamente.\n\n"
+            + "\n".join(tool_lines)
+        )
+        system_prompt = system_prompt + tool_section
+
     # Crear LLM con parámetros del request
     llm = _create_llm(model, max_tokens, temperature)
     llm_with_tools = llm.bind_tools(tools)
@@ -497,7 +547,7 @@ async def run_agent(request: ChatRequest) -> ChatResponse:
     graph_build_ms = (time.perf_counter() - t_graph) * 1000
 
     # Preparar mensajes iniciales
-    messages = [SystemMessage(content=request.system_prompt)]
+    messages = [SystemMessage(content=system_prompt)]
     if memory_session_id and not reaction_only_request:
         memory_messages = await _load_memory_messages(memory_session_id, memory_window)
         messages.extend(memory_messages)
@@ -531,6 +581,8 @@ async def run_agent(request: ChatRequest) -> ChatResponse:
     else:
         last_message = final_state["messages"][-1]
         response_text = str(last_message.content or "") if isinstance(last_message, AIMessage) else ""
+
+    response_text = _clean_tool_leaks(response_text)
 
     # Guardar en cache (solo sin MCP tools)
     if memory_session_id:
