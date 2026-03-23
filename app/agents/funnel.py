@@ -39,7 +39,7 @@ class FunnelAgentState(TypedDict):
     messages: Annotated[list, add_messages]
     tools_used: list[ToolCall]
     etapa_anterior: str | None
-    etapa_nueva: str | None
+    etapa_nueva: int | None
     metadata_actualizada: dict | None
     tool_execution_ms: float
     llm_elapsed_ms: float
@@ -544,6 +544,8 @@ Output esperado:
 Tu respuesta final debe estar orientada a guiar al equipo en el estado actual del embudo. La respuesta debe ser de máximo 3 líneas.
 
 No le respondas al prospecto. Ese no es tu trabajo."""
+
+
 def _format_context_para_prompt(context: FunnelContextResponse) -> str:
     """Formatea el contexto del embudo para incluir en el system prompt."""
     lines = []
@@ -719,6 +721,8 @@ def _build_graph(llm_with_tools, context: FunnelContextResponse, requestData: Fu
         tool_execution_ms = float(state.get("tool_execution_ms", 0))
         etapa_nueva = None
         metadata_actualizada = None
+        short_circuit = bool(state.get("short_circuit", False))
+        short_circuit_response: str | None = state.get("short_circuit_response")
         
         last_message = state["messages"][-1]
         
@@ -729,6 +733,8 @@ def _build_graph(llm_with_tools, context: FunnelContextResponse, requestData: Fu
                 "etapa_nueva": etapa_nueva,
                 "metadata_actualizada": metadata_actualizada,
                 "tool_execution_ms": round(tool_execution_ms, 1),
+                "short_circuit": short_circuit,
+                "short_circuit_response": short_circuit_response,
             }
         
         # Ejecutar herramientas
@@ -805,12 +811,23 @@ def _build_graph(llm_with_tools, context: FunnelContextResponse, requestData: Fu
             )
             tools_used.append(tool_call)
         
+            if tool_name == "update_metadata":
+                short_circuit = True
+                if etapa_nueva is not None:
+                    short_circuit_response = f"Etapa actualizada a {etapa_nueva} y metadata sincronizada."
+                elif metadata_actualizada:
+                    short_circuit_response = "Metadata actualizada sin cambio de etapa."
+                else:
+                    short_circuit_response = "Sin cambios nuevos de metadata ni etapa."
+        
         return {
             "messages": tool_messages,
             "tools_used": tools_used,
             "etapa_nueva": etapa_nueva,
             "metadata_actualizada": metadata_actualizada,
             "tool_execution_ms": round(tool_execution_ms, 1),
+            "short_circuit": short_circuit,
+            "short_circuit_response": short_circuit_response,
         }
     
     def _should_use_tools(state: FunnelAgentState) -> str:
@@ -823,6 +840,8 @@ def _build_graph(llm_with_tools, context: FunnelContextResponse, requestData: Fu
     def _should_continue(state: FunnelAgentState) -> str:
         """Después de ejecutar herramientas, volver al agente para análisis final.
         Limita a máximo 2 iteraciones LLM para evitar loops infinitos."""
+        if bool(state.get("short_circuit", False)):
+            return END
         llm_iterations = int(state.get("llm_iterations", 0))
         max_iterations = 2
         
@@ -976,8 +995,12 @@ async def run_funnel_agent(request: FunnelAgentRequest) -> FunnelAgentResponse:
         final_state = await compiled.ainvoke(initial_state)
         
         # Extraer respuesta
-        last_message = final_state["messages"][-1]
-        response_text = last_message.content if isinstance(last_message, AIMessage) else str(last_message.content)
+        short_circuit_response = final_state.get("short_circuit_response")
+        if short_circuit_response:
+            response_text = str(short_circuit_response)
+        else:
+            last_message = final_state["messages"][-1]
+            response_text = str(last_message.content or "") if isinstance(last_message, AIMessage) else ""
         
         # Asegurar máx 3 líneas
         response_text = "\n".join(response_text.split("\n")[:3]).strip()

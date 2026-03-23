@@ -29,6 +29,22 @@ DEFAULT_KAPSO_FALLBACK_PHONE = "14705500109"
 DEFAULT_KAPSO_FALLBACK_AGENT_ID = 4
 FUNNEL_TIMEOUT_SECONDS = 25
 DEFAULT_EMPTY_REPLY_TEXT = "Hola, te leo. ¿En qué puedo ayudarte?"
+FUNNEL_SKIP_TEXTS = {
+    "hola",
+    "hola!",
+    "hi",
+    "hello",
+    "buenos dias",
+    "buen día",
+    "buen dia",
+    "buenas tardes",
+    "buenas noches",
+    "ok",
+    "oki",
+    "dale",
+    "gracias",
+    "muchas gracias",
+}
 MULTIMEDIA_EXTENSIONS = (
     ".ogg",
     ".mp3",
@@ -258,11 +274,19 @@ def _build_funnel_error_response(
     )
 
 
+def _should_run_funnel_agent(message: str | None) -> bool:
+    normalized = re.sub(r"\s+", " ", str(message or "").strip().lower())
+    if not normalized:
+        return False
+    return normalized not in FUNNEL_SKIP_TEXTS
+
+
 async def _run_both_agents(
     *,
     started_at: float,
     system_prompt: str,
     user_message: str,
+    raw_user_text: str | None,
     model: str | None,
     mcp_servers: list[MCPServerConfig],
     conversation_id: str,
@@ -287,7 +311,7 @@ async def _run_both_agents(
     )
 
     funnel_task = None
-    if contacto_id is not None and empresa_id is not None:
+    if contacto_id is not None and empresa_id is not None and _should_run_funnel_agent(raw_user_text):
         funnel_task = asyncio.create_task(
             run_funnel_agent(
                 FunnelAgentRequest(
@@ -765,6 +789,7 @@ async def kapso_inbound(
             started_at=started_at,
             system_prompt=system_prompt,
             user_message=user_message,
+            raw_user_text=request.text,
             model=model,
             mcp_servers=mcp_servers,
             conversation_id=conversation_id,

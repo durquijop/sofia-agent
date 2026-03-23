@@ -476,7 +476,7 @@ async def run_agent(request: ChatRequest) -> ChatResponse:
 
     # Cargar herramientas MCP (en paralelo)
     t_mcp = time.perf_counter()
-    tools = [send_reaction]
+    tools = []
     if request.mcp_servers and not reaction_only_request:
         mcp_configs = [{"url": s.url, "name": s.name} for s in request.mcp_servers]
         tools.extend(await _load_mcp_tools(mcp_configs))
