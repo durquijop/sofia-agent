@@ -707,6 +707,7 @@ function renderKapsoDebugHtml() {
       <span class="muted" id="upd">cargando...</span>
       <button class="btn btn-g" id="ar-btn">⏸ Pausar</button>
       <button class="btn" id="refresh-btn">↻ Refrescar</button>
+      <button class="btn" id="visual-btn" style="background:#6366f1;color:#fff;">🔍 Ver visual</button>
     </div>
   </div>
   <div class="layout">
@@ -915,6 +916,8 @@ function bindEvents(){
   if(fi) fi.addEventListener('input',onFilter);
   if(closeBtn) closeBtn.addEventListener('click',closeM);
   if(ov) ov.addEventListener('click',event=>{if(event.target===ov) closeM();});
+  const visualBtn=document.getElementById('visual-btn');
+  if(visualBtn) visualBtn.addEventListener('click',()=>{ window.location.href='/debug/kapso/visual'; });
   document.querySelectorAll('.tab').forEach(tab=>{
     tab.addEventListener('click',()=>swTab(tab.dataset.t));
   });
@@ -1120,6 +1123,32 @@ async function markKapsoAsRead(phoneNumberId, messageId) {
     console.error('[KapsoBridge] Error enviando seen/typing:', error?.stack || error);
     return null;
   }
+}
+
+const TYPING_KEEPALIVE_INTERVAL_MS = 20_000;
+
+/**
+ * Start a periodic typing indicator that re-fires every 20s.
+ * Returns an abort controller — call .abort() to stop the loop.
+ */
+function startTypingKeepalive(phoneNumberId, messageId) {
+  const ac = new AbortController();
+  (async () => {
+    while (!ac.signal.aborted) {
+      await sleep(TYPING_KEEPALIVE_INTERVAL_MS);
+      if (ac.signal.aborted) break;
+      try {
+        await client.messages.markRead({
+          phoneNumberId,
+          messageId,
+          typingIndicator: { type: 'text' },
+        });
+      } catch (err) {
+        console.warn('[KapsoBridge] typing keepalive error (non-fatal):', err?.message || err);
+      }
+    }
+  })();
+  return ac;
 }
 
 async function callInternalAgent(sqlPayload) {
@@ -1358,6 +1387,11 @@ app.get('/debug/kapso', async (_req, res) => {
   }
 });
 
+app.get('/debug/kapso/visual', async (_req, res) => {
+  res.set('Cache-Control', 'no-store, max-age=0');
+  res.status(200).type('html').send('<!DOCTYPE html><html><head><meta charset="utf-8"><title>Kapso Visual</title></head><body><h1>Visual — próximamente</h1><a href="/debug/kapso">← Volver al panel</a></body></html>');
+});
+
 app.get('/debug/kapso/app.js', (_req, res) => {
   res.set('Cache-Control', 'no-store, max-age=0');
   res.status(200).type('application/javascript').send(renderKapsoDebugScript());
@@ -1436,7 +1470,13 @@ app.post('/webhook/kapso', async (req, res) => {
             `[KapsoBridge] procesando from=${sqlPayload.from} phone_number_id=${sqlPayload.phone_number_id} message_id=${sqlPayload.message_id}`,
           );
           await markKapsoAsRead(sqlPayload.phone_number_id, sqlPayload.message_id);
-          const reply = await withTimeout(callInternalAgent(sqlPayload), PROCESS_TIMEOUT_MS);
+          const typingKeepalive = startTypingKeepalive(sqlPayload.phone_number_id, sqlPayload.message_id);
+          let reply;
+          try {
+            reply = await withTimeout(callInternalAgent(sqlPayload), PROCESS_TIMEOUT_MS);
+          } finally {
+            typingKeepalive.abort();
+          }
           const sendResult = await dispatchKapsoResponse(reply);
           addBridgeDebugEvent('message_processing_done', {
             from: sqlPayload.from,
