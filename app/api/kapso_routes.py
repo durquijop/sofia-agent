@@ -1,6 +1,9 @@
+import asyncio
 import json
 import logging
 import os
+import re
+import time
 import uuid
 
 from fastapi import APIRouter, Header, HTTPException
@@ -13,7 +16,7 @@ from app.core.kapso_debug import (
     mask_secret,
 )
 from app.db import queries as db
-from app.schemas.chat import ChatRequest, MCPServerConfig
+from app.schemas.chat import ChatRequest, MCPServerConfig, TimingInfo
 from app.schemas.kapso import KapsoInboundRequest, KapsoInboundResponse, KapsoReactionPayload
 
 logger = logging.getLogger(__name__)
@@ -21,6 +24,160 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/kapso", tags=["kapso"])
 DEFAULT_KAPSO_FALLBACK_PHONE = "14705500109"
 DEFAULT_KAPSO_FALLBACK_AGENT_ID = 4
+MULTIMEDIA_EXTENSIONS = (
+    ".ogg",
+    ".mp3",
+    ".wav",
+    ".mp4",
+    ".avi",
+    ".mov",
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".gif",
+    ".pdf",
+    ".doc",
+    ".docx",
+    ".xls",
+    ".xlsx",
+)
+MULTIMEDIA_URL_REGEX = re.compile(r"https?://[^\s]+", re.IGNORECASE)
+
+
+def _normalize_phone(value: str | None) -> str | None:
+    if not value:
+        return None
+    normalized = re.sub(r"\D+", "", str(value))
+    if normalized.startswith("00"):
+        normalized = normalized[2:]
+    return normalized or None
+
+
+def _extract_multimedia_urls(message: str | None) -> list[str]:
+    if not message:
+        return []
+    text = str(message)
+    if "http" not in text.lower():
+        return []
+    urls = MULTIMEDIA_URL_REGEX.findall(text)
+    return [url for url in urls if any(ext in url.lower() for ext in MULTIMEDIA_EXTENSIONS)]
+
+
+def _extract_media_reference(inbound: KapsoInboundRequest) -> str:
+    media = inbound.media_raw if isinstance(inbound.media_raw, dict) else {}
+    message_type = str(inbound.message_type or "").strip().lower()
+    media_block = media.get(message_type)
+
+    if isinstance(media_block, dict):
+        for key in ("link", "url", "id"):
+            value = media_block.get(key)
+            if value:
+                return str(value).strip()
+        caption = media_block.get("caption")
+        if caption:
+            return str(caption).strip()
+
+    kapso_payload = media.get("kapso")
+    if isinstance(kapso_payload, dict):
+        content = kapso_payload.get("content")
+        if content:
+            return str(content).strip()
+
+    return f"[media:{message_type or 'unknown'}]"
+
+
+def _separate_message_parts(inbound: KapsoInboundRequest) -> list[dict[str, str]]:
+    message = inbound.text.strip() if inbound.text and inbound.text.strip() else ""
+    urls = _extract_multimedia_urls(message)
+
+    if not urls and not inbound.has_media:
+        return [{"contenido": message, "tipo": "texto"}] if message else []
+
+    parts: list[dict[str, str]] = []
+    if urls:
+        text_with_placeholders = message
+        for index, url in enumerate(urls, start=1):
+            text_with_placeholders = text_with_placeholders.replace(url, f"(link-{index})")
+        text_with_placeholders = re.sub(r"\n\s*\n+", "\n", text_with_placeholders).strip()
+        if text_with_placeholders:
+            parts.append({"contenido": text_with_placeholders, "tipo": "texto"})
+        for url in urls:
+            parts.append({"contenido": url, "tipo": "multimedia"})
+    elif message:
+        parts.append({"contenido": message, "tipo": "texto"})
+
+    if inbound.has_media:
+        media_reference = _extract_media_reference(inbound)
+        if media_reference and media_reference not in {part["contenido"] for part in parts}:
+            parts.append({"contenido": media_reference, "tipo": "multimedia"})
+
+    return parts
+
+
+def _build_user_message(inbound: KapsoInboundRequest, message_parts: list[dict[str, str]]) -> str:
+    text_parts = [part["contenido"].strip() for part in message_parts if part["tipo"] == "texto" and part["contenido"].strip()]
+    multimedia_parts = [
+        part["contenido"].strip()
+        for part in message_parts
+        if part["tipo"] == "multimedia" and part["contenido"].strip()
+    ]
+
+    sections: list[str] = []
+    if text_parts:
+        sections.append("\n".join(text_parts))
+    if multimedia_parts:
+        sections.append(
+            "Archivos o referencias multimedia del usuario:\n"
+            + "\n".join(f"- {item}" for item in multimedia_parts)
+        )
+
+    if sections:
+        return "\n\n".join(sections).strip()
+    if inbound.has_media:
+        return f"El usuario envió un mensaje multimedia de tipo {inbound.message_type} sin texto adicional."
+    return f"El usuario envió un mensaje de tipo {inbound.message_type} sin contenido legible."
+
+
+def _extract_slash_command(message: str | None) -> str | None:
+    if not message:
+        return None
+    normalized = str(message).strip()
+    if not normalized.startswith("/"):
+        return None
+    return normalized.split()[0].lower()
+
+
+def _build_command_response(
+    request: KapsoInboundRequest,
+    conversation_id: str,
+    agent_id: int,
+    agent_name: str,
+    model_used: str,
+    reply_text: str,
+    started_at: float,
+) -> KapsoInboundResponse:
+    total_ms = (time.perf_counter() - started_at) * 1000
+    return KapsoInboundResponse(
+        reply_type="text",
+        reply_text=reply_text,
+        reaction=None,
+        recipient_phone=request.from_phone,
+        phone_number_id=request.phone_number_id,
+        message_id=request.message_id,
+        conversation_id=conversation_id,
+        agent_id=agent_id,
+        agent_name=agent_name,
+        model_used=model_used,
+        timing=TimingInfo(
+            total_ms=round(total_ms, 1),
+            llm_ms=0,
+            mcp_discovery_ms=0,
+            graph_build_ms=0,
+            tool_execution_ms=0,
+        ),
+        tools_used=[],
+        agent_runs=[],
+    )
 
 
 def _build_system_prompt(agent: dict, inbound: KapsoInboundRequest) -> str:
@@ -73,14 +230,6 @@ def _build_system_prompt(agent: dict, inbound: KapsoInboundRequest) -> str:
     )
 
     return "\n\n".join(section for section in sections if section).strip()
-
-
-def _build_user_message(inbound: KapsoInboundRequest) -> str:
-    if inbound.text and inbound.text.strip():
-        return inbound.text.strip()
-    if inbound.has_media:
-        return f"El usuario envió un mensaje multimedia de tipo {inbound.message_type} sin texto adicional."
-    return f"El usuario envió un mensaje de tipo {inbound.message_type} sin contenido legible."
 
 
 def _build_mcp_servers(agent: dict) -> list[MCPServerConfig]:
@@ -144,6 +293,7 @@ async def kapso_inbound(
     x_kapso_internal_token: str | None = Header(default=None),
 ):
     settings = get_settings()
+    started_at = time.perf_counter()
     interaction_id = str(uuid.uuid4())
     add_kapso_debug_event(
         "fastapi",
@@ -202,6 +352,31 @@ async def kapso_inbound(
         else:
             agente_id = DEFAULT_KAPSO_FALLBACK_AGENT_ID
             resolved_via_fallback = True
+
+        numero_id = int(numero["id"]) if numero and numero.get("id") is not None else None
+        empresa_id = int(numero["empresa_id"]) if numero and numero.get("empresa_id") is not None else None
+        normalized_from_phone = _normalize_phone(request.from_phone) or request.from_phone
+        slash_command = _extract_slash_command(request.text)
+        contacto = None
+        contacto_creado = False
+        conversacion_db = None
+
+        if not slash_command and empresa_id and numero_id:
+            contacto, contacto_creado = await db.upsert_contacto_whatsapp(normalized_from_phone, empresa_id)
+            if contacto and contacto.get("id") is not None:
+                conversacion_db = await db.get_conversacion_activa(int(contacto["id"]), numero_id)
+                if conversacion_db and conversacion_db.get("agente_id"):
+                    agente_id = conversacion_db["agente_id"]
+
+        agent = await db.get_agente(int(agente_id))
+        if not agent and numero and numero.get("agente_id") and int(numero.get("agente_id")) != int(agente_id):
+            agente_id = int(numero.get("agente_id"))
+            agent = await db.get_agente(int(agente_id))
+        if not agent and int(agente_id) != DEFAULT_KAPSO_FALLBACK_AGENT_ID:
+            agente_id = DEFAULT_KAPSO_FALLBACK_AGENT_ID
+            resolved_via_fallback = True
+            agent = await db.get_agente(int(agente_id))
+        if resolved_via_fallback:
             add_kapso_debug_event(
                 "fastapi",
                 "fallback_agent",
@@ -212,24 +387,162 @@ async def kapso_inbound(
                 agente_id,
                 request.phone_number_id,
             )
-
-        agent = await db.get_agente(int(agente_id))
         if not agent:
             raise HTTPException(status_code=404, detail="No se encontró el agente configurado para este canal")
 
+        if empresa_id is None and agent.get("empresa_id") is not None:
+            empresa_id = int(agent["empresa_id"])
+        if contacto is None and empresa_id and normalized_from_phone:
+            if slash_command:
+                contacto = await db.get_contacto_por_telefono(normalized_from_phone, empresa_id)
+                contacto_creado = False
+            else:
+                contacto, contacto_creado = await db.upsert_contacto_whatsapp(normalized_from_phone, empresa_id)
+            if numero_id and contacto and contacto.get("id") is not None:
+                conversacion_db = await db.get_conversacion_activa(int(contacto["id"]), numero_id)
+        if not slash_command and empresa_id and numero_id and contacto and contacto.get("id") is not None and conversacion_db is None:
+            try:
+                conversacion_db = await db.insertar_conversacion(
+                    contacto_id=int(contacto["id"]),
+                    agente_id=int(agente_id),
+                    empresa_id=empresa_id,
+                    numero_id=numero_id,
+                    canal=str(numero.get("canal") or "whatsapp"),
+                    metadata=None,
+                )
+            except Exception:
+                conversacion_db = await db.get_conversacion_activa(int(contacto["id"]), numero_id)
+                if conversacion_db is None:
+                    raise
+
         model = agent.get("llm") or None
         mcp_servers_list = _build_mcp_servers(agent)
+        message_parts = _separate_message_parts(request)
 
         system_prompt = _build_system_prompt(agent, request)
-        user_message = _build_user_message(request)
+        user_message = _build_user_message(request, message_parts)
         mcp_servers = mcp_servers_list
         conversation_id = f"kapso:{request.kapso_conversation_id}"
-        contacto = None
-        memory_session_id = request.from_phone
-        if agent.get("empresa_id"):
-            contacto = await db.get_contacto_por_telefono(request.from_phone, int(agent["empresa_id"]))
+        memory_session_id = normalized_from_phone
+        if contacto and contacto.get("id") is not None:
+            memory_session_id = str(contacto["id"])
+
+        if slash_command:
+            session_ids = {normalized_from_phone, request.from_phone}
             if contacto and contacto.get("id") is not None:
-                memory_session_id = str(contacto["id"])
+                session_ids.add(str(contacto["id"]))
+
+            add_kapso_debug_event(
+                "fastapi",
+                "slash_command_detected",
+                {
+                    "message_id": request.message_id,
+                    "command": slash_command,
+                    "contacto_id": contacto.get("id") if contacto else None,
+                    "conversation_db_id": conversacion_db.get("id") if conversacion_db else None,
+                },
+            )
+
+            if slash_command == "/borrar":
+                deleted_counts = await asyncio.gather(*[db.delete_agent_memory(session_id) for session_id in session_ids if session_id])
+                reply_text = f"Memoria del agente borrada. Registros eliminados: {sum(deleted_counts)}."
+            elif slash_command == "/borrar2":
+                deleted_counts = await asyncio.gather(*[db.delete_agent_memory(session_id) for session_id in session_ids if session_id])
+                reset_summary = {"mensajes": 0, "conversaciones": 0, "notas": 0, "citas": 0, "contactos": 0}
+                if contacto and contacto.get("id") is not None:
+                    reset_summary = await db.reset_contacto_data(int(contacto["id"]))
+                    reply_text = (
+                        "Datos del número eliminados. "
+                        "La siguiente interacción se tratará como usuario nuevo. "
+                        f"Memoria: {sum(deleted_counts)} | Mensajes: {reset_summary['mensajes']} | "
+                        f"Conversaciones: {reset_summary['conversaciones']} | Contactos: {reset_summary['contactos']}"
+                    )
+                else:
+                    reply_text = (
+                        "No había datos persistidos del número. "
+                        f"Solo se limpió la memoria del agente ({sum(deleted_counts)} registros)."
+                    )
+            else:
+                reply_text = "Comando no reconocido. Usa /borrar o /borrar2."
+
+            add_kapso_debug_event(
+                "fastapi",
+                "slash_command_done",
+                {
+                    "message_id": request.message_id,
+                    "command": slash_command,
+                    "contacto_id": contacto.get("id") if contacto else None,
+                    "memory_session_id": memory_session_id,
+                    "reply_text": reply_text,
+                },
+            )
+
+            return _build_command_response(
+                request=request,
+                conversation_id=conversation_id,
+                agent_id=int(agente_id),
+                agent_name=agent.get("nombre_agente") or str(agente_id),
+                model_used=agent.get("llm") or settings.DEFAULT_MODEL,
+                reply_text=reply_text,
+                started_at=started_at,
+            )
+
+        add_kapso_debug_event(
+            "fastapi",
+            "inbound_entities_resolved",
+            {
+                "message_id": request.message_id,
+                "normalized_from_phone": normalized_from_phone,
+                "empresa_id": empresa_id,
+                "numero_id": numero_id,
+                "contacto_id": contacto.get("id") if contacto else None,
+                "contacto_creado": contacto_creado,
+                "conversacion_db_id": conversacion_db.get("id") if conversacion_db else None,
+                "message_parts": message_parts,
+            },
+        )
+
+        mensajes_guardados: list[dict] = []
+        if conversacion_db and conversacion_db.get("id") is not None:
+            metadata_base = {
+                "canal": str(numero.get("canal") or "whatsapp"),
+                "phone_number_id": request.phone_number_id,
+                "kapso_conversation_id": request.kapso_conversation_id,
+                "kapso_message_id": request.message_id,
+                "contact_name": request.contact_name,
+                "message_type": request.message_type,
+                "has_media": request.has_media,
+            }
+            for part in message_parts or [{"contenido": user_message, "tipo": "texto"}]:
+                status = "procesando" if part["tipo"] == "multimedia" else "buffer"
+                mensajes_guardados.append(
+                    await db.insertar_mensaje(
+                        conversacion_id=int(conversacion_db["id"]),
+                        contenido=part["contenido"],
+                        remitente="usuario",
+                        tipo=part["tipo"],
+                        status=status,
+                        metadata=metadata_base,
+                        empresa_id=empresa_id,
+                    )
+                )
+
+        add_kapso_debug_event(
+            "fastapi",
+            "inbound_messages_persisted",
+            {
+                "message_id": request.message_id,
+                "conversacion_db_id": conversacion_db.get("id") if conversacion_db else None,
+                "saved_messages": [
+                    {
+                        "id": item.get("id"),
+                        "tipo": item.get("tipo"),
+                        "status": item.get("status"),
+                    }
+                    for item in mensajes_guardados
+                ],
+            },
+        )
 
         add_kapso_debug_event(
             "fastapi",
@@ -238,7 +551,7 @@ async def kapso_inbound(
                 "memory_session_id": memory_session_id,
                 "memory_source": "contacto_id" if contacto and contacto.get("id") is not None else "from_phone",
                 "contacto_id": contacto.get("id") if contacto else None,
-                "from": request.from_phone,
+                "from": normalized_from_phone,
                 "message_id": request.message_id,
             },
         )

@@ -1,5 +1,6 @@
 """Queries Supabase async via httpx pooled client."""
 import asyncio
+from datetime import datetime, timezone
 import logging
 from typing import Any
 from app.db.client import get_supabase
@@ -73,6 +74,34 @@ async def get_contacto_por_telefono(telefono: str, empresa_id: int) -> dict | No
     )
 
 
+async def upsert_contacto_whatsapp(telefono: str, empresa_id: int) -> tuple[dict, bool]:
+    """Crea o actualiza un contacto de WhatsApp minimizando consultas."""
+    sb = await get_supabase()
+    timestamp = datetime.now(timezone.utc).isoformat()
+    existente = await get_contacto_por_telefono(telefono, empresa_id)
+
+    if existente and existente.get("id") is not None:
+        updated = await sb.update(
+            "wp_contactos",
+            {"id": existente["id"]},
+            {"ultima_interaccion": timestamp},
+        )
+        return ((updated[0] if updated else existente), False)
+
+    creado = await sb.insert(
+        "wp_contactos",
+        {
+            "telefono": telefono,
+            "empresa_id": empresa_id,
+            "origen": "Whatsapp",
+            "notas": "",
+            "fecha_registro": timestamp,
+            "ultima_interaccion": timestamp,
+        },
+    )
+    return (creado, True)
+
+
 async def get_contacto_notas(contacto_id: int, limit: int = 10) -> list[dict]:
     """Obtiene las notas visibles para IA de un contacto."""
     sb = await get_supabase()
@@ -120,6 +149,39 @@ async def get_conversacion_activa(contacto_id: int, numero_id: int) -> dict | No
     return results[0] if results else None
 
 
+async def get_conversaciones_contacto(contacto_id: int) -> list[dict]:
+    """Lista conversaciones de un contacto."""
+    sb = await get_supabase()
+    return await sb.query(
+        "wp_conversaciones",
+        select="id,numero_id,agente_id",
+        filters={"contacto_id": contacto_id},
+        order="created_at",
+        order_desc=True,
+    ) or []
+
+
+async def insertar_conversacion(
+    contacto_id: int,
+    agente_id: int | None,
+    empresa_id: int,
+    numero_id: int,
+    canal: str,
+    metadata: dict[str, Any] | None = None,
+) -> dict:
+    """Inserta una nueva conversación."""
+    sb = await get_supabase()
+    payload: dict[str, Any] = {
+        "contacto_id": contacto_id,
+        "agente_id": agente_id,
+        "empresa_id": empresa_id,
+        "numero_id": numero_id,
+        "canal": canal,
+        "metadata": metadata,
+    }
+    return await sb.insert("wp_conversaciones", payload)
+
+
 async def get_mensajes_recientes(conversacion_id: int, limit: int = 20) -> list[dict]:
     """Obtiene los últimos mensajes de una conversación (orden cronológico)."""
     sb = await get_supabase()
@@ -139,8 +201,10 @@ async def insertar_mensaje(
     contenido: str,
     remitente: str,
     tipo: str = "text",
+    status: str = "sent",
     modelo_llm: str | None = None,
     uso_herramientas: dict | None = None,
+    metadata: dict[str, Any] | None = None,
     empresa_id: int | None = None,
 ) -> dict:
     """Inserta un mensaje en una conversación."""
@@ -150,12 +214,14 @@ async def insertar_mensaje(
         "contenido": contenido,
         "remitente": remitente,
         "tipo": tipo,
-        "status": "sent",
+        "status": status,
     }
     if modelo_llm:
         payload["modelo_llm"] = modelo_llm
     if uso_herramientas:
         payload["uso_herramientas"] = uso_herramientas
+    if metadata is not None:
+        payload["metadata"] = metadata
     if empresa_id:
         payload["empresa_id"] = empresa_id
     return await sb.insert("wp_mensajes", payload)
@@ -183,6 +249,40 @@ async def insert_agent_memory(session_id: str, message: dict[str, Any]) -> dict:
             "message": message,
         },
     )
+
+
+async def delete_agent_memory(session_id: str) -> int:
+    """Elimina toda la memoria conversacional de una sesión."""
+    sb = await get_supabase()
+    deleted = await sb.delete("agent_memory", {"session_id": session_id})
+    return len(deleted or [])
+
+
+async def reset_contacto_data(contacto_id: int) -> dict[str, int]:
+    """Elimina la información persistida del contacto para reiniciar su estado."""
+    sb = await get_supabase()
+    conversaciones = await get_conversaciones_contacto(contacto_id)
+    conversation_ids = [int(item["id"]) for item in conversaciones if item.get("id") is not None]
+
+    mensajes_deleted = 0
+    if conversation_ids:
+        deleted_messages = await asyncio.gather(
+            *[sb.delete("wp_mensajes", {"conversacion_id": conversation_id}) for conversation_id in conversation_ids]
+        )
+        mensajes_deleted = sum(len(items or []) for items in deleted_messages)
+
+    conversaciones_deleted = await sb.delete("wp_conversaciones", {"contacto_id": contacto_id})
+    notas_deleted = await sb.delete("wp_contactos_nota", {"contacto_id": contacto_id})
+    citas_deleted = await sb.delete("wp_citas", {"contacto_id": contacto_id})
+    contactos_deleted = await sb.delete("wp_contactos", {"id": contacto_id})
+
+    return {
+        "mensajes": mensajes_deleted,
+        "conversaciones": len(conversaciones_deleted or []),
+        "notas": len(notas_deleted or []),
+        "citas": len(citas_deleted or []),
+        "contactos": len(contactos_deleted or []),
+    }
 
 
 # ─── Citas ───────────────────────────────────────────────────────────────────

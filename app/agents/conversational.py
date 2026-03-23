@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import time
+import unicodedata
 import uuid
 from typing import Annotated, TypedDict
 
@@ -31,6 +32,9 @@ class AgentState(TypedDict):
     tool_execution_ms: float
     llm_elapsed_ms: float
     llm_iterations: int
+    original_user_message: str
+    short_circuit_after_tools: bool
+    short_circuit_response: str | None
 
 
 _llm_cache: dict[str, ChatOpenAI] = {}
@@ -134,6 +138,75 @@ def _describe_available_tools(tools: list) -> list[ToolDefinition]:
     ]
 
 
+def _normalize_text(value: str | None) -> str:
+    if not value:
+        return ""
+    normalized = unicodedata.normalize("NFKD", str(value))
+    without_accents = "".join(char for char in normalized if not unicodedata.combining(char))
+    return " ".join(without_accents.lower().split())
+
+
+def _is_reaction_only_request(message: str | None) -> bool:
+    normalized = _normalize_text(message)
+    if not normalized:
+        return False
+
+    reaction_markers = (
+        "reacciona",
+        "reacciona",
+        "reaccion",
+        "reaction",
+        "emoji",
+        "react to my message",
+    )
+    business_markers = (
+        "visa",
+        "cita",
+        "agendar",
+        "oferta",
+        "puesto",
+        "trabajo",
+        "empleo",
+        "precio",
+        "asesor",
+        "vacante",
+        "asilo",
+    )
+
+    if not any(marker in normalized for marker in reaction_markers):
+        return False
+    if any(marker in normalized for marker in business_markers):
+        return False
+
+    return len(normalized.split()) <= 24
+
+
+def _build_reaction_ack(_message: str | None, _emoji: str | None = None) -> str:
+    return "Ya reaccioné."
+
+
+def _infer_reaction_emoji(message: str | None) -> str:
+    normalized = _normalize_text(message)
+
+    if any(marker in normalized for marker in ("amor", "te amo", "love", "corazon", "corazón", "carino", "cariño")):
+        return "❤️"
+    if any(marker in normalized for marker in ("gracias", "thanks", "agrade", "bendicion", "bendición")):
+        return "🙏"
+    if any(marker in normalized for marker in ("felicidades", "logro", "buenas noticias", "celebra", "gané", "gane")):
+        return "🎉"
+    if any(marker in normalized for marker in ("jaja", "jajaja", "gracioso", "chiste", "haha")):
+        return "😂"
+    if any(marker in normalized for marker in ("hola", "buenos dias", "buenas tardes", "saludos", "hello", "hi")):
+        return "👋"
+    return "👍"
+
+
+def _should_continue_after_tools(state: AgentState) -> str:
+    if state.get("short_circuit_after_tools"):
+        return END
+    return "agent"
+
+
 def _build_graph(llm_with_tools, tools: list) -> StateGraph:
     """Construye el grafo LangGraph para el agente conversacional."""
 
@@ -156,6 +229,8 @@ def _build_graph(llm_with_tools, tools: list) -> StateGraph:
         reaction_emoji: str | None = state.get("reaction_emoji") or None
         tool_messages: list[ToolMessage] = []
         tool_execution_ms = float(state.get("tool_execution_ms", 0))
+        short_circuit_after_tools = False
+        short_circuit_response: str | None = state.get("short_circuit_response")
         last_message = state["messages"][-1]
 
         if not isinstance(last_message, AIMessage) or not last_message.tool_calls:
@@ -164,8 +239,12 @@ def _build_graph(llm_with_tools, tools: list) -> StateGraph:
                 "tools_used": tools_used,
                 "reaction_emoji": reaction_emoji,
                 "tool_execution_ms": round(tool_execution_ms, 1),
+                "short_circuit_after_tools": short_circuit_after_tools,
+                "short_circuit_response": short_circuit_response,
             }
 
+        tool_names: list[str] = []
+        all_tools_ok = True
         for tc in last_message.tool_calls:
             tool_name = tc.get("name") or "unknown"
             raw_args = tc.get("args") or {}
@@ -184,9 +263,11 @@ def _build_graph(llm_with_tools, tools: list) -> StateGraph:
                 status = "error"
                 error_text = str(exc)
                 tool_output = f"Error ejecutando {tool_name}: {exc}"
+                all_tools_ok = False
 
             duration_ms = (time.perf_counter() - tool_start) * 1000
             tool_execution_ms += duration_ms
+            tool_names.append(tool_name)
 
             tool_messages.append(
                 ToolMessage(
@@ -211,11 +292,23 @@ def _build_graph(llm_with_tools, tools: list) -> StateGraph:
             if tool_name == SEND_REACTION_TOOL_NAME and tool_input.get("emoji"):
                 reaction_emoji = str(tool_input["emoji"])
 
+        original_user_message = state.get("original_user_message") or ""
+        if (
+            tool_names
+            and all(name == SEND_REACTION_TOOL_NAME for name in tool_names)
+            and all_tools_ok
+            and _is_reaction_only_request(original_user_message)
+        ):
+            short_circuit_after_tools = True
+            short_circuit_response = _build_reaction_ack(original_user_message, reaction_emoji)
+
         return {
             "messages": tool_messages,
             "tools_used": tools_used,
             "reaction_emoji": reaction_emoji,
             "tool_execution_ms": round(tool_execution_ms, 1),
+            "short_circuit_after_tools": short_circuit_after_tools,
+            "short_circuit_response": short_circuit_response,
         }
 
     graph = StateGraph(AgentState)
@@ -224,7 +317,7 @@ def _build_graph(llm_with_tools, tools: list) -> StateGraph:
 
     graph.set_entry_point("agent")
     graph.add_conditional_edges("agent", _should_use_tools, {"tools": "tools", END: END})
-    graph.add_edge("tools", "agent")
+    graph.add_conditional_edges("tools", _should_continue_after_tools, {"agent": "agent", END: END})
 
     return graph
 
@@ -298,8 +391,64 @@ async def run_agent(request: ChatRequest) -> ChatResponse:
     conversation_id = request.conversation_id or str(uuid.uuid4())
     memory_session_id = request.memory_session_id.strip() if request.memory_session_id else None
     memory_window = max(1, request.memory_window or 8)
+    reaction_only_request = _is_reaction_only_request(request.message)
 
     logger.info(f"run_agent: model={model}, max_tokens={max_tokens}")
+
+    if reaction_only_request:
+        emoji = _infer_reaction_emoji(request.message)
+        available_tools = _describe_available_tools([send_reaction])
+        tool_start = time.perf_counter()
+        tool_output = await send_reaction.ainvoke({"emoji": emoji})
+        tool_execution_ms = (time.perf_counter() - tool_start) * 1000
+        total_ms = (time.perf_counter() - t_start) * 1000
+        response_text = _build_reaction_ack(request.message, emoji)
+
+        if memory_session_id:
+            await _persist_memory_turn(memory_session_id, request.message, response_text, conversation_id, model)
+
+        tool_call = ToolCall(
+            tool_name=SEND_REACTION_TOOL_NAME,
+            tool_input={"emoji": emoji},
+            tool_output=str(tool_output),
+            duration_ms=round(tool_execution_ms, 1),
+            status="ok",
+            error=None,
+            source="kapso",
+            description=_tool_description(send_reaction),
+        )
+        timing = TimingInfo(
+            total_ms=round(total_ms, 1),
+            llm_ms=0,
+            mcp_discovery_ms=0,
+            graph_build_ms=0,
+            tool_execution_ms=round(tool_execution_ms, 1),
+        )
+        agent_runs = [
+            AgentRunTrace(
+                agent_key="conversational_agent",
+                agent_name="Agente Conversacional",
+                agent_kind="response",
+                conversation_id=conversation_id,
+                memory_session_id=memory_session_id,
+                model_used=model,
+                system_prompt=request.system_prompt,
+                user_prompt=request.message,
+                available_tools=available_tools,
+                tools_used=[tool_call],
+                timing=timing,
+                llm_iterations=0,
+            )
+        ]
+        logger.info("Fast-path de reacción aplicado conversation_id=%s emoji=%s total_ms=%.1f", conversation_id, emoji, timing.total_ms)
+        return ChatResponse(
+            response=response_text,
+            conversation_id=conversation_id,
+            model_used=model,
+            tools_used=[tool_call],
+            timing=timing,
+            agent_runs=agent_runs,
+        )
 
     # Verificar cache (solo para requests sin MCP tools)
     if not request.mcp_servers and not memory_session_id:
@@ -319,10 +468,12 @@ async def run_agent(request: ChatRequest) -> ChatResponse:
     # Cargar herramientas MCP (en paralelo)
     t_mcp = time.perf_counter()
     tools = [send_reaction]
-    if request.mcp_servers:
+    if request.mcp_servers and not reaction_only_request:
         mcp_configs = [{"url": s.url, "name": s.name} for s in request.mcp_servers]
         tools.extend(await _load_mcp_tools(mcp_configs))
         logger.info(f"Total herramientas cargadas: {len(tools)}")
+    elif request.mcp_servers and reaction_only_request:
+        logger.info("Omitiendo carga de herramientas MCP para solicitud enfocada en reacción")
     mcp_discovery_ms = (time.perf_counter() - t_mcp) * 1000
     available_tools = _describe_available_tools(tools)
 
@@ -338,7 +489,7 @@ async def run_agent(request: ChatRequest) -> ChatResponse:
 
     # Preparar mensajes iniciales
     messages = [SystemMessage(content=request.system_prompt)]
-    if memory_session_id:
+    if memory_session_id and not reaction_only_request:
         memory_messages = await _load_memory_messages(memory_session_id, memory_window)
         messages.extend(memory_messages)
     messages.append(HumanMessage(content=request.message))
@@ -351,13 +502,20 @@ async def run_agent(request: ChatRequest) -> ChatResponse:
         "tool_execution_ms": 0,
         "llm_elapsed_ms": 0,
         "llm_iterations": 0,
+        "original_user_message": request.message,
+        "short_circuit_after_tools": False,
+        "short_circuit_response": None,
     }
 
     final_state = await compiled.ainvoke(initial_state)
 
     # Extraer respuesta final
-    last_message = final_state["messages"][-1]
-    response_text = last_message.content if isinstance(last_message, AIMessage) else str(last_message.content)
+    short_circuit_response = final_state.get("short_circuit_response")
+    if short_circuit_response:
+        response_text = short_circuit_response
+    else:
+        last_message = final_state["messages"][-1]
+        response_text = last_message.content if isinstance(last_message, AIMessage) else str(last_message.content)
 
     # Guardar en cache (solo sin MCP tools)
     if memory_session_id:

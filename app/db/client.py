@@ -85,6 +85,13 @@ class SupabaseClient:
         r.raise_for_status()
         return r.json()
 
+    async def delete(self, table: str, filters: dict[str, Any]) -> list[dict]:
+        """Elimina registros que cumplan los filtros."""
+        params = {k: f"eq.{v}" for k, v in filters.items()}
+        r = await self._http.delete(f"/{table}", params=params)
+        r.raise_for_status()
+        return r.json() if r.content else []
+
     async def rpc(self, function_name: str, params: dict[str, Any] | None = None) -> Any:
         """Llama a una función RPC de Supabase."""
         r = await self._http.post(f"/rpc/{function_name}", json=params or {})
