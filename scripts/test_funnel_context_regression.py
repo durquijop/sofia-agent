@@ -5,11 +5,125 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
+from langchain_core.messages import AIMessage
+
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from app.agents.funnel import _build_funnel_system_prompt, _load_funnel_context, run_funnel_agent
 from app.schemas.funnel import FunnelAgentRequest
+from app.schemas.chat import TimingInfo
+
+
+IMAGE_SNAPSHOT = {
+    "contexto_embudo": {
+        "success": True,
+        "data": {
+            "informacion_contacto": {
+                "contacto_id": 333358,
+                "nombre_completo": "",
+                "metadata": {},
+                "telefono": "573197956965",
+                "etapa_actual_orden": None,
+            },
+            "etapa_actual": None,
+            "tiene_embudo": True,
+            "total_etapas": 8,
+            "todas_etapas": [
+                {
+                    "id": 218,
+                    "nombre_etapa": "Primer contacto",
+                    "orden_etapa": 1,
+                    "descripcion": {
+                        "que_es": "Primer contacto con el prospecto interesado en Ley de Insolvencia para identificar su identidad y etapa emocional (Duda, Urgencia, Dolor, Curiosidad) estableciendo empatía inicial.",
+                        "senales": [{"id": "senal_1", "texto": "Es su primer mensaje saludando o preguntando por 'Insolvencia'"}],
+                    },
+                    "es_etapa_actual": False,
+                },
+                {
+                    "id": 219,
+                    "nombre_etapa": "Prefiltrado",
+                    "orden_etapa": 2,
+                    "descripcion": {
+                        "que_es": "Filtro estricto de viabilidad legal y financiera para validar que la deuda sea propia y mayor o igual a 40 Millones antes de solicitar datos adicionales.",
+                        "senales": [
+                            {"id": "senal_1", "texto": "Prospecto indica un monto de deuda específico"},
+                            {"id": "senal_2", "texto": "Confirma que las deudas están a su nombre"},
+                        ],
+                    },
+                    "es_etapa_actual": False,
+                },
+            ],
+        },
+    },
+    "etapas_embudo": {
+        "success": True,
+        "data": {
+            "contacto": {
+                "id": 333358,
+                "nombre_completo": "",
+                "telefono": "573197956965",
+                "etapa_actual_orden": None,
+            },
+            "empresa_id": 4,
+            "tiene_embudo": True,
+            "total_etapas": 8,
+            "etapas": [
+                {
+                    "id": 218,
+                    "nombre_etapa": "Primer contacto",
+                    "orden_etapa": 1,
+                    "descripcion": {
+                        "que_es": "Primer contacto con el prospecto interesado en Ley de Insolvencia para identificar su identidad y etapa emocional (Duda, Urgencia, Dolor, Curiosidad) estableciendo empatía inicial.",
+                        "senales": [{"id": "senal_1", "texto": "Es su primer mensaje saludando o preguntando por 'Insolvencia'"}],
+                    },
+                    "es_etapa_actual": False,
+                },
+                {
+                    "id": 219,
+                    "nombre_etapa": "Prefiltrado",
+                    "orden_etapa": 2,
+                    "descripcion": {
+                        "que_es": "Filtro estricto de viabilidad legal y financiera para validar que la deuda sea propia y mayor o igual a 40 Millones antes de solicitar datos adicionales.",
+                        "senales": [
+                            {"id": "senal_1", "texto": "Prospecto indica un monto de deuda específico"},
+                            {"id": "senal_2", "texto": "Confirma que las deudas están a su nombre"},
+                        ],
+                    },
+                    "es_etapa_actual": False,
+                },
+                {
+                    "id": 220,
+                    "nombre_etapa": "Agendamiento",
+                    "orden_etapa": 3,
+                    "descripcion": {
+                        "que_es": "Gestión de agenda para consulta legal, determinando la modalidad (Presencial en Barranquilla o Virtual) y asegurando un espacio de 30 minutos con el abogado. Asegurate de tener el numero de telefono, si en la informacion del contacto lo muestra no es necesario pedirlo",
+                        "senales": [
+                            {"id": "senal_1", "texto": "Prospecto confirma su ciudad de residencia"},
+                            {"id": "senal_2", "texto": "Acepta la modalidad propuesta (Virtual o Presencial)"},
+                            {"id": "senal_3", "texto": "Selecciona un bloque horario disponible"},
+                        ],
+                    },
+                    "es_etapa_actual": False,
+                },
+            ],
+        },
+    },
+    "conversacion_memoria": {
+        "success": True,
+        "data": {
+            "id": 64368,
+            "mensajes": [
+                {
+                    "timestamp": "2026-03-23T09:35:40-04:00",
+                    "remitente": "usuario",
+                    "mensaje": "Pendiente",
+                    "tipo": "text",
+                }
+            ],
+        },
+    },
+}
 
 
 async def test_load_funnel_context_normalizes_local_snapshot() -> None:
@@ -145,10 +259,68 @@ async def test_funnel_system_prompt_includes_operational_sections() -> None:
     assert "No le respondas al prospecto. Ese no es tu trabajo." in prompt
 
 
+async def test_funnel_system_prompt_renders_image_snapshot_data() -> None:
+    with patch("app.agents.funnel.db.load_contexto_completo_local", return_value=IMAGE_SNAPSHOT):
+        context = await _load_funnel_context(contacto_id=333358, empresa_id=4, conversacion_id=64368)
+
+    prompt = _build_funnel_system_prompt(
+        context=context,
+        etapas_payload=IMAGE_SNAPSHOT["etapas_embudo"]["data"]["etapas"],
+        contexto_embudo_payload=IMAGE_SNAPSHOT["contexto_embudo"]["data"],
+    )
+
+    assert "# IDENTIDAD Y MISIÓN" in prompt
+    assert "El contacto Contacto sin nombre se encuentra en la etapa Sin etapa asignada" in prompt
+    assert '"id": 218' in prompt
+    assert '"nombre_etapa": "Primer contacto"' in prompt
+    assert '"telefono": "573197956965"' in prompt
+    assert "// CONTEXTO TEMPORAL COMPLETO" in prompt
+
+
+async def test_run_funnel_agent_keeps_full_system_prompt_in_trace() -> None:
+    request = FunnelAgentRequest(contacto_id=333358, empresa_id=4, agente_id=7, conversacion_id=64368)
+
+    class DummyLLM:
+        def bind_tools(self, tools):
+            return self
+
+    class DummyCompiled:
+        async def ainvoke(self, initial_state):
+            return {
+                "messages": list(initial_state["messages"]) + [AIMessage(content="ok")],
+                "tools_used": [],
+                "etapa_nueva": None,
+                "metadata_actualizada": None,
+                "tool_execution_ms": 0,
+                "llm_elapsed_ms": 0,
+                "llm_iterations": 1,
+            }
+
+    class DummyGraph:
+        def compile(self):
+            return DummyCompiled()
+
+    with patch("app.agents.funnel.db.load_contexto_completo_local", return_value=IMAGE_SNAPSHOT), patch(
+        "app.agents.funnel._create_llm", return_value=DummyLLM()
+    ), patch("app.agents.funnel._build_graph", return_value=DummyGraph()):
+        response = await run_funnel_agent(request)
+
+    assert response.success is True
+    assert response.agent_runs
+    trace = response.agent_runs[0]
+    assert "# IDENTIDAD Y MISIÓN" in trace.system_prompt
+    assert "# CONTEXTO DEL EMBUDO" in trace.system_prompt
+    assert "Output esperado:" in trace.system_prompt
+    assert len(trace.system_prompt) > 200
+    assert '"telefono": "573197956965"' in trace.system_prompt
+
+
 async def main() -> int:
     await test_load_funnel_context_normalizes_local_snapshot()
     await test_run_funnel_agent_returns_diagnostic_trace_on_error()
     await test_funnel_system_prompt_includes_operational_sections()
+    await test_funnel_system_prompt_renders_image_snapshot_data()
+    await test_run_funnel_agent_keeps_full_system_prompt_in_trace()
     print("OK - funnel regression tests passed")
     return 0
 

@@ -838,7 +838,7 @@ async def run_funnel_agent(request: FunnelAgentRequest) -> FunnelAgentResponse:
                 conversation_id=str(request.conversacion_id) if request.conversacion_id else None,
                 memory_session_id=None,
                 model_used=model,
-                system_prompt=system_prompt[:200],
+                system_prompt=system_prompt,
                 user_prompt=user_message,
                 available_tools=[
                     ToolDefinition(
