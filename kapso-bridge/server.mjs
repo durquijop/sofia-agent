@@ -564,6 +564,8 @@ function renderKapsoBasicHtml(debugData) {
   <div class="top">
     <div class="title">Kapso Debug Básico</div>
     <div class="actions">
+      <span id="last-update" style="color:#94a3b8;font-size:11px"></span>
+      <button id="toggle-auto" style="background:#16a34a;color:#fff;border:none;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:12px">⏸ Pausar</button>
       <a href="/debug/kapso">Refrescar</a>
       <a href="/debug/kapso/data" target="_blank" rel="noreferrer">Ver JSON</a>
       <a href="/debug/kapso/visual" style="background:#6366f1;color:#fff;padding:4px 10px;border-radius:6px;text-decoration:none;font-size:12px">🔍 Ver visual</a>
@@ -599,22 +601,150 @@ function renderKapsoBasicHtml(debugData) {
     </table>
   </div>
 
-  ${interactionDetails}
+  <div id="interaction-details">${interactionDetails}</div>
 
   <details class="section">
     <summary>Bridge Config</summary>
-    <pre>${escapeHtml(JSON.stringify(debugData.bridge_config, null, 2))}</pre>
+    <pre id="bridge-config">${escapeHtml(JSON.stringify(debugData.bridge_config, null, 2))}</pre>
   </details>
 
   <details class="section">
     <summary>FastAPI Config</summary>
-    <pre>${escapeHtml(JSON.stringify(debugData.fastapi_config, null, 2))}</pre>
+    <pre id="fastapi-config">${escapeHtml(JSON.stringify(debugData.fastapi_config, null, 2))}</pre>
   </details>
 
   <details class="section">
     <summary>JSON completo</summary>
-    <pre>${escapeHtml(JSON.stringify(debugData, null, 2))}</pre>
+    <pre id="json-completo">${escapeHtml(JSON.stringify(debugData, null, 2))}</pre>
   </details>
+
+<script>
+(function(){
+  const POLL_INTERVAL = 5000;
+  let autoRefresh = true;
+  let timer = null;
+
+  function esc(v){ return String(v??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+  function renderRow(item, idx){
+    return '<tr>'
+      +'<td>'+esc(item.started_at?new Date(item.started_at).toLocaleString():'—')+'</td>'
+      +'<td>'+esc(item.contact_name||'—')+'</td>'
+      +'<td>'+esc(item.from_phone||'—')+'</td>'
+      +'<td>'+esc(item.message_type||'text')+'</td>'
+      +'<td style="white-space:pre-wrap;max-width:320px">'+esc(item.message_text||'—')+'</td>'
+      +'<td>'+esc(item.agent_name||'—')+'</td>'
+      +'<td>'+esc(item.model_used||'—')+'</td>'
+      +'<td>'+esc(item.reply_type||'text')+'</td>'
+      +'<td>'+esc(item.reaction_emoji||'—')+'</td>'
+      +'<td>'+esc(item.duration_ms!=null?item.duration_ms+' ms':'—')+'</td>'
+      +'<td>'+esc(item.status||'processing')+'</td>'
+      +'<td><a href="#interaction-'+idx+'" style="color:#93c5fd">Ver detalle</a></td>'
+      +'</tr>';
+  }
+
+  function renderTimingTbl(t){
+    if(!t)return '<div style="color:#94a3b8">—</div>';
+    return '<table style="margin-top:8px"><thead><tr><th>Total</th><th>LLM</th><th>MCP</th><th>Graph</th><th>Tools</th></tr></thead><tbody><tr>'
+      +'<td>'+esc(t.total_ms!=null?t.total_ms+' ms':'—')+'</td>'
+      +'<td>'+esc(t.llm_ms!=null?t.llm_ms+' ms':'—')+'</td>'
+      +'<td>'+esc(t.mcp_discovery_ms!=null?t.mcp_discovery_ms+' ms':'—')+'</td>'
+      +'<td>'+esc(t.graph_build_ms!=null?t.graph_build_ms+' ms':'—')+'</td>'
+      +'<td>'+esc(t.tool_execution_ms!=null?t.tool_execution_ms+' ms':'—')+'</td>'
+      +'</tr></tbody></table>';
+  }
+
+  function renderTools(items){
+    if(!Array.isArray(items)||!items.length) return '<div style="color:#94a3b8">Sin herramientas.</div>';
+    return '<table style="margin-top:8px"><thead><tr><th>Tool</th><th>Source</th><th>Estado</th><th>Tiempo</th><th>Descripción</th></tr></thead><tbody>'
+      +items.map(function(it){
+        return '<tr><td>'+esc(it.tool_name||'—')+'</td><td>'+esc(it.source||'—')+'</td><td>'+esc(it.status||'ok')+'</td><td>'+esc(it.duration_ms!=null?it.duration_ms+' ms':'—')+'</td><td>'+esc(it.description||'—')+'</td></tr>'
+          +'<tr><td colspan="5"><div style="margin-bottom:8px"><strong>Input</strong></div><pre>'+esc(JSON.stringify(it.tool_input||{},null,2))+'</pre>'
+          +'<div style="margin:8px 0"><strong>Output</strong></div><pre>'+esc(it.tool_output||'—')+'</pre>'
+          +(it.error?'<div style="margin-top:8px;color:#fca5a5"><strong>Error:</strong> '+esc(it.error)+'</div>':'')
+          +'</td></tr>';
+      }).join('')+'</tbody></table>';
+  }
+
+  function renderDetail(item, idx){
+    var funnel=JSON.stringify({etapa_nueva:item.funnel_etapa_nueva??null,metadata_actualizada:item.funnel_metadata_actualizada??null,error:item.funnel_error??null},null,2);
+    var agentRuns=Array.isArray(item.agent_runs)?item.agent_runs:[];
+    var runsHtml=agentRuns.length?agentRuns.map(function(r,i){
+      return '<details style="margin-top:12px"><summary>'+esc(r.agent_name||r.agent_key||'Agente '+(i+1))+' · '+esc(r.agent_kind||'agent')+' · '+esc(r.model_used||'—')+'</summary>'
+        +'<div style="margin-top:12px"><div style="margin-bottom:10px"><strong>Agent key:</strong> '+esc(r.agent_key||'—')+'</div></div></details>';
+    }).join(''):'<div style="color:#94a3b8">Sin trazas detalladas.</div>';
+
+    return '<details class="section" id="interaction-'+idx+'">'
+      +'<summary>'+esc(item.contact_name||item.from_phone||item.message_id||'Interacción '+(idx+1))+' · '+esc(item.status||'processing')+' · '+esc(item.duration_ms!=null?item.duration_ms+' ms':'—')+'</summary>'
+      +'<div style="margin-top:12px">'
+      +'<div style="margin-bottom:8px"><strong>Message ID:</strong> '+esc(item.message_id||'—')+'</div>'
+      +'<div style="margin:12px 0 6px"><strong>Error</strong></div><pre>'+esc(item.error||'—')+'</pre>'
+      +'<div style="margin-bottom:8px"><strong>Mensaje:</strong></div><pre>'+esc(item.message_text||'—')+'</pre>'
+      +'<div style="margin:12px 0 6px"><strong>Respuesta preview</strong></div><pre>'+esc(item.response_preview||'—')+'</pre>'
+      +'<div style="margin:12px 0 6px"><strong>Embudo en metadata</strong></div><pre>'+esc(funnel)+'</pre>'
+      +'<div style="margin:12px 0 6px"><strong>Timing global</strong></div>'+renderTimingTbl(item.timing||{})
+      +'<div style="margin:12px 0 6px"><strong>Tools globales</strong></div>'+renderTools(item.tools_used||[])
+      +'<div style="margin:12px 0 6px"><strong>Trazas detalladas del agente</strong></div>'+runsHtml
+      +'</div></details>';
+  }
+
+  function update(data){
+    var items=Array.isArray(data.interactions)?data.interactions:[];
+    var ok=items.filter(function(i){return i.status==='ok'}).length;
+    var err=items.filter(function(i){return i.status==='error'}).length;
+    var avg=items.length?Math.round(items.reduce(function(a,i){return a+(i.duration_ms||0)},0)/items.length):null;
+
+    var cards=document.querySelectorAll('.card .value');
+    if(cards[0])cards[0].textContent=items.length;
+    if(cards[1])cards[1].textContent=ok;
+    if(cards[2])cards[2].textContent=err;
+    if(cards[3])cards[3].textContent=avg!=null?avg+' ms':'—';
+
+    var tbody=document.querySelector('table tbody');
+    if(tbody){
+      tbody.innerHTML=items.length
+        ?items.map(renderRow).join('')
+        :'<tr><td colspan="12" style="padding:20px;color:#94a3b8">Sin interacciones todavía.</td></tr>';
+    }
+
+    var detailsContainer=document.getElementById('interaction-details');
+    if(detailsContainer){
+      detailsContainer.innerHTML=items.map(renderDetail).join('');
+    }
+
+    var bridgePre=document.getElementById('bridge-config');
+    if(bridgePre)bridgePre.textContent=JSON.stringify(data.bridge_config||{},null,2);
+    var fastapiPre=document.getElementById('fastapi-config');
+    if(fastapiPre)fastapiPre.textContent=JSON.stringify(data.fastapi_config||{},null,2);
+    var jsonPre=document.getElementById('json-completo');
+    if(jsonPre)jsonPre.textContent=JSON.stringify(data,null,2);
+
+    var ts=document.getElementById('last-update');
+    if(ts)ts.textContent='Última actualización: '+new Date().toLocaleTimeString();
+  }
+
+  function poll(){
+    fetch('/debug/kapso/data').then(function(r){return r.json()}).then(update).catch(function(e){console.warn('poll error',e)});
+  }
+
+  function toggleAuto(){
+    autoRefresh=!autoRefresh;
+    var btn=document.getElementById('toggle-auto');
+    if(autoRefresh){
+      btn.textContent='⏸ Pausar';
+      btn.style.background='#16a34a';
+      timer=setInterval(poll,POLL_INTERVAL);
+    }else{
+      btn.textContent='▶ Reanudar';
+      btn.style.background='#dc2626';
+      clearInterval(timer);
+    }
+  }
+
+  document.getElementById('toggle-auto').addEventListener('click',toggleAuto);
+  timer=setInterval(poll,POLL_INTERVAL);
+})();
+</script>
 </body>
 </html>`;
 }
