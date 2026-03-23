@@ -119,6 +119,64 @@ Args:
     return guardar_nota
 
 
+def _create_marcar_calificado_tool(contacto_id: int):
+    """Crea un tool marcar_prospecto_calificado con el contacto_id capturado por closure."""
+
+    @tool
+    async def marcar_prospecto_calificado(es_calificado: str) -> str:
+        """✅ Marcar_Prospecto_Calificado — Actualiza estado de calificación del contacto en base de datos.
+
+PROPÓSITO: Registrar en el sistema cuando un prospecto cumple criterios de calificación.
+
+MARCAR "si" cuando el contacto:
+- Completó todas las preguntas de perfilación
+- Cumple criterios de elegibilidad del servicio
+- Está listo para agendar consulta
+- No tiene objeciones bloqueantes
+
+MARCAR "no" cuando el contacto:
+- No cumple criterios mínimos
+- Está fuera del mercado objetivo
+- Tiene restricciones que impiden el servicio
+- Expresamente no está interesado
+- Solicita explícitamente que no quiere recibir más mensajes
+
+MOMENTO DE EJECUCIÓN:
+1. Después de completar perfilación
+2. Antes de enviar link de calendario (si califica)
+3. Una sola vez por contacto en la conversación
+
+IMPORTANTE:
+• Esta marca es permanente en el sistema
+• Afecta el seguimiento y remarketing futuro
+• Se usa para métricas de conversión
+• NO cambiar si ya está marcado
+
+NO USAR si no has completado la perfilación, para marcar interés temporal, o si el estado es ambiguo.
+
+FLUJO: Perfilar → Evaluar → Marcar calificación → Si califica: continuar flujo.
+
+Args:
+    es_calificado: "si" o "no" (solo minúsculas)
+"""
+        valor = es_calificado.strip().lower()
+        if valor not in ("si", "no"):
+            return f"❌ Valor inválido: '{es_calificado}'. Debe ser 'si' o 'no'."
+        try:
+            supabase = await get_supabase()
+            await supabase.update(
+                "wp_contactos",
+                filters={"id": contacto_id},
+                data={"es_calificado": valor},
+            )
+            return f"✅ Contacto {contacto_id} marcado como es_calificado='{valor}'."
+        except Exception as exc:
+            logger.error("Error marcando calificación para contacto %s: %s", contacto_id, exc)
+            return f"❌ Error al marcar calificación: {exc}"
+
+    return marcar_prospecto_calificado
+
+
 def _get_http_client() -> httpx.AsyncClient:
     """Retorna un cliente HTTP compartido con connection pooling."""
     global _shared_http_client
@@ -574,11 +632,13 @@ async def run_agent(request: ChatRequest) -> ChatResponse:
     elif request.mcp_servers and reaction_only_request:
         logger.info("Omitiendo carga de herramientas MCP para solicitud enfocada en reacción")
 
-    # Agregar tool de notas persistentes si hay contacto_id
+    # Agregar tools built-in si hay contacto_id
     if request.contacto_id and not reaction_only_request:
         nota_tool = _create_guardar_nota_tool(request.contacto_id)
+        calificado_tool = _create_marcar_calificado_tool(request.contacto_id)
         tools.append(nota_tool)
-        logger.info("Tool guardar_nota agregada para contacto_id=%s", request.contacto_id)
+        tools.append(calificado_tool)
+        logger.info("Tools guardar_nota + marcar_prospecto_calificado agregadas para contacto_id=%s", request.contacto_id)
 
     mcp_discovery_ms = (time.perf_counter() - t_mcp) * 1000
     available_tools = _describe_available_tools(tools)
