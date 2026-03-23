@@ -66,11 +66,44 @@ def _build_conversation_history_payload(mensajes: list[dict] | None) -> list[dic
             {
                 "timestamp": msg.get("timestamp"),
                 "remitente": msg.get("remitente"),
-                "contenido": msg.get("contenido", ""),
+                "contenido": msg.get("contenido") or msg.get("mensaje", ""),
                 "tipo": msg.get("tipo", "text"),
             }
         )
     return history
+
+
+def _safe_json_dict(value) -> dict:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        raw = value.strip()
+        if raw and raw[0] in "[{":
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict):
+                    return parsed
+            except json.JSONDecodeError:
+                return {}
+    return {}
+
+
+def _build_current_stage(payload: dict | None) -> FunnelCurrentStage | None:
+    if not isinstance(payload, dict):
+        return None
+    stage_id = payload.get("id")
+    stage_order = payload.get("orden")
+    stage_name = payload.get("nombre")
+    if stage_id is None or stage_order is None or not stage_name:
+        return None
+    descripcion_json = _safe_json_dict(payload)
+    return FunnelCurrentStage(
+        id=stage_id,
+        orden=stage_order,
+        nombre=stage_name,
+        que_es=descripcion_json.get("que_es"),
+        senales=descripcion_json.get("senales"),
+    )
 
 
 _llm_cache: dict[str, ChatOpenAI] = {}
@@ -182,7 +215,7 @@ async def _load_funnel_context(
         nombre_completo=contacto.get("nombre_completo") or "",
         telefono=contacto.get("telefono"),
         etapa_actual_orden=contacto.get("etapa_actual_orden"),
-        metadata=contacto.get("metadata"),
+        metadata=_safe_json_dict(contacto.get("metadata")),
     )
 
     tiene_embudo = bool(contexto_data.get("tiene_embudo"))
@@ -191,24 +224,19 @@ async def _load_funnel_context(
 
     if etapas:
         for etapa in etapas:
+            if etapa.get("id") is None or etapa.get("orden_etapa") is None or not etapa.get("nombre_etapa"):
+                continue
             etapa_info = FunnelStageInfo(
                 id=etapa.get("id"),
                 nombre_etapa=etapa.get("nombre_etapa", ""),
                 orden_etapa=etapa.get("orden_etapa", 0),
-                descripcion=etapa.get("descripcion"),
+                descripcion=_safe_json_dict(etapa.get("descripcion")),
                 es_etapa_actual=_is_current_stage_match(contacto.get("etapa_actual_orden"), etapa),
             )
             etapas_info.append(etapa_info)
 
         if etapa_actual_data and etapa_actual_completa is None:
-            descripcion_json = etapa_actual_data if isinstance(etapa_actual_data, dict) else {}
-            etapa_actual_completa = FunnelCurrentStage(
-                id=etapa_actual_data.get("id"),
-                orden=etapa_actual_data.get("orden"),
-                nombre=etapa_actual_data.get("nombre"),
-                que_es=descripcion_json.get("que_es"),
-                senales=descripcion_json.get("senales"),
-            )
+            etapa_actual_completa = _build_current_stage(etapa_actual_data)
         elif etapas_info:
             for etapa_info in etapas_info:
                 if etapa_info.es_etapa_actual:
@@ -223,7 +251,16 @@ async def _load_funnel_context(
                     break
 
     conversacion_resumen = conversacion_data.get("resumen")
-    ultimos_mensajes = conversacion_data.get("mensajes") or None
+    mensajes_raw = conversacion_data.get("mensajes") or []
+    ultimos_mensajes = [
+        {
+            "timestamp": msg.get("timestamp"),
+            "remitente": msg.get("remitente"),
+            "contenido": msg.get("contenido") or msg.get("mensaje", ""),
+            "tipo": msg.get("tipo", "text"),
+        }
+        for msg in mensajes_raw
+    ] or None
     
     return FunnelContextResponse(
         contacto=info_contacto,
@@ -721,10 +758,54 @@ async def run_funnel_agent(request: FunnelAgentRequest) -> FunnelAgentResponse:
     except Exception as e:
         logger.error(f"Error en run_funnel_agent: {e}", exc_info=True)
         total_ms = (time.perf_counter() - t_start) * 1000
+        timing = TimingInfo(total_ms=round(total_ms, 1))
+        error_tool = ToolCall(
+            tool_name="funnel_error",
+            tool_input={},
+            tool_output=str(e),
+            duration_ms=round(total_ms, 1),
+            status="error",
+            error=str(e),
+            source="funnel",
+            description="Error interno antes de completar la ejecucion del funnel",
+        )
+        error_trace = AgentRunTrace(
+            agent_key="funnel_agent",
+            agent_name="Agente de Embudo",
+            agent_kind="analysis_error",
+            conversation_id=str(request.conversacion_id) if request.conversacion_id else None,
+            memory_session_id=None,
+            model_used=model,
+            system_prompt=f"Funnel fallo antes de completar la ejecucion: {e}",
+            user_prompt="",
+            available_tools=[
+                ToolDefinition(
+                    tool_name="funnel_error",
+                    description="Error interno capturado durante la ejecucion del funnel",
+                )
+            ],
+            tools_used=[error_tool],
+            timing=timing,
+            llm_iterations=0,
+        )
+        add_funnel_debug_run(
+            contacto_id=request.contacto_id,
+            empresa_id=request.empresa_id,
+            agent_runs=[error_trace.model_dump()],
+            timing=timing.model_dump(),
+            tools_used=[error_tool.model_dump()],
+            success=False,
+            error=str(e),
+            respuesta="Error al procesar el agente de embudo",
+            etapa_anterior=None,
+            etapa_nueva=None,
+        )
         
         return FunnelAgentResponse(
             success=False,
             respuesta="Error al procesar el agente de embudo",
             error=str(e),
-            timing=TimingInfo(total_ms=round(total_ms, 1)),
+            timing=timing,
+            tools_used=[error_tool],
+            agent_runs=[error_trace],
         )
