@@ -666,13 +666,43 @@ function renderKapsoBasicHtml(debugData) {
       }).join('')+'</tbody></table>';
   }
 
+  function renderAvailableTools(items){
+    if(!Array.isArray(items)||!items.length) return '<div style="color:#94a3b8">Sin herramientas disponibles.</div>';
+    return '<table style="margin-top:8px"><thead><tr><th>Tool</th><th>Source</th><th>Descripción</th></tr></thead><tbody>'
+      +items.map(function(it){
+        return '<tr><td>'+esc(it.tool_name||'—')+'</td><td>'+esc(it.source||'—')+'</td><td>'+esc(it.description||'—')+'</td></tr>';
+      }).join('')+'</tbody></table>';
+  }
+
+  function renderAgentRuns(agentRuns, interactionIdx){
+    if(!Array.isArray(agentRuns)||!agentRuns.length)
+      return '<div style="color:#94a3b8">Sin trazas detalladas.</div>';
+    return agentRuns.map(function(r,i){
+      var runId='run-'+interactionIdx+'-'+i;
+      return '<details id="'+runId+'" style="margin-top:12px">'
+        +'<summary>'+esc(r.agent_name||r.agent_key||'Agente '+(i+1))+' · '+esc(r.agent_kind||'agent')+' · '+esc(r.model_used||'—')+'</summary>'
+        +'<div style="margin-top:12px">'
+        +'<div style="margin-bottom:10px"><strong>Agent key:</strong> '+esc(r.agent_key||'—')+'</div>'
+        +'<div style="margin-bottom:10px"><strong>Conversation:</strong> '+esc(r.conversation_id||'—')+'</div>'
+        +'<div style="margin-bottom:10px"><strong>Memory session:</strong> '+esc(r.memory_session_id||'—')+'</div>'
+        +'<div style="margin-bottom:10px"><strong>LLM iterations:</strong> '+esc(r.llm_iterations??0)+'</div>'
+        +'<div style="margin:12px 0 6px"><strong>Timing</strong></div>'+renderTimingTbl(r.timing||{})
+        +'<div style="margin:12px 0 6px"><strong>Herramientas disponibles</strong></div>'+renderAvailableTools(r.available_tools||[])
+        +'<div style="margin:12px 0 6px"><strong>Herramientas ejecutadas</strong></div>'+renderTools(r.tools_used||[])
+        +'<details id="'+runId+'-prompts" style="margin-top:12px"><summary>Prompts</summary>'
+        +'<div style="margin-top:12px">'
+        +'<div style="margin:0 0 6px"><strong>System prompt</strong></div>'
+        +'<pre>'+esc(r.system_prompt||'')+'</pre>'
+        +'<div style="margin:12px 0 6px"><strong>User prompt</strong></div>'
+        +'<pre>'+esc(r.user_prompt||'')+'</pre>'
+        +'</div></details>'
+        +'</div></details>';
+    }).join('');
+  }
+
   function renderDetail(item, idx){
     var funnel=JSON.stringify({etapa_nueva:item.funnel_etapa_nueva??null,metadata_actualizada:item.funnel_metadata_actualizada??null,error:item.funnel_error??null},null,2);
     var agentRuns=Array.isArray(item.agent_runs)?item.agent_runs:[];
-    var runsHtml=agentRuns.length?agentRuns.map(function(r,i){
-      return '<details style="margin-top:12px"><summary>'+esc(r.agent_name||r.agent_key||'Agente '+(i+1))+' · '+esc(r.agent_kind||'agent')+' · '+esc(r.model_used||'—')+'</summary>'
-        +'<div style="margin-top:12px"><div style="margin-bottom:10px"><strong>Agent key:</strong> '+esc(r.agent_key||'—')+'</div></div></details>';
-    }).join(''):'<div style="color:#94a3b8">Sin trazas detalladas.</div>';
 
     return '<details class="section" id="interaction-'+idx+'">'
       +'<summary>'+esc(item.contact_name||item.from_phone||item.message_id||'Interacción '+(idx+1))+' · '+esc(item.status||'processing')+' · '+esc(item.duration_ms!=null?item.duration_ms+' ms':'—')+'</summary>'
@@ -684,7 +714,7 @@ function renderKapsoBasicHtml(debugData) {
       +'<div style="margin:12px 0 6px"><strong>Embudo en metadata</strong></div><pre>'+esc(funnel)+'</pre>'
       +'<div style="margin:12px 0 6px"><strong>Timing global</strong></div>'+renderTimingTbl(item.timing||{})
       +'<div style="margin:12px 0 6px"><strong>Tools globales</strong></div>'+renderTools(item.tools_used||[])
-      +'<div style="margin:12px 0 6px"><strong>Trazas detalladas del agente</strong></div>'+runsHtml
+      +'<div style="margin:12px 0 6px"><strong>Trazas detalladas del agente</strong></div>'+renderAgentRuns(agentRuns, idx)
       +'</div></details>';
   }
 
@@ -707,12 +737,12 @@ function renderKapsoBasicHtml(debugData) {
         :'<tr><td colspan="12" style="padding:20px;color:#94a3b8">Sin interacciones todavía.</td></tr>';
     }
 
-    // Preserve open state of interaction details
+    // Preserve open state of ALL details with IDs (interaction + run + prompts)
     var detailsContainer=document.getElementById('interaction-details');
     if(detailsContainer){
       var openSet=new Set();
-      detailsContainer.querySelectorAll('details[open]').forEach(function(d){
-        if(d.id)openSet.add(d.id);
+      detailsContainer.querySelectorAll('details[open][id]').forEach(function(d){
+        openSet.add(d.id);
       });
       detailsContainer.innerHTML=items.map(renderDetail).join('');
       openSet.forEach(function(id){
@@ -736,7 +766,7 @@ function renderKapsoBasicHtml(debugData) {
     var scrollY=window.scrollY;
     fetch('/debug/kapso/data').then(function(r){return r.json()}).then(function(data){
       update(data);
-      window.scrollTo(0,scrollY);
+      requestAnimationFrame(function(){ window.scrollTo(0,scrollY); });
     }).catch(function(e){console.warn('poll error',e)});
   }
 
