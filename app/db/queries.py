@@ -3,9 +3,58 @@ import asyncio
 from datetime import datetime, timezone
 import logging
 from typing import Any
+import httpx
 from app.db.client import get_supabase
 
 logger = logging.getLogger(__name__)
+
+
+def _is_missing_table_error(exc: Exception) -> bool:
+    if not isinstance(exc, httpx.HTTPStatusError):
+        return False
+    if exc.response.status_code != 404:
+        return False
+    request_url = str(exc.request.url) if exc.request else ""
+    return "/rest/v1/" in request_url
+
+
+async def _safe_optional_query(
+    table: str,
+    *,
+    select: str = "*",
+    filters: dict[str, Any] | None = None,
+    order: str | None = None,
+    order_desc: bool = False,
+    limit: int | None = None,
+    single: bool = False,
+):
+    sb = await get_supabase()
+    try:
+        return await sb.query(
+            table,
+            select=select,
+            filters=filters,
+            order=order,
+            order_desc=order_desc,
+            limit=limit,
+            single=single,
+        )
+    except Exception as exc:
+        if _is_missing_table_error(exc):
+            logger.warning("Tabla opcional %s no existe en Supabase; se continua sin esos datos", table)
+            return None if single else []
+        raise
+
+
+async def _safe_optional_delete(table: str, filters: dict[str, Any]) -> list[dict]:
+    sb = await get_supabase()
+    try:
+        return await sb.delete(table, filters)
+    except Exception as exc:
+        if _is_missing_table_error(exc):
+            logger.warning("Tabla opcional %s no existe en Supabase; se omite el borrado", table)
+            return []
+        raise
 
 
 # ─── Empresa ─────────────────────────────────────────────────────────────────
@@ -116,8 +165,7 @@ async def get_contacto_notas(contacto_id: int, limit: int = 10) -> list[dict]:
 
 async def get_contacto_contextos(contacto_id: int) -> list[dict]:
     """Obtiene contextos adicionales asociados al contacto."""
-    sb = await get_supabase()
-    return await sb.query(
+    return await _safe_optional_query(
         "wp_contextos",
         select="clave,valor",
         filters={"contacto_id": contacto_id},
@@ -291,10 +339,10 @@ async def reset_contacto_data(contacto_id: int) -> dict[str, int]:
     ) = await asyncio.gather(
         sb.delete("wp_conversaciones", {"contacto_id": contacto_id}),
         sb.delete("wp_contactos_nota", {"contacto_id": contacto_id}),
-        sb.delete("wp_contextos", {"contacto_id": contacto_id}),
+        _safe_optional_delete("wp_contextos", {"contacto_id": contacto_id}),
         sb.delete("wp_citas", {"contacto_id": contacto_id}),
-        sb.delete("wp_notificaciones_team", {"contacto_id": contacto_id}),
-        sb.delete("wp_actividades_log", {"contacto_id": contacto_id}),
+        _safe_optional_delete("wp_notificaciones_team", {"contacto_id": contacto_id}),
+        _safe_optional_delete("wp_actividades_log", {"contacto_id": contacto_id}),
     )
     contactos_deleted = await sb.delete("wp_contactos", {"id": contacto_id})
 
@@ -342,8 +390,7 @@ async def get_citas_contacto_detalladas(contacto_id: int, limit: int = 10) -> li
 
 async def get_notificaciones_contacto(contacto_id: int, limit: int = 20) -> list[dict]:
     """Obtiene notificaciones del team relacionadas con el contacto."""
-    sb = await get_supabase()
-    return await sb.query(
+    return await _safe_optional_query(
         "wp_notificaciones_team",
         select="id,tipo,mensaje,fecha_envio,estado,respuesta,fecha_respuesta,asesor_id,agente_id",
         filters={"contacto_id": contacto_id},
