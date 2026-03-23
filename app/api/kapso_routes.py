@@ -74,6 +74,7 @@ _AUDIO_URL_RE = re.compile(r"URL:\s*(https?://[^\s]+)", re.IGNORECASE)
 _AUDIO_TRANSCRIPT_RE = re.compile(r"Transcript:\s*(.+)", re.IGNORECASE | re.DOTALL)
 _AUDIO_FILENAME_RE = re.compile(r"\(([^)]+\.ogg)\)", re.IGNORECASE)
 SUPABASE_STORAGE_BUCKET = "multimedia"
+SUPABASE_MULTIMEDIA_EDGE_FN = "crear-multimedia-inicial-v1"
 
 
 def _normalize_phone(value: str | None) -> str | None:
@@ -159,7 +160,37 @@ async def _upload_audio_to_storage(audio_url: str, filename: str) -> str | None:
         return None
 
 
-async def _process_audio_message(inbound: KapsoInboundRequest) -> tuple[str | None, str | None]:
+async def _register_multimedia_edge(contacto_id: int, archivo_url: str) -> None:
+    """Fire-and-forget call to Supabase edge function to register multimedia."""
+    settings = get_settings()
+    edge_url = f"{settings.SUPABASE_URL}/functions/v1/{SUPABASE_MULTIMEDIA_EDGE_FN}"
+    payload = {
+        "contacto_id": contacto_id,
+        "tipo": "multimedia",
+        "archivo_url": archivo_url,
+    }
+    headers = {
+        "Authorization": f"Bearer {settings.SUPABASE_SERVICE_KEY}",
+        "Content-Type": "application/json",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as http:
+            resp = await http.post(edge_url, json=payload, headers=headers)
+            if resp.status_code >= 400:
+                logger.error(
+                    "Edge function multimedia failed: status=%d body=%s",
+                    resp.status_code, resp.text[:500],
+                )
+            else:
+                logger.info(
+                    "Edge function multimedia ok: contacto_id=%s url=%s resp=%s",
+                    contacto_id, archivo_url, resp.text[:200],
+                )
+    except Exception as exc:
+        logger.error("Edge function multimedia error: %s", exc)
+
+
+async def _process_audio_message(inbound: KapsoInboundRequest, contacto_id: int | None = None) -> tuple[str | None, str | None]:
     """Process an audio message: extract transcript and upload to storage.
 
     Returns (transcript, storage_url).
@@ -187,6 +218,10 @@ async def _process_audio_message(inbound: KapsoInboundRequest) -> tuple[str | No
         storage_url = await _upload_audio_to_storage(audio_url, fallback_name)
     else:
         logger.warning("Audio message but no audio_url found. Raw text: %s", text[:200])
+
+    # Register multimedia via edge function (async, non-blocking)
+    if storage_url and contacto_id:
+        asyncio.create_task(_register_multimedia_edge(contacto_id, storage_url))
 
     return transcript, storage_url
 
@@ -809,7 +844,8 @@ async def kapso_inbound(
         audio_storage_url: str | None = None
         is_audio = str(request.message_type or "").strip().lower() == "audio"
         if is_audio:
-            audio_transcript, audio_storage_url = await _process_audio_message(request)
+            contacto_id_for_audio = contacto.get("id") if contacto else None
+            audio_transcript, audio_storage_url = await _process_audio_message(request, contacto_id_for_audio)
             add_kapso_debug_event(
                 "fastapi",
                 "audio_processing",
