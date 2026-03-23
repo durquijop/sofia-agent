@@ -1174,10 +1174,25 @@ async function callInternalAgent(sqlPayload) {
 
 async function sendKapsoText(recipientPhone, phoneNumberId, text) {
   const body = ensureReplyText(text);
-  return withKapsoRetry(
-    () => client.messages.textSender.send({ phoneNumberId, to: recipientPhone, body }),
-    `sendText(${recipientPhone})`,
-  );
+
+  // Bubble splitting: "---" separates text into multiple WhatsApp messages
+  const bubbles = body.split(/\n*---\n*/).map(b => b.trim()).filter(Boolean);
+  if (bubbles.length <= 1) {
+    return withKapsoRetry(
+      () => client.messages.textSender.send({ phoneNumberId, to: recipientPhone, body }),
+      `sendText(${recipientPhone})`,
+    );
+  }
+
+  let lastResult = null;
+  for (const bubble of bubbles) {
+    const normalizedBubble = ensureReplyText(bubble);
+    lastResult = await withKapsoRetry(
+      () => client.messages.textSender.send({ phoneNumberId, to: recipientPhone, body: normalizedBubble }),
+      `sendText(${recipientPhone})`,
+    );
+  }
+  return lastResult;
 }
 
 async function dispatchKapsoResponse(reply) {

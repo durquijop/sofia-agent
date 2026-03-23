@@ -590,7 +590,11 @@ async def reset_contacto_data(contacto_id: int) -> dict[str, int]:
         _safe_optional_delete("wp_notificaciones_team", {"contacto_id": contacto_id}),
         _safe_optional_delete("wp_actividades_log", {"contacto_id": contacto_id}),
     )
-    contactos_deleted = await sb.delete("wp_contactos", {"id": contacto_id})
+    try:
+        contactos_deleted = await sb.delete("wp_contactos", {"id": contacto_id})
+    except Exception as exc:
+        logger.warning("No se pudo eliminar wp_contactos id=%s (posible FK): %s", contacto_id, exc)
+        contactos_deleted = []
 
     return {
         "mensajes": mensajes_deleted,
