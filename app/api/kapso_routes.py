@@ -335,71 +335,66 @@ async def _run_both_agents(
     agente_id: int,
     conversacion_db_id: int | None,
 ):
-    conversational_task = asyncio.create_task(
-        run_agent(
-            ChatRequest(
-                system_prompt=system_prompt,
-                message=user_message,
-                model=model,
-                mcp_servers=mcp_servers,
-                conversation_id=conversation_id,
-                memory_session_id=memory_session_id,
-                memory_window=8,
-            )
-        )
-    )
+    # ── Phase 1: Run funnel + contact_update in parallel (BEFORE conversational) ──
+    funnel_result = None
+    contact_update_result = None
 
-    funnel_task = None
-    if contacto_id is not None and empresa_id is not None and _should_run_funnel_agent(raw_user_text):
-        funnel_task = asyncio.create_task(
-            run_funnel_agent(
-                FunnelAgentRequest(
-                    contacto_id=contacto_id,
-                    empresa_id=empresa_id,
-                    agente_id=agente_id,
-                    conversacion_id=conversacion_db_id,
-                    memory_session_id=memory_session_id,
-                    memory_window=20,
-                    model=model,
+    run_funnel = contacto_id is not None and empresa_id is not None and _should_run_funnel_agent(raw_user_text)
+    run_contact_update = contacto_id is not None and empresa_id is not None
+
+    if run_funnel or run_contact_update:
+        analysis_tasks: list[asyncio.Task] = []
+        task_names: list[str] = []
+
+        if run_funnel:
+            analysis_tasks.append(
+                asyncio.create_task(
+                    asyncio.wait_for(
+                        run_funnel_agent(
+                            FunnelAgentRequest(
+                                contacto_id=contacto_id,
+                                empresa_id=empresa_id,
+                                agente_id=agente_id,
+                                conversacion_id=conversacion_db_id,
+                                memory_session_id=memory_session_id,
+                                memory_window=20,
+                                model=model,
+                            )
+                        ),
+                        timeout=FUNNEL_TIMEOUT_SECONDS,
+                    )
                 )
             )
-        )
+            task_names.append("funnel")
 
-    contact_update_task = None
-    if contacto_id is not None and empresa_id is not None:
-        contact_update_task = asyncio.create_task(
-            run_contact_update_agent(
-                ContactUpdateAgentRequest(
-                    contacto_id=contacto_id,
-                    empresa_id=empresa_id,
-                    agente_id=agente_id,
-                    conversacion_id=conversacion_db_id,
-                    model=model,
+        if run_contact_update:
+            analysis_tasks.append(
+                asyncio.create_task(
+                    asyncio.wait_for(
+                        run_contact_update_agent(
+                            ContactUpdateAgentRequest(
+                                contacto_id=contacto_id,
+                                empresa_id=empresa_id,
+                                agente_id=agente_id,
+                                conversacion_id=conversacion_db_id,
+                                model=model,
+                            )
+                        ),
+                        timeout=CONTACT_UPDATE_TIMEOUT_SECONDS,
+                    )
                 )
             )
-        )
+            task_names.append("contact_update")
 
-    funnel_awaitable = asyncio.sleep(0, result=None)
-    if funnel_task is not None:
-        funnel_awaitable = asyncio.wait_for(funnel_task, timeout=FUNNEL_TIMEOUT_SECONDS)
+        analysis_results = await asyncio.gather(*analysis_tasks, return_exceptions=True)
 
-    contact_update_awaitable = asyncio.sleep(0, result=None)
-    if contact_update_task is not None:
-        contact_update_awaitable = asyncio.wait_for(contact_update_task, timeout=CONTACT_UPDATE_TIMEOUT_SECONDS)
+        for name, result in zip(task_names, analysis_results):
+            if name == "funnel":
+                funnel_result = result
+            elif name == "contact_update":
+                contact_update_result = result
 
-    results = await asyncio.gather(
-        conversational_task,
-        funnel_awaitable,
-        contact_update_awaitable,
-        return_exceptions=True,
-    )
-    conversational_result = results[0]
-    funnel_result = results[1]
-    contact_update_result = results[2]
-
-    if isinstance(conversational_result, Exception):
-        raise conversational_result
-
+    # Handle funnel errors / failures
     if isinstance(funnel_result, Exception):
         logger.warning("Kapso inbound: funnel agent fallo pero la respuesta conversacional continua: %s", funnel_result, exc_info=True)
         funnel_result = _build_funnel_error_response(
@@ -419,6 +414,7 @@ async def _run_both_agents(
                 tools_used=funnel_result.tools_used,
             )
 
+    # Handle contact_update errors / failures
     if isinstance(contact_update_result, Exception):
         logger.warning(
             "Kapso inbound: contact update agent fallo pero la respuesta conversacional continua: %s",
@@ -444,6 +440,34 @@ async def _run_both_agents(
                 tools_used=contact_update_result.tools_used,
             )
 
+    # ── Phase 2: Enrich system prompt with funnel findings ──
+    enriched_prompt = system_prompt
+    if isinstance(funnel_result, FunnelAgentResponse) and funnel_result.success:
+        funnel_sections = ["\n\n## 🔄 ANÁLISIS DE EMBUDO (actualización en tiempo real)"]
+        funnel_sections.append(f"Análisis del agente de embudo: {funnel_result.respuesta}")
+        if funnel_result.etapa_nueva is not None:
+            funnel_sections.append(f"Etapa del embudo actualizada a orden: {funnel_result.etapa_nueva}")
+        if funnel_result.metadata_actualizada:
+            funnel_sections.append(
+                f"Información capturada: {json.dumps(funnel_result.metadata_actualizada, ensure_ascii=False)}"
+            )
+        enriched_prompt = system_prompt + "\n".join(funnel_sections)
+        logger.info("System prompt enriquecido con resultado del funnel agent")
+
+    # ── Phase 3: Run conversational agent (with enriched context) ──
+    conversational_result = await run_agent(
+        ChatRequest(
+            system_prompt=enriched_prompt,
+            message=user_message,
+            model=model,
+            mcp_servers=mcp_servers,
+            conversation_id=conversation_id,
+            memory_session_id=memory_session_id,
+            memory_window=8,
+        )
+    )
+
+    # ── Merge timings, tools, agent_runs ──
     merged_timing = _merge_timings(
         started_at,
         conversational_result.timing,
