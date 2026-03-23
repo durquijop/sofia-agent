@@ -602,120 +602,117 @@ function renderConstellationHtml() {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Kapso — Constellation</title>
+<title>Monica Brain — Neural Map</title>
 <style>
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
 *{margin:0;padding:0;box-sizing:border-box}
-html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:'Inter','SF Pro',system-ui,sans-serif;color:#e2e8f0}
+html,body{width:100%;height:100%;overflow:hidden;background:#020010;font-family:'Outfit',system-ui,sans-serif;color:#e2e8f0}
 canvas{display:block;position:absolute;top:0;left:0}
-#back{position:fixed;top:16px;left:16px;z-index:20;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);color:#93c5fd;padding:6px 14px;border-radius:8px;font-size:12px;cursor:pointer;text-decoration:none;backdrop-filter:blur(8px)}
-#back:hover{background:rgba(255,255,255,.12)}
-#title{position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:20;font-size:13px;letter-spacing:2px;text-transform:uppercase;color:rgba(255,255,255,.25);pointer-events:none}
-#tooltip{position:fixed;display:none;z-index:30;background:rgba(15,23,42,.92);border:1px solid rgba(99,102,241,.4);border-radius:10px;padding:14px 18px;max-width:340px;font-size:12px;line-height:1.6;backdrop-filter:blur(12px);box-shadow:0 8px 32px rgba(0,0,0,.5);pointer-events:none}
-#tooltip h3{font-size:14px;margin-bottom:6px;font-weight:600}
-#tooltip .tag{display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;letter-spacing:.5px;margin-bottom:8px}
-#tooltip .detail{color:#94a3b8;font-size:11px}
+#back{position:fixed;top:20px;left:20px;z-index:20;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);color:rgba(167,139,250,.8);padding:8px 18px;border-radius:10px;font-size:13px;cursor:pointer;text-decoration:none;backdrop-filter:blur(12px);transition:all .2s}
+#back:hover{background:rgba(167,139,250,.12);border-color:rgba(167,139,250,.3);color:#c4b5fd}
+#header{position:fixed;top:18px;left:50%;transform:translateX(-50%);z-index:20;text-align:center;pointer-events:none}
+#header h1{font-size:20px;font-weight:600;letter-spacing:6px;text-transform:uppercase;background:linear-gradient(135deg,#a78bfa 0%,#6366f1 40%,#818cf8 70%,#c4b5fd 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+#header p{font-size:11px;letter-spacing:3px;color:rgba(255,255,255,.18);margin-top:2px;text-transform:uppercase}
+#tooltip{position:fixed;display:none;z-index:30;background:rgba(8,4,28,.94);border:1px solid rgba(139,92,246,.3);border-radius:14px;padding:16px 20px;max-width:360px;font-size:13px;line-height:1.7;backdrop-filter:blur(16px);box-shadow:0 0 40px rgba(99,102,241,.15),0 12px 40px rgba(0,0,0,.6);pointer-events:none}
+#tooltip h3{font-size:15px;margin-bottom:6px;font-weight:600;color:#fff}
+#tooltip .tag{display:inline-block;padding:3px 10px;border-radius:6px;font-size:10px;font-weight:600;letter-spacing:.8px;margin-bottom:10px;text-transform:uppercase}
+#tooltip .detail{color:rgba(203,213,225,.75);font-size:12px}
 #tooltip .detail b{color:#e2e8f0}
-#legend{position:fixed;bottom:16px;left:16px;z-index:20;display:flex;gap:14px;font-size:11px;color:rgba(255,255,255,.4)}
-#legend span{display:flex;align-items:center;gap:5px}
-#legend i{display:inline-block;width:10px;height:10px;border-radius:50%}
+#legend{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);z-index:20;display:flex;gap:20px;font-size:12px;color:rgba(255,255,255,.35);background:rgba(8,4,28,.6);border:1px solid rgba(255,255,255,.06);border-radius:12px;padding:10px 24px;backdrop-filter:blur(12px)}
+#legend span{display:flex;align-items:center;gap:6px}
+#legend i{display:inline-block;width:10px;height:10px;border-radius:50%;box-shadow:0 0 6px currentColor}
 </style>
 </head>
 <body>
 <a href="/debug/kapso" id="back">← Panel</a>
-<div id="title">Agent Constellation</div>
+<div id="header">
+  <h1>Monica Brain</h1>
+  <p>Neural Architecture Map</p>
+</div>
 <canvas id="c"></canvas>
 <div id="tooltip"></div>
 <div id="legend">
-  <span><i style="background:#6366f1"></i> Orquestador</span>
-  <span><i style="background:#f59e0b"></i> Agente</span>
-  <span><i style="background:#10b981"></i> Herramienta</span>
-  <span><i style="background:#3b82f6"></i> Externo</span>
-  <span><i style="background:#ec4899"></i> Base de datos</span>
+  <span><i style="background:#a78bfa;color:#a78bfa"></i> Orquestador</span>
+  <span><i style="background:#fb923c;color:#fb923c"></i> Agente</span>
+  <span><i style="background:#34d399;color:#34d399"></i> Herramienta</span>
+  <span><i style="background:#60a5fa;color:#60a5fa"></i> Externo</span>
+  <span><i style="background:#f472b6;color:#f472b6"></i> Base de datos</span>
 </div>
 <script>
 const C=document.getElementById('c'),X=C.getContext('2d'),TT=document.getElementById('tooltip');
 let W,H,mx=-1,my=-1,hovered=null,t=0,dpr=1;
 
-/* ── Graph data ── */
 const NODES=[
-  // Orchestrator
-  {id:'orch',label:'Orquestador',kind:'orchestrator',x:.5,y:.18,r:28,
-   color:'#6366f1',glow:'rgba(99,102,241,.35)',
+  {id:'orch',label:'Orquestador',kind:'orchestrator',x:.5,y:.17,r:38,
+   color:'#a78bfa',glow:'rgba(167,139,250,.4)',
    desc:'Kapso Inbound Handler',detail:'POST /api/v1/kapso/inbound\\nPhase 1: Funnel + Contact Update (paralelo)\\nPhase 2: Enriquecimiento del prompt\\nPhase 3: Agente Conversacional\\nPhase 4: Merge de resultados'},
 
-  // Agents
-  {id:'conv',label:'Conversacional',kind:'agent',x:.5,y:.48,r:24,
-   color:'#f59e0b',glow:'rgba(245,158,11,.3)',
+  {id:'conv',label:'Conversacional',kind:'agent',x:.5,y:.50,r:32,
+   color:'#fb923c',glow:'rgba(251,146,60,.35)',
    desc:'Agente Conversacional',detail:'Modelo: grok-4.1-fast\\nTemp: 0.7 · Max tokens: 1024\\nIteraciones LLM: hasta 4\\nMemoria: agent_memory (8 turnos)\\nRecibe prompt enriquecido del funnel'},
-  {id:'funnel',label:'Embudo',kind:'agent',x:.25,y:.42,r:22,
-   color:'#f59e0b',glow:'rgba(245,158,11,.3)',
+  {id:'funnel',label:'Embudo',kind:'agent',x:.24,y:.43,r:30,
+   color:'#fb923c',glow:'rgba(251,146,60,.35)',
    desc:'Agente de Embudo',detail:'Modelo: grok-4.1-fast\\nTemp: 0.5 · Max tokens: 512\\nIteraciones LLM: hasta 2\\nTimeout: 25s\\nAnaliza etapa del contacto en el funnel'},
-  {id:'contact',label:'Contacto',kind:'agent',x:.75,y:.42,r:22,
-   color:'#f59e0b',glow:'rgba(245,158,11,.3)',
+  {id:'contact',label:'Contacto',kind:'agent',x:.76,y:.43,r:30,
+   color:'#fb923c',glow:'rgba(251,146,60,.35)',
    desc:'Agente de Actualización de Contacto',detail:'Modelo: grok-4.1-fast\\nTemp: 0.2 · Max tokens: 512\\nIteraciones LLM: hasta 2\\nTimeout: 20s\\nCaptura nombre, email, teléfono, etc.'},
 
-  // Tools
-  {id:'t_reaction',label:'send_reaction',kind:'tool',x:.62,y:.64,r:14,
-   color:'#10b981',glow:'rgba(16,185,129,.25)',
+  {id:'t_reaction',label:'send_reaction',kind:'tool',x:.64,y:.67,r:20,
+   color:'#34d399',glow:'rgba(52,211,153,.3)',
    desc:'Herramienta: send_reaction',detail:'Envía emoji de reacción al mensaje\\nParámetro: emoji (❤️ 🙏 😂 🎉 👍 🔥)\\nActiva en mensajes emotivos'},
-  {id:'t_mcp',label:'MCP Tools',kind:'tool',x:.38,y:.64,r:14,
-   color:'#10b981',glow:'rgba(16,185,129,.25)',
+  {id:'t_mcp',label:'MCP Tools',kind:'tool',x:.36,y:.67,r:20,
+   color:'#34d399',glow:'rgba(52,211,153,.3)',
    desc:'Herramientas MCP (dinámicas)',detail:'Descubrimiento vía JSON-RPC\\nProtocolo: initialize → tools/list → tools/call\\nTimeout discovery: 15s\\nCache por servidor'},
-  {id:'t_metadata',label:'update_metadata',kind:'tool',x:.15,y:.58,r:14,
-   color:'#10b981',glow:'rgba(16,185,129,.25)',
+  {id:'t_metadata',label:'update_metadata',kind:'tool',x:.12,y:.60,r:20,
+   color:'#34d399',glow:'rgba(52,211,153,.3)',
    desc:'Herramienta: update_metadata',detail:'Registra información capturada\\nParámetros: informacion_capturada, seccion,\\nid_etapa (opcional), razon_etapa\\nEscribe en wp_contactos.metadata'},
-  {id:'t_update',label:'update_contact',kind:'tool',x:.85,y:.58,r:14,
-   color:'#10b981',glow:'rgba(16,185,129,.25)',
+  {id:'t_update',label:'update_contact',kind:'tool',x:.88,y:.60,r:20,
+   color:'#34d399',glow:'rgba(52,211,153,.3)',
    desc:'Herramienta: update_contact_info',detail:'Actualiza columnas de wp_contactos\\nCampos: nombre, apellido, email, teléfono,\\netapa_emocional, timezone, es_calificado, estado'},
 
-  // External services
-  {id:'whatsapp',label:'WhatsApp',kind:'external',x:.5,y:.04,r:18,
-   color:'#3b82f6',glow:'rgba(59,130,246,.3)',
+  {id:'whatsapp',label:'WhatsApp',kind:'external',x:.5,y:.04,r:26,
+   color:'#60a5fa',glow:'rgba(96,165,250,.35)',
    desc:'WhatsApp via Kapso Bridge',detail:'Bridge: kapso-bridge/server.mjs\\nFunciones: envío texto, reacciones,\\nbotones, listas, media\\nTyping keepalive cada 20s'},
-  {id:'openrouter',label:'OpenRouter',kind:'external',x:.12,y:.22,r:16,
-   color:'#3b82f6',glow:'rgba(59,130,246,.3)',
+  {id:'openrouter',label:'OpenRouter',kind:'external',x:.10,y:.24,r:22,
+   color:'#60a5fa',glow:'rgba(96,165,250,.35)',
    desc:'OpenRouter LLM API',detail:'Base URL: openrouter.ai/api/v1\\nModelo: x-ai/grok-4.1-fast\\nProvee inferencia LLM para los 3 agentes'},
-  {id:'mcp_srv',label:'MCP Servers',kind:'external',x:.25,y:.72,r:16,
-   color:'#3b82f6',glow:'rgba(59,130,246,.3)',
+  {id:'mcp_srv',label:'MCP Servers',kind:'external',x:.22,y:.80,r:22,
+   color:'#60a5fa',glow:'rgba(96,165,250,.35)',
    desc:'Servidores MCP externos',detail:'Configurados por agente en BD\\nDescubrimiento dinámico de herramientas\\nConexión vía StreamableHTTPTransport'},
 
-  // Database
-  {id:'supabase',label:'Supabase',kind:'database',x:.88,y:.22,r:20,
-   color:'#ec4899',glow:'rgba(236,72,153,.3)',
+  {id:'supabase',label:'Supabase',kind:'database',x:.90,y:.24,r:28,
+   color:'#f472b6',glow:'rgba(244,114,182,.35)',
    desc:'Supabase (PostgreSQL + REST)',detail:'Tablas principales:\\n· wp_contactos (perfil + metadata)\\n· agent_memory (memoria conversacional)\\n· wp_conversaciones\\n· wp_mensajes\\n· wp_citas\\n· wp_contactos_nota'},
 ];
 
 const EDGES=[
-  // Orchestrator connections
   {from:'whatsapp',to:'orch',label:'mensaje entrante',dash:false},
-  {from:'orch',to:'funnel',label:'Phase 1 (paralelo)',dash:true},
-  {from:'orch',to:'contact',label:'Phase 1 (paralelo)',dash:true},
+  {from:'orch',to:'funnel',label:'Phase 1 (paralelo)',dash:false},
+  {from:'orch',to:'contact',label:'Phase 1 (paralelo)',dash:false},
   {from:'funnel',to:'orch',label:'resultado embudo',dash:true},
   {from:'orch',to:'conv',label:'Phase 3 (prompt enriquecido)',dash:false},
   {from:'conv',to:'whatsapp',label:'respuesta final',dash:false},
-
-  // Agent → Tools
-  {from:'conv',to:'t_reaction',label:'',dash:true},
-  {from:'conv',to:'t_mcp',label:'',dash:true},
-  {from:'funnel',to:'t_metadata',label:'',dash:true},
-  {from:'contact',to:'t_update',label:'',dash:true},
-
-  // Tools → External
-  {from:'t_mcp',to:'mcp_srv',label:'JSON-RPC',dash:true},
-  {from:'t_metadata',to:'supabase',label:'PATCH wp_contactos',dash:true},
-  {from:'t_update',to:'supabase',label:'PATCH wp_contactos',dash:true},
-
-  // Agents → LLM
-  {from:'conv',to:'openrouter',label:'LLM',dash:true},
-  {from:'funnel',to:'openrouter',label:'LLM',dash:true},
-  {from:'contact',to:'openrouter',label:'LLM',dash:true},
-
-  // Agents → DB (memory)
+  {from:'conv',to:'t_reaction',label:'',dash:false},
+  {from:'conv',to:'t_mcp',label:'',dash:false},
+  {from:'funnel',to:'t_metadata',label:'',dash:false},
+  {from:'contact',to:'t_update',label:'',dash:false},
+  {from:'t_mcp',to:'mcp_srv',label:'JSON-RPC',dash:false},
+  {from:'t_metadata',to:'supabase',label:'PATCH metadata',dash:false},
+  {from:'t_update',to:'supabase',label:'PATCH contacto',dash:false},
+  {from:'conv',to:'openrouter',label:'LLM',dash:false},
+  {from:'funnel',to:'openrouter',label:'LLM',dash:false},
+  {from:'contact',to:'openrouter',label:'LLM',dash:false},
   {from:'conv',to:'supabase',label:'agent_memory',dash:true},
 ];
 
-/* ── Stars background ── */
-const stars=Array.from({length:280},()=>({x:Math.random(),y:Math.random(),s:Math.random()*.8+.2,b:Math.random()}));
+/* ── Nebula & stars ── */
+const stars=Array.from({length:400},()=>({x:Math.random(),y:Math.random(),s:Math.random()*1.2+.3,b:Math.random(),sp:Math.random()*.5+.5}));
+const nebulae=[
+  {x:.3,y:.35,rx:220,ry:140,color:'rgba(99,102,241,.04)'},
+  {x:.7,y:.45,rx:180,ry:120,color:'rgba(244,114,182,.03)'},
+  {x:.5,y:.2,rx:250,ry:100,color:'rgba(96,165,250,.03)'},
+  {x:.5,y:.7,rx:200,ry:130,color:'rgba(52,211,153,.025)'},
+];
 
 function resize(){
   dpr=window.devicePixelRatio||1;
@@ -728,38 +725,74 @@ window.addEventListener('resize',resize);resize();
 
 function nodePos(n){return{x:n.x*W,y:n.y*H}}
 
-/* ── Draw ── */
 function draw(){
-  t+=.003;
+  t+=.002;
   X.clearRect(0,0,W,H);
+
+  // Deep space gradient
+  const bg=X.createRadialGradient(W/2,H/2,0,W/2,H/2,Math.max(W,H)*.7);
+  bg.addColorStop(0,'#0a0520');bg.addColorStop(.5,'#050214');bg.addColorStop(1,'#020010');
+  X.fillStyle=bg;X.fillRect(0,0,W,H);
+
+  // Nebulae
+  for(const nb of nebulae){
+    const g=X.createRadialGradient(nb.x*W,nb.y*H,0,nb.x*W,nb.y*H,nb.rx);
+    const pulse=1+.15*Math.sin(t*1.5+nb.x*4);
+    g.addColorStop(0,nb.color.replace(/[\\d.]+\\)$/,(parseFloat(nb.color.match(/[\\d.]+\\)$/)[0])*pulse)+')'));
+    g.addColorStop(1,'transparent');
+    X.fillStyle=g;
+    X.beginPath();X.ellipse(nb.x*W,nb.y*H,nb.rx*pulse,nb.ry*pulse,0,0,6.28);X.fill();
+  }
 
   // Stars
   for(const s of stars){
-    const bri=.15+.12*Math.sin(t*2+s.b*6.28);
-    X.fillStyle='rgba(255,255,255,'+bri+')';
-    X.beginPath();X.arc(s.x*W,s.y*H,s.s*dpr,0,6.28);X.fill();
+    const bri=.12+.18*Math.sin(t*s.sp*2+s.b*6.28);
+    X.fillStyle='rgba(200,210,255,'+bri+')';
+    X.beginPath();X.arc(s.x*W,s.y*H,s.s,0,6.28);X.fill();
   }
 
-  // Edges
+  // Edges — always visible
   for(const e of EDGES){
     const a=NODES.find(n=>n.id===e.from),b=NODES.find(n=>n.id===e.to);
     if(!a||!b)continue;
     const p1=nodePos(a),p2=nodePos(b);
     const isHov=hovered&&(hovered.id===a.id||hovered.id===b.id);
+    const isConnected=hovered&&EDGES.some(ed=>(ed.from===hovered.id||ed.to===hovered.id)&&(ed.from===a.id||ed.to===a.id||ed.from===b.id||ed.to===b.id));
+
     X.save();
-    X.strokeStyle=isHov?'rgba(255,255,255,.35)':'rgba(255,255,255,.08)';
-    X.lineWidth=isHov?1.5:0.7;
-    if(e.dash){X.setLineDash([4,6]);}else{X.setLineDash([]);}
+    if(isHov){
+      // Glowing edge when hovered
+      X.shadowColor=a.color;X.shadowBlur=8;
+      X.strokeStyle='rgba(255,255,255,.5)';
+      X.lineWidth=2;
+    }else if(hovered&&!isConnected){
+      X.strokeStyle='rgba(255,255,255,.03)';
+      X.lineWidth=.5;
+    }else{
+      X.strokeStyle='rgba(255,255,255,.1)';
+      X.lineWidth=.8;
+    }
+    if(e.dash){X.setLineDash([5,8]);}else{X.setLineDash([]);}
     X.beginPath();X.moveTo(p1.x,p1.y);X.lineTo(p2.x,p2.y);X.stroke();
+    X.shadowBlur=0;
     X.restore();
 
-    // Edge label
+    // Animated particle on edge
+    if(!hovered||isHov){
+      const speed=(t*(.3+a.x*.2))%1;
+      const px=p1.x+(p2.x-p1.x)*speed;
+      const py=p1.y+(p2.y-p1.y)*speed;
+      X.fillStyle=isHov?'rgba(255,255,255,.6)':'rgba(255,255,255,.12)';
+      X.beginPath();X.arc(px,py,isHov?2.5:1.5,0,6.28);X.fill();
+    }
+
+    // Edge label on hover
     if(e.label&&isHov){
       const mx2=(p1.x+p2.x)/2,my2=(p1.y+p2.y)/2;
-      X.font='10px Inter,system-ui,sans-serif';
-      X.fillStyle='rgba(255,255,255,.45)';
+      X.font='500 11px Outfit,system-ui,sans-serif';
+      X.fillStyle='rgba(255,255,255,.55)';
       X.textAlign='center';X.textBaseline='middle';
-      X.fillText(e.label,mx2,my2-8);
+      X.fillText(e.label,mx2,my2-10);
     }
   }
 
@@ -767,28 +800,43 @@ function draw(){
   for(const n of NODES){
     const p=nodePos(n);
     const isHov=hovered&&hovered.id===n.id;
-    const pulse=1+.08*Math.sin(t*3+n.x*10);
-    const R=n.r*pulse*(isHov?1.15:1);
+    const isConn=hovered&&EDGES.some(e=>(e.from===hovered.id&&e.to===n.id)||(e.to===hovered.id&&e.from===n.id));
+    const dimmed=hovered&&!isHov&&!isConn;
+    const pulse=1+.06*Math.sin(t*2.5+n.x*8+n.y*5);
+    const R=n.r*pulse*(isHov?1.2:1);
 
-    // Glow
-    const g=X.createRadialGradient(p.x,p.y,R*.3,p.x,p.y,R*2.2);
+    // Outer glow
+    const g=X.createRadialGradient(p.x,p.y,R*.2,p.x,p.y,R*(isHov?3:2.5));
     g.addColorStop(0,n.glow);g.addColorStop(1,'transparent');
-    X.fillStyle=g;X.beginPath();X.arc(p.x,p.y,R*2.2,0,6.28);X.fill();
+    X.globalAlpha=dimmed?.2:1;
+    X.fillStyle=g;X.beginPath();X.arc(p.x,p.y,R*(isHov?3:2.5),0,6.28);X.fill();
 
-    // Core
-    X.fillStyle=n.color;X.globalAlpha=isHov?1:.7;
+    // Inner glow ring
+    if(isHov){
+      X.strokeStyle=n.color;X.lineWidth=1.5;X.globalAlpha=.3;
+      X.beginPath();X.arc(p.x,p.y,R*1.6,0,6.28);X.stroke();
+      X.globalAlpha=1;
+    }
+
+    // Core sphere gradient
+    const cg=X.createRadialGradient(p.x-R*.2,p.y-R*.25,R*.1,p.x,p.y,R);
+    cg.addColorStop(0,'rgba(255,255,255,.25)');cg.addColorStop(.4,n.color);cg.addColorStop(1,n.color+'99');
+    X.fillStyle=cg;
+    X.globalAlpha=dimmed?.25:(isHov?1:.8);
     X.beginPath();X.arc(p.x,p.y,R,0,6.28);X.fill();
     X.globalAlpha=1;
 
     // Border ring
-    X.strokeStyle=isHov?'rgba(255,255,255,.5)':'rgba(255,255,255,.12)';
+    X.strokeStyle=dimmed?'rgba(255,255,255,.04)':(isHov?'rgba(255,255,255,.6)':'rgba(255,255,255,.1)');
     X.lineWidth=isHov?2:1;
-    X.beginPath();X.arc(p.x,p.y,R+2,0,6.28);X.stroke();
+    X.beginPath();X.arc(p.x,p.y,R+1,0,6.28);X.stroke();
 
     // Label
-    X.font=(n.kind==='orchestrator'?'bold ':n.kind==='agent'?'600 ':'')+'11px Inter,system-ui,sans-serif';
-    X.fillStyle='#fff';X.textAlign='center';X.textBaseline='middle';
-    X.fillText(n.label,p.x,p.y+R+14);
+    const fontSize=n.kind==='orchestrator'?15:n.kind==='agent'?14:12;
+    X.font=(n.kind==='orchestrator'||n.kind==='agent'?'600 ':'400 ')+fontSize+'px Outfit,system-ui,sans-serif';
+    X.fillStyle=dimmed?'rgba(255,255,255,.15)':'rgba(255,255,255,.85)';
+    X.textAlign='center';X.textBaseline='middle';
+    X.fillText(n.label,p.x,p.y+R+18);
   }
 
   requestAnimationFrame(draw);
@@ -802,20 +850,20 @@ C.addEventListener('mousemove',e=>{
   for(const n of NODES){
     const p=nodePos(n);
     const dx=mx-p.x,dy=my-p.y;
-    if(dx*dx+dy*dy<(n.r+10)*(n.r+10)){hovered=n;break;}
+    if(dx*dx+dy*dy<(n.r+14)*(n.r+14)){hovered=n;break;}
   }
   if(hovered){
     C.style.cursor='pointer';
-    const n=hovered,p=nodePos(n);
-    const colors={orchestrator:'#6366f1',agent:'#f59e0b',tool:'#10b981',external:'#3b82f6',database:'#ec4899'};
+    const n=hovered;
+    const colors={orchestrator:'#a78bfa',agent:'#fb923c',tool:'#34d399',external:'#60a5fa',database:'#f472b6'};
     const labels={orchestrator:'ORQUESTADOR',agent:'AGENTE',tool:'HERRAMIENTA',external:'SERVICIO EXTERNO',database:'BASE DE DATOS'};
     TT.innerHTML='<h3>'+n.desc+'</h3>'
-      +'<span class="tag" style="background:'+colors[n.kind]+'22;color:'+colors[n.kind]+'">'+labels[n.kind]+'</span>'
+      +'<span class="tag" style="background:'+colors[n.kind]+'18;color:'+colors[n.kind]+';border:1px solid '+colors[n.kind]+'44">'+labels[n.kind]+'</span>'
       +'<div class="detail">'+n.detail.replace(/\\n/g,'<br>')+'</div>';
     TT.style.display='block';
-    let tx=mx+16,ty=my+16;
-    if(tx+350>W)tx=mx-360;
-    if(ty+200>H)ty=my-200;
+    let tx=mx+18,ty=my+18;
+    if(tx+370>W)tx=mx-380;
+    if(ty+220>H)ty=my-230;
     TT.style.left=tx+'px';TT.style.top=ty+'px';
   }else{
     C.style.cursor='default';
