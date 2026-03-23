@@ -40,6 +40,10 @@ class AgentState(TypedDict):
 _llm_cache: dict[str, ChatOpenAI] = {}
 _shared_http_client: httpx.AsyncClient | None = None
 
+MAX_CONVERSATIONAL_LLM_ITERATIONS = 4
+AGENT_GRAPH_TIMEOUT_SECONDS = 60
+MCP_DISCOVERY_TIMEOUT_SECONDS = 15
+
 
 @tool
 def send_reaction(emoji: str) -> str:
@@ -88,7 +92,10 @@ async def _load_single_mcp(server_config: dict) -> list:
             server_url=server_config["url"],
             server_name=server_config.get("name", ""),
         )
-        tools = await mcp_tools_to_langchain(client)
+        tools = await asyncio.wait_for(
+            mcp_tools_to_langchain(client),
+            timeout=MCP_DISCOVERY_TIMEOUT_SECONDS,
+        )
         logger.info(f"Cargadas {len(tools)} herramientas desde MCP: {server_config['url']}")
         return tools
     except Exception as e:
@@ -203,6 +210,8 @@ def _infer_reaction_emoji(message: str | None) -> str:
 
 def _should_continue_after_tools(state: AgentState) -> str:
     if state.get("short_circuit_after_tools"):
+        return END
+    if int(state.get("llm_iterations", 0)) >= MAX_CONVERSATIONAL_LLM_ITERATIONS:
         return END
     return "agent"
 
@@ -507,7 +516,13 @@ async def run_agent(request: ChatRequest) -> ChatResponse:
         "short_circuit_response": None,
     }
 
-    final_state = await compiled.ainvoke(initial_state)
+    try:
+        final_state = await asyncio.wait_for(
+            compiled.ainvoke(initial_state),
+            timeout=AGENT_GRAPH_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError as exc:
+        raise TimeoutError(f"run_agent excedió {AGENT_GRAPH_TIMEOUT_SECONDS}s") from exc
 
     # Extraer respuesta final
     short_circuit_response = final_state.get("short_circuit_response")
@@ -515,7 +530,7 @@ async def run_agent(request: ChatRequest) -> ChatResponse:
         response_text = short_circuit_response
     else:
         last_message = final_state["messages"][-1]
-        response_text = last_message.content if isinstance(last_message, AIMessage) else str(last_message.content)
+        response_text = str(last_message.content or "") if isinstance(last_message, AIMessage) else ""
 
     # Guardar en cache (solo sin MCP tools)
     if memory_session_id:
