@@ -74,7 +74,8 @@ _AUDIO_URL_RE = re.compile(r"URL:\s*(https?://[^\s]+)", re.IGNORECASE)
 _AUDIO_TRANSCRIPT_RE = re.compile(r"Transcript:\s*(.+)", re.IGNORECASE | re.DOTALL)
 _AUDIO_FILENAME_RE = re.compile(r"\(([^)]+\.ogg)\)", re.IGNORECASE)
 SUPABASE_STORAGE_BUCKET = "multimedia"
-SUPABASE_MULTIMEDIA_EDGE_FN = "crear-multimedia-inicial-v1"
+SUPABASE_EDGE_CREAR_MULTIMEDIA = "crear-multimedia-inicial-v1"
+SUPABASE_EDGE_GUARDAR_MULTIMEDIA = "guardar-multimedia-v4"
 
 
 def _normalize_phone(value: str | None) -> str | None:
@@ -160,34 +161,68 @@ async def _upload_audio_to_storage(audio_url: str, filename: str) -> str | None:
         return None
 
 
-async def _register_multimedia_edge(contacto_id: int, archivo_url: str) -> None:
-    """Fire-and-forget call to Supabase edge function to register multimedia."""
+async def _multimedia_pipeline(contacto_id: int, archivo_url: str, transcript: str | None) -> None:
+    """Async fire-and-forget pipeline: crear-multimedia → guardar-multimedia.
+
+    Step 1: Call crear-multimedia-inicial-v1 to register in wp_multimedia.
+    Step 2: Call guardar-multimedia-v4 with the multimedia_id + transcript.
+    """
     settings = get_settings()
-    edge_url = f"{settings.SUPABASE_URL}/functions/v1/{SUPABASE_MULTIMEDIA_EDGE_FN}"
-    payload = {
-        "contacto_id": contacto_id,
-        "tipo": "multimedia",
-        "archivo_url": archivo_url,
-    }
-    headers = {
+    auth_headers = {
         "Authorization": f"Bearer {settings.SUPABASE_SERVICE_KEY}",
         "Content-Type": "application/json",
     }
+
     try:
-        async with httpx.AsyncClient(timeout=20.0) as http:
-            resp = await http.post(edge_url, json=payload, headers=headers)
-            if resp.status_code >= 400:
+        async with httpx.AsyncClient(timeout=30.0) as http:
+            # --- Step 1: crear-multimedia-inicial ---
+            crear_url = f"{settings.SUPABASE_URL}/functions/v1/{SUPABASE_EDGE_CREAR_MULTIMEDIA}"
+            crear_payload = {
+                "contacto_id": contacto_id,
+                "tipo": "multimedia",
+                "archivo_url": archivo_url,
+            }
+            resp1 = await http.post(crear_url, json=crear_payload, headers=auth_headers)
+            if resp1.status_code >= 400:
                 logger.error(
-                    "Edge function multimedia failed: status=%d body=%s",
-                    resp.status_code, resp.text[:500],
+                    "Edge crear-multimedia failed: status=%d body=%s",
+                    resp1.status_code, resp1.text[:500],
+                )
+                return
+            resp1_data = resp1.json()
+            logger.info(
+                "Edge crear-multimedia ok: contacto=%s url=%s resp=%s",
+                contacto_id, archivo_url, str(resp1_data)[:200],
+            )
+
+            # Extract multimedia_id from response
+            multimedia_id = None
+            data_block = resp1_data.get("data") or {}
+            multimedia_id = data_block.get("id")
+            if not multimedia_id:
+                logger.warning("Edge crear-multimedia did not return multimedia id: %s", str(resp1_data)[:300])
+                return
+
+            # --- Step 2: guardar-multimedia ---
+            guardar_url = f"{settings.SUPABASE_URL}/functions/v1/{SUPABASE_EDGE_GUARDAR_MULTIMEDIA}"
+            contenido = transcript or f"Archivo multimedia: {archivo_url}"
+            guardar_payload = {
+                "multimedia_id": multimedia_id,
+                "contenido": contenido,
+            }
+            resp2 = await http.post(guardar_url, json=guardar_payload, headers=auth_headers)
+            if resp2.status_code >= 400:
+                logger.error(
+                    "Edge guardar-multimedia failed: status=%d body=%s",
+                    resp2.status_code, resp2.text[:500],
                 )
             else:
                 logger.info(
-                    "Edge function multimedia ok: contacto_id=%s url=%s resp=%s",
-                    contacto_id, archivo_url, resp.text[:200],
+                    "Edge guardar-multimedia ok: multimedia_id=%s resp=%s",
+                    multimedia_id, resp2.text[:200],
                 )
     except Exception as exc:
-        logger.error("Edge function multimedia error: %s", exc)
+        logger.error("Multimedia pipeline error: %s", exc, exc_info=True)
 
 
 async def _process_audio_message(inbound: KapsoInboundRequest, contacto_id: int | None = None) -> tuple[str | None, str | None]:
@@ -219,9 +254,9 @@ async def _process_audio_message(inbound: KapsoInboundRequest, contacto_id: int 
     else:
         logger.warning("Audio message but no audio_url found. Raw text: %s", text[:200])
 
-    # Register multimedia via edge function (async, non-blocking)
+    # Register multimedia via edge functions (async, non-blocking)
     if storage_url and contacto_id:
-        asyncio.create_task(_register_multimedia_edge(contacto_id, storage_url))
+        asyncio.create_task(_multimedia_pipeline(contacto_id, storage_url, transcript))
 
     return transcript, storage_url
 
