@@ -807,7 +807,8 @@ async def kapso_inbound(
         # Procesar audio: subir a Supabase Storage y extraer transcript
         audio_transcript: str | None = None
         audio_storage_url: str | None = None
-        if request.message_type == "audio" and request.has_media:
+        is_audio = str(request.message_type or "").strip().lower() == "audio"
+        if is_audio:
             audio_transcript, audio_storage_url = await _process_audio_message(request)
             add_kapso_debug_event(
                 "fastapi",
