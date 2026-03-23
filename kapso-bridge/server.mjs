@@ -640,20 +640,20 @@ canvas{display:block;position:absolute;top:0;left:0}
 </div>
 <script>
 const C=document.getElementById('c'),X=C.getContext('2d'),TT=document.getElementById('tooltip');
-let W,H,mx=-1,my=-1,hovered=null,t=0,dpr=1;
+let W,H,mx=-1,my=-1,hovered=null,dragging=null,dragOff={x:0,y:0},t=0,dpr=1;
 
 const NODES=[
-  {id:'orch',label:'Orquestador',kind:'orchestrator',x:.5,y:.17,r:38,
+  {id:'orch',label:'Orquestador',kind:'orchestrator',x:.5,y:.22,r:38,
    color:'#a78bfa',glow:'rgba(167,139,250,.4)',
    desc:'Kapso Inbound Handler',detail:'POST /api/v1/kapso/inbound\\nPhase 1: Funnel + Contact Update (paralelo)\\nPhase 2: Enriquecimiento del prompt\\nPhase 3: Agente Conversacional\\nPhase 4: Merge de resultados'},
 
-  {id:'conv',label:'Conversacional',kind:'agent',x:.5,y:.50,r:32,
+  {id:'conv',label:'Conversacional',kind:'agent',x:.5,y:.52,r:32,
    color:'#fb923c',glow:'rgba(251,146,60,.35)',
    desc:'Agente Conversacional',detail:'Modelo: grok-4.1-fast\\nTemp: 0.7 · Max tokens: 1024\\nIteraciones LLM: hasta 4\\nMemoria: agent_memory (8 turnos)\\nRecibe prompt enriquecido del funnel'},
-  {id:'funnel',label:'Embudo',kind:'agent',x:.24,y:.43,r:30,
+  {id:'funnel',label:'Embudo',kind:'agent',x:.24,y:.45,r:30,
    color:'#fb923c',glow:'rgba(251,146,60,.35)',
    desc:'Agente de Embudo',detail:'Modelo: grok-4.1-fast\\nTemp: 0.5 · Max tokens: 512\\nIteraciones LLM: hasta 2\\nTimeout: 25s\\nAnaliza etapa del contacto en el funnel'},
-  {id:'contact',label:'Contacto',kind:'agent',x:.76,y:.43,r:30,
+  {id:'contact',label:'Contacto',kind:'agent',x:.76,y:.45,r:30,
    color:'#fb923c',glow:'rgba(251,146,60,.35)',
    desc:'Agente de Actualización de Contacto',detail:'Modelo: grok-4.1-fast\\nTemp: 0.2 · Max tokens: 512\\nIteraciones LLM: hasta 2\\nTimeout: 20s\\nCaptura nombre, email, teléfono, etc.'},
 
@@ -670,17 +670,17 @@ const NODES=[
    color:'#34d399',glow:'rgba(52,211,153,.3)',
    desc:'Herramienta: update_contact_info',detail:'Actualiza columnas de wp_contactos\\nCampos: nombre, apellido, email, teléfono,\\netapa_emocional, timezone, es_calificado, estado'},
 
-  {id:'whatsapp',label:'WhatsApp',kind:'external',x:.5,y:.04,r:26,
+  {id:'whatsapp',label:'WhatsApp',kind:'external',x:.5,y:.10,r:26,
    color:'#60a5fa',glow:'rgba(96,165,250,.35)',
    desc:'WhatsApp via Kapso Bridge',detail:'Bridge: kapso-bridge/server.mjs\\nFunciones: envío texto, reacciones,\\nbotones, listas, media\\nTyping keepalive cada 20s'},
-  {id:'openrouter',label:'OpenRouter',kind:'external',x:.10,y:.24,r:22,
+  {id:'openrouter',label:'OpenRouter',kind:'external',x:.10,y:.28,r:22,
    color:'#60a5fa',glow:'rgba(96,165,250,.35)',
    desc:'OpenRouter LLM API',detail:'Base URL: openrouter.ai/api/v1\\nModelo: x-ai/grok-4.1-fast\\nProvee inferencia LLM para los 3 agentes'},
   {id:'mcp_srv',label:'MCP Servers',kind:'external',x:.22,y:.80,r:22,
    color:'#60a5fa',glow:'rgba(96,165,250,.35)',
    desc:'Servidores MCP externos',detail:'Configurados por agente en BD\\nDescubrimiento dinámico de herramientas\\nConexión vía StreamableHTTPTransport'},
 
-  {id:'supabase',label:'Supabase',kind:'database',x:.90,y:.24,r:28,
+  {id:'supabase',label:'Supabase',kind:'database',x:.90,y:.28,r:28,
    color:'#f472b6',glow:'rgba(244,114,182,.35)',
    desc:'Supabase (PostgreSQL + REST)',detail:'Tablas principales:\\n· wp_contactos (perfil + metadata)\\n· agent_memory (memoria conversacional)\\n· wp_conversaciones\\n· wp_mensajes\\n· wp_citas\\n· wp_contactos_nota'},
 ];
@@ -843,17 +843,39 @@ function draw(){
 }
 requestAnimationFrame(draw);
 
-/* ── Interaction ── */
-C.addEventListener('mousemove',e=>{
-  mx=e.clientX;my=e.clientY;
-  hovered=null;
+/* ── Interaction: drag & hover ── */
+function hitTest(ex,ey){
   for(const n of NODES){
     const p=nodePos(n);
-    const dx=mx-p.x,dy=my-p.y;
-    if(dx*dx+dy*dy<(n.r+14)*(n.r+14)){hovered=n;break;}
+    const dx=ex-p.x,dy=ey-p.y;
+    if(dx*dx+dy*dy<(n.r+14)*(n.r+14))return n;
   }
+  return null;
+}
+
+C.addEventListener('mousedown',e=>{
+  const hit=hitTest(e.clientX,e.clientY);
+  if(hit){
+    dragging=hit;
+    const p=nodePos(hit);
+    dragOff.x=e.clientX-p.x;
+    dragOff.y=e.clientY-p.y;
+    TT.style.display='none';
+  }
+});
+
+C.addEventListener('mousemove',e=>{
+  mx=e.clientX;my=e.clientY;
+  if(dragging){
+    dragging.x=(mx-dragOff.x)/W;
+    dragging.y=(my-dragOff.y)/H;
+    C.style.cursor='grabbing';
+    TT.style.display='none';
+    return;
+  }
+  hovered=hitTest(mx,my);
   if(hovered){
-    C.style.cursor='pointer';
+    C.style.cursor='grab';
     const n=hovered;
     const colors={orchestrator:'#a78bfa',agent:'#fb923c',tool:'#34d399',external:'#60a5fa',database:'#f472b6'};
     const labels={orchestrator:'ORQUESTADOR',agent:'AGENTE',tool:'HERRAMIENTA',external:'SERVICIO EXTERNO',database:'BASE DE DATOS'};
@@ -870,7 +892,8 @@ C.addEventListener('mousemove',e=>{
     TT.style.display='none';
   }
 });
-C.addEventListener('mouseleave',()=>{hovered=null;TT.style.display='none';});
+window.addEventListener('mouseup',()=>{dragging=null;});
+C.addEventListener('mouseleave',()=>{hovered=null;dragging=null;TT.style.display='none';});
 </script>
 </body>
 </html>`;
