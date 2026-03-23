@@ -707,9 +707,18 @@ function renderKapsoBasicHtml(debugData) {
         :'<tr><td colspan="12" style="padding:20px;color:#94a3b8">Sin interacciones todavía.</td></tr>';
     }
 
+    // Preserve open state of interaction details
     var detailsContainer=document.getElementById('interaction-details');
     if(detailsContainer){
+      var openSet=new Set();
+      detailsContainer.querySelectorAll('details[open]').forEach(function(d){
+        if(d.id)openSet.add(d.id);
+      });
       detailsContainer.innerHTML=items.map(renderDetail).join('');
+      openSet.forEach(function(id){
+        var el=document.getElementById(id);
+        if(el)el.setAttribute('open','');
+      });
     }
 
     var bridgePre=document.getElementById('bridge-config');
@@ -724,7 +733,11 @@ function renderKapsoBasicHtml(debugData) {
   }
 
   function poll(){
-    fetch('/debug/kapso/data').then(function(r){return r.json()}).then(update).catch(function(e){console.warn('poll error',e)});
+    var scrollY=window.scrollY;
+    fetch('/debug/kapso/data').then(function(r){return r.json()}).then(function(data){
+      update(data);
+      window.scrollTo(0,scrollY);
+    }).catch(function(e){console.warn('poll error',e)});
   }
 
   function toggleAuto(){
