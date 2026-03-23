@@ -390,3 +390,85 @@ async def registrar_actividad(
     if datos_despues:
         payload["datos_despues"] = datos_despues
     return await sb.insert("wp_actividades_log", payload)
+
+
+# ─── Embudo (Funnel) ────────────────────────────────────────────────────────
+
+async def actualizar_etapa_contacto(contacto_id: int, nueva_etapa_orden: int) -> dict | None:
+    """Actualiza la etapa del embudo de un contacto."""
+    sb = await get_supabase()
+    await sb.update(
+        "wp_contactos",
+        {"id": contacto_id},
+        {"etapa_embudo": nueva_etapa_orden},
+    )
+    return await get_contacto(contacto_id)
+
+
+async def actualizar_metadata_contacto(contacto_id: int, nueva_metadata: dict[str, Any]) -> dict | None:
+    """Actualiza la metadata del contacto (merge con datos existentes)."""
+    sb = await get_supabase()
+    contacto_actual = await get_contacto(contacto_id)
+    if not contacto_actual:
+        return None
+    
+    metadata_existente = contacto_actual.get("metadata") or {}
+    metadata_merged = {**metadata_existente, **nueva_metadata}
+    
+    await sb.update(
+        "wp_contactos",
+        {"id": contacto_id},
+        {"metadata": metadata_merged},
+    )
+    return await get_contacto(contacto_id)
+
+
+async def get_conversacion_con_mensajes(conversacion_id: int, limite_mensajes: int = 20) -> tuple[dict | None, list[dict]]:
+    """Obtiene una conversación y sus mensajes en paralelo."""
+    conversacion = await get_conversacion(conversacion_id)
+    if not conversacion:
+        return None, []
+    
+    mensajes = await get_mensajes_recientes(conversacion_id, limit=limite_mensajes)
+    return conversacion, mensajes
+
+
+async def load_funnel_context(
+    contacto_id: int,
+    empresa_id: int,
+    conversacion_id: int | None = None,
+    limite_mensajes: int = 20,
+) -> tuple[dict | None, list[dict], tuple[dict | None, list[dict]]]:
+    """
+    Carga contexto del embudo en paralelo:
+    - Contacto + Etapas del embudo
+    - Conversación + Mensajes (si se proporciona conversacion_id)
+    
+    Retorna: (contacto, etapas, (conversacion, mensajes))
+    """
+    # Query 1: Contacto
+    contacto_task = get_contacto(contacto_id)
+    
+    # Query 2: Etapas del embudo
+    etapas_task = get_empresa_embudo(empresa_id)
+    
+    # Query 3: Conversación y mensajes (si existe)
+    if conversacion_id:
+        conv_msg_task = get_conversacion_con_mensajes(conversacion_id, limite_mensajes)
+    else:
+        conv_msg_task = None
+    
+    # Ejecutar en paralelo
+    if conv_msg_task:
+        contacto, etapas, (conversacion, mensajes) = await asyncio.gather(
+            contacto_task,
+            etapas_task,
+            conv_msg_task,
+        )
+        return contacto, etapas, (conversacion, mensajes)
+    else:
+        contacto, etapas = await asyncio.gather(
+            contacto_task,
+            etapas_task,
+        )
+        return contacto, etapas, (None, [])

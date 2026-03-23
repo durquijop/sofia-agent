@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.kapso_routes import router as kapso_router
 from app.api.routes import router
 from app.api.db_routes import router as db_router
+from app.api.funnel_routes import router as funnel_router
 from app.core.config import get_settings
 
 logging.basicConfig(
@@ -32,7 +33,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title=settings.APP_NAME,
-    description="Sistema multi-agente basado en LangGraph con soporte MCP para múltiples empresas",
+    description="Sistema multi-agente basado en LangGraph con soporte MCP para múltiples empresas. Incluye: Agente Conversacional + Agente de Embudo",
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
@@ -50,6 +51,7 @@ app.add_middleware(
 app.include_router(router)
 app.include_router(kapso_router)
 app.include_router(db_router)
+app.include_router(funnel_router)
 
 
 @app.get("/")
@@ -60,6 +62,7 @@ async def root():
         "docs": "/docs",
         "endpoints": {
             "chat": "/api/v1/chat",
+            "funnel_analyze": "/api/v1/funnel/analyze",
             "kapso_inbound": "/api/v1/kapso/inbound",
             "health": "/api/v1/health",
             "db_health": "/api/v1/db/health",

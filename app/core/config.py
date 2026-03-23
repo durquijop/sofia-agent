@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     DEFAULT_MODEL: str = "x-ai/grok-4.1-fast"
     SUPABASE_URL: str
     SUPABASE_SERVICE_KEY: str
+    SUPABASE_EDGE_FUNCTION_URL: str = "https://vecspltvmyopwbjzerow.supabase.co/functions/v1"
+    SUPABASE_EDGE_FUNCTION_TOKEN: str | None = None
     KAPSO_INTERNAL_TOKEN: str | None = None
     APP_NAME: str = "URPE AI Lab - Multi-Agent System"
     DEBUG: bool = False
