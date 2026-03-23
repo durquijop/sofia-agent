@@ -442,14 +442,37 @@ async def test_funnel_user_prompt_uses_persistent_agent_memory_turns() -> None:
         {"speaker": "usuario", "content": "apg@urpeailab.com", "timestamp": "2026-03-23T08:46:47+00:00"},
     ]
 
-    prompt = _build_funnel_user_message(payload, memory_turns)
+    prompt = _build_funnel_user_message(payload, memory_turns, use_memory_only=True)
 
     assert '"memory_turns": 4' in prompt
+    assert '"memory_only": true' in prompt
     assert '- [08:20:00] agente: Hola, ¿me compartes tu nombre completo?' in prompt
     assert '- [08:26:23] usuario: Agustin Peralta Guarin' in prompt
     assert '- [08:40:00] agente: Perfecto, ahora compárteme tu correo.' in prompt
     assert '- Agustin Peralta Guarin' in prompt
     assert '- apg@urpeailab.com' in prompt
+
+
+async def test_funnel_user_prompt_does_not_fallback_to_wp_messages_when_memory_is_empty() -> None:
+    payload = {
+        "id": 64368,
+        "contacto_id": 133678,
+        "canal": "Kapso",
+        "total_mensajes": 17,
+        "mensajes_retornados": 17,
+        "mensajes": [
+            {"hora": "08:18:26", "remitente": "usuario", "mensaje": "Hola"},
+            {"hora": "08:26:23", "remitente": "usuario", "mensaje": "Agustin Peralta Guarin"},
+        ],
+    }
+
+    prompt = _build_funnel_user_message(payload, memory_turns=[], use_memory_only=True)
+
+    assert '"memory_turns": 0' in prompt
+    assert '"memory_only": true' in prompt
+    assert '- Sin turnos persistentes en agent_memory' in prompt
+    assert '- [08:18:26] usuario: Hola' not in prompt
+    assert '- Agustin Peralta Guarin' not in prompt
 
 
 async def main() -> int:
@@ -461,6 +484,7 @@ async def main() -> int:
     await test_run_funnel_agent_keeps_full_system_prompt_in_trace()
     await test_funnel_user_prompt_compacts_transcript_and_keeps_key_data()
     await test_funnel_user_prompt_uses_persistent_agent_memory_turns()
+    await test_funnel_user_prompt_does_not_fallback_to_wp_messages_when_memory_is_empty()
     print("OK - funnel regression tests passed")
     return 0
 

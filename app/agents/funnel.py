@@ -257,7 +257,11 @@ def _extract_user_highlights(mensajes: list[dict]) -> list[str]:
     return highlights[:8]
 
 
-def _build_funnel_user_message(conversacion_memoria_payload: dict, memory_turns: list[dict] | None = None) -> str:
+def _build_funnel_user_message(
+    conversacion_memoria_payload: dict,
+    memory_turns: list[dict] | None = None,
+    use_memory_only: bool = False,
+) -> str:
     mensajes = list((conversacion_memoria_payload or {}).get("mensajes") or [])
     transcript_lines: list[str] = []
     memory_turns = list(memory_turns or [])
@@ -270,7 +274,7 @@ def _build_funnel_user_message(conversacion_memoria_payload: dict, memory_turns:
                 continue
             hora = _format_memory_timestamp(turn.get("timestamp"))
             transcript_lines.append(f"- [{hora}] {speaker}: {content}")
-    else:
+    elif not use_memory_only:
         for msg in mensajes:
             speaker = _normalize_conversation_speaker(msg.get("remitente"))
             hora = str(msg.get("hora") or msg.get("fecha_hora") or msg.get("timestamp") or "?").strip()
@@ -279,7 +283,7 @@ def _build_funnel_user_message(conversacion_memoria_payload: dict, memory_turns:
                 continue
             transcript_lines.append(f"- [{hora}] {speaker}: {content}")
 
-    highlights = _extract_user_highlights(mensajes)
+    highlights = [] if use_memory_only else _extract_user_highlights(mensajes)
     if memory_turns:
         highlights = _extract_user_highlights(
             [
@@ -287,8 +291,8 @@ def _build_funnel_user_message(conversacion_memoria_payload: dict, memory_turns:
                 for turn in memory_turns
             ]
         ) or highlights
-    transcript_block = "\n".join(transcript_lines) if transcript_lines else "- Sin mensajes previos"
-    highlights_block = "\n".join(f"- {item}" for item in highlights) if highlights else "- No se detectaron datos claros"
+    transcript_block = "\n".join(transcript_lines) if transcript_lines else "- Sin turnos persistentes en agent_memory"
+    highlights_block = "\n".join(f"- {item}" for item in highlights) if highlights else "- No se detectaron datos claros en agent_memory"
     summary_payload = {
         "conversacion_id": conversacion_memoria_payload.get("id"),
         "contacto_id": conversacion_memoria_payload.get("contacto_id"),
@@ -296,6 +300,7 @@ def _build_funnel_user_message(conversacion_memoria_payload: dict, memory_turns:
         "total_mensajes": conversacion_memoria_payload.get("total_mensajes"),
         "mensajes_retornados": conversacion_memoria_payload.get("mensajes_retornados"),
         "memory_turns": len(memory_turns),
+        "memory_only": use_memory_only,
     }
     return (
         "Resumen de la conversación:\n"
@@ -948,7 +953,11 @@ async def run_funnel_agent(request: FunnelAgentRequest) -> FunnelAgentResponse:
             contexto_embudo_payload=contexto_embudo_payload,
         )
 
-        user_message = _build_funnel_user_message(conversacion_memoria_payload, memory_turns)
+        user_message = _build_funnel_user_message(
+            conversacion_memoria_payload,
+            memory_turns,
+            use_memory_only=bool(request.memory_session_id),
+        )
         
         # Estado inicial
         initial_state: FunnelAgentState = {
