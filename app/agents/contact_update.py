@@ -1,5 +1,6 @@
 """Agente de actualización de contacto - analiza conversación y actualiza wp_contactos."""
 import asyncio
+from datetime import datetime, timezone
 import time
 import logging
 from typing import Annotated, Any, TypedDict
@@ -90,14 +91,27 @@ def _build_messages_summary(messages: list[dict]) -> str:
 
 def _build_appointments_summary(citas: list[dict]) -> str:
     if not citas:
-        return "Sin citas registradas"
+        return "Citas próximas: 0, Citas pasadas: 0"
+    now = datetime.now(timezone.utc)
+    upcoming = 0
+    past = 0
     lines: list[str] = []
     for cita in citas[:5]:
         titulo = str(cita.get("titulo") or "Cita").strip()
         fecha = str(cita.get("fecha_hora") or "sin fecha").strip()
         estado = str(cita.get("estado") or "sin estado").strip()
+        try:
+            dt = datetime.fromisoformat(fecha.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            if dt >= now:
+                upcoming += 1
+            else:
+                past += 1
+        except ValueError:
+            pass
         lines.append(f"- {titulo} | {fecha} | estado={estado}")
-    return "\n".join(lines)
+    return f"Citas próximas: {upcoming}, Citas pasadas: {past}\n" + "\n".join(lines)
 
 
 def _build_contact_update_system_prompt() -> str:
@@ -105,67 +119,33 @@ def _build_contact_update_system_prompt() -> str:
 
 1. Analizar conversaciones y extraer información nueva
 2. Detectar el idioma del prospecto desde el primer mensaje
-3. Identificar nombre, apellido, email, teléfono, estado emocional, timezone, estado y calificación
-4. Mantener la tabla wp_contactos actualizada sin duplicados
+3. Identificar nombre, email, ubicación, nivel académico
+4. Mantener la base de datos actualizada sin duplicados
 5. Responder siempre en formato: ✅ OK Guardado o ⚪ OK Sin acción
 
 REGLAS CRÍTICAS:
-- Solo actualiza si hay información NUEVA y explícita del remitente usuario
+- Solo actualiza si hay información NUEVA
 - No hagas llamadas a tools sin datos concretos
 - Preserva datos existentes
 - Sé conciso en respuestas
-- Solo puedes persistir estos campos de wp_contactos: nombre, apellido, email, telefono, etapa_emocional, timezone, es_calificado, estado
-- Si un dato no es explícito o no está claro, devuelve null y no lo actualices
-
-Reglas específicas de extracción:
-
-nombre:
-- Solo cuando el usuario indique explícitamente su nombre real
-- Ejemplos válidos: "Mi nombre es Juan", "Soy María García", "Me llamo Carlos"
-- Devuelve null si no está claro o si es una suposición
-
-apellido:
-- Solo cuando el usuario indique explícitamente su apellido real
-- Ejemplos válidos: "Mi apellido es García", "Soy Juan Pérez"
-- Devuelve null si no está claro o tiene menos de 2 caracteres
-
-email:
-- Solo cuando el usuario indique explícitamente su email real
-- Acepta cualquier string completo que el usuario entregue como email
-- Devuelve null si no está claro que sea su email
-
-telefono:
-- Solo cuando el usuario comparta explícitamente su celular
-- Devuelve null si no aparece de forma explícita
-
-etapa_emocional:
-- Basado en la conversación del usuario, no en suposiciones
-- Valores esperados: preocupado, ansioso, esperanzado, decidido, interesado, evaluando, negociando, ganado, perdido, escéptico
-- Devuelve null si no hay señales claras
-
-timezone:
-- Usa formato IANA solo si el usuario menciona país o ciudad y es deducible
-- Ejemplos: America/Bogota, America/Mexico_City, America/New_York
-- Devuelve null si no es deducible con claridad
-
-es_calificado:
-- Solo usa exactamente si, no, evaluando o null
-- Devuelve null si aún no hay suficiente información
-
-estado:
-- Solo usa exactamente prospecto, cliente, inactivo, rechazado o null
-- Devuelve null si no hay razón clara para cambiarlo
-
-Salida obligatoria:
-- Si no hay datos nuevos: ⚪ OK Sin acción - [razón breve]
-- Si hay información nueva y se guardó: ✅ OK Guardado - [campos actualizados]
 """
 
 
 def _build_contact_update_user_prompt(contacto: dict, mensajes: list[dict], citas: list[dict]) -> str:
     total_mensajes = len(mensajes)
-    ultimo_remitente = mensajes[-1].get("remitente") if mensajes else None
-    proximas_citas = len(citas)
+    ultimo_remitente = str(mensajes[-1].get("remitente") or "desconocido") if mensajes else "desconocido"
+    proximas_citas = 0
+    now = datetime.now(timezone.utc)
+    for cita in citas:
+        fecha = str(cita.get("fecha_hora") or "").strip()
+        try:
+            dt = datetime.fromisoformat(fecha.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            if dt >= now:
+                proximas_citas += 1
+        except ValueError:
+            continue
     return (
         "Analiza la conversación e identifica qué información nueva debe registrarse:\n\n"
         "## Historial de conversación\n"
@@ -173,15 +153,24 @@ def _build_contact_update_user_prompt(contacto: dict, mensajes: list[dict], cita
         "## Información de citas\n"
         f"{_build_appointments_summary(citas)}\n\n"
         f"Total de mensajes: {total_mensajes}\n"
-        f"Último remitente: {ultimo_remitente or 'desconocido'}\n"
+        f"Último remitente: {ultimo_remitente}\n"
         f"Citas próximas: {proximas_citas}\n\n"
-        "Información del usuario actual\n"
+        "Informacion del usuario actual\n"
         f"{_stringify_safe(contacto)}\n\n"
-        "INSTRUCCIONES\n"
-        "Si no hay datos nuevos, responde: ⚪ OK Sin acción - [razón breve]\n\n"
-        "Si hay información nueva, identifica nombre, apellido, email, telefono, etapa_emocional, timezone, es_calificado y estado.\n"
-        "NO hagas llamadas a tools si solo estás analizando.\n"
-        "Si necesitas guardar datos, ENTONCES usa las tools disponibles."
+        "---\n\n"
+        "## INSTRUCCIONES\n\n"
+        "1. Si no hay datos nuevos, responde: ⚪ OK Sin acción - [razón breve]\n"
+        "2. Si hay información nueva, identifica:\n"
+        "   - Nombre y email del usuario\n"
+        "   - Ubicación (dentro o fuera de USA)\n"
+        "   - Nivel académico\n"
+        "   - Intención de contacto\n"
+        "   - Idioma detectado\n\n"
+        "3. Responde SIEMPRE en uno de estos formatos:\n"
+        "   ✅ OK Guardado - [campos actualizados]\n"
+        "   ⚪ OK Sin acción - [razón]\n\n"
+        "4. NO hagas llamadas a tools si solo estás analizando.\n"
+        "5. Si necesitas guardar datos, ENTONCES usa las tools disponibles."
     )
 
 
