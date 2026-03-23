@@ -18,6 +18,7 @@ from langgraph.graph.message import add_messages
 from app.core.cache import response_cache
 from app.core.config import get_settings
 from app.db import queries as db
+from app.db.client import get_supabase
 from app.mcp_client.client import MCPClient, mcp_tools_to_langchain
 from app.schemas.chat import AgentRunTrace, ChatRequest, ChatResponse, TimingInfo, ToolCall, ToolDefinition
 
@@ -54,6 +55,68 @@ def send_reaction(emoji: str) -> str:
     Ejemplos de emojis: ❤️ 🙏 😂 🎉 👍 🔥 😍 💪
     """
     return f"reaction:{emoji}"
+
+
+def _create_guardar_nota_tool(contacto_id: int):
+    """Crea un tool guardar_nota con el contacto_id capturado por closure."""
+
+    @tool
+    async def guardar_nota(nota: str) -> str:
+        """🧠 MEMORIA PERSISTENTE / Tu agenda - Guarda información importante aquí para recordarla en futuras conversaciones.
+
+USA DESPUÉS DE:
+✓ Consultar otras herramientas (búsquedas, cálculos, APIs)
+✓ Hacer acuerdos o compromisos
+✓ Descubrir contexto relevante del contacto
+✓ Luego de una búsqueda en la web o información que se requiere para tener contexto en las siguientes interacciones.
+
+GUARDA:
+• Resultados de herramientas externas
+• Acuerdos y fechas importantes
+• Cualquier dato que necesites recordar después
+
+⚠️ CRÍTICO: Sin guardar aquí, perderás toda la información en la próxima conversación. Usa formato: [FECHA] CATEGORÍA: detalles
+
+* No añadir datos que tienen variaciones como disponibilidad de agendas.
+
+Información relevante: deuda, situación financiera, contexto importante.
+Sistema de memoria a largo plazo.
+No sobre escribas, agrega. Si actualizas sin añadir las notas anteriores puedes perder las notas anteriores.
+
+Args:
+    nota: Texto de la nota a guardar. Usa formato [FECHA] CATEGORÍA: detalles
+"""
+        try:
+            supabase = await get_supabase()
+
+            # Leer notas existentes para no sobreescribirlas
+            existing = await supabase.query(
+                "wp_contactos",
+                select="notas",
+                filters={"id": contacto_id},
+                single=True,
+            )
+            existing_notas = ""
+            if existing and existing.get("notas"):
+                existing_notas = str(existing["notas"]).strip()
+
+            # Append: notas anteriores + nueva nota
+            if existing_notas:
+                updated_notas = f"{existing_notas}\n{nota}"
+            else:
+                updated_notas = nota
+
+            await supabase.update(
+                "wp_contactos",
+                filters={"id": contacto_id},
+                data={"notas": updated_notas},
+            )
+            return f"✅ Nota guardada exitosamente para contacto {contacto_id}."
+        except Exception as exc:
+            logger.error("Error guardando nota para contacto %s: %s", contacto_id, exc)
+            return f"❌ Error al guardar nota: {exc}"
+
+    return guardar_nota
 
 
 def _get_http_client() -> httpx.AsyncClient:
@@ -510,6 +573,13 @@ async def run_agent(request: ChatRequest) -> ChatResponse:
         logger.info(f"Total herramientas cargadas: {len(tools)}")
     elif request.mcp_servers and reaction_only_request:
         logger.info("Omitiendo carga de herramientas MCP para solicitud enfocada en reacción")
+
+    # Agregar tool de notas persistentes si hay contacto_id
+    if request.contacto_id and not reaction_only_request:
+        nota_tool = _create_guardar_nota_tool(request.contacto_id)
+        tools.append(nota_tool)
+        logger.info("Tool guardar_nota agregada para contacto_id=%s", request.contacto_id)
+
     mcp_discovery_ms = (time.perf_counter() - t_mcp) * 1000
     available_tools = _describe_available_tools(tools)
 
