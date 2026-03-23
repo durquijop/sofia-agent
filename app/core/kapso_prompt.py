@@ -569,7 +569,7 @@ def build_kapso_context_payload(
         "nombre": contacto.get("nombre") if contacto else inbound.contact_name,
         "apellido": contacto.get("apellido") if contacto else None,
         "nombre_completo": (
-            f"{contacto.get('nombre', '').strip()} {contacto.get('apellido', '').strip()}".strip()
+            f"{(contacto.get('nombre') or '').strip()} {(contacto.get('apellido') or '').strip()}".strip()
             if contacto and (contacto.get("nombre") or contacto.get("apellido"))
             else (inbound.contact_name or "sin registrar")
         ),
