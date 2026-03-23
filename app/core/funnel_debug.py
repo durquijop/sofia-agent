@@ -1,9 +1,11 @@
 """
-Funnel Debug — Trazas de ejecución del agente de embudo en memoria
+Funnel Debug — Trazas de ejecución del agente de embudo
+en memoria + persistencia Supabase (realtime)
 
-Mantiene un registro circular de las últimas ejecuciones del agente de embudo
-para visualización en el dashboard de debug.
+Mantiene un registro circular en memoria para dashboards instantáneos
+y persiste cada ejecución a ``debug_events`` para historial permanente.
 """
+import asyncio
 import logging
 from collections import deque
 from datetime import datetime, timezone
@@ -17,6 +19,35 @@ logger = logging.getLogger(__name__)
 _MAX_FUNNEL_DEBUG_RUNS = 50
 _runs: deque[dict[str, Any]] = deque(maxlen=_MAX_FUNNEL_DEBUG_RUNS)
 _lock = Lock()
+
+
+async def _persist_funnel_event(entry: dict[str, Any]) -> None:
+    """Inserta la corrida de funnel en Supabase de forma silenciosa."""
+    try:
+        from app.db.client import get_supabase
+
+        db = await get_supabase()
+        await db.insert(
+            "debug_events",
+            {
+                "source": "funnel",
+                "stage": "funnel_completed" if entry.get("success") else "funnel_error",
+                "payload": {
+                    "success": entry.get("success"),
+                    "error": entry.get("error"),
+                    "respuesta": entry.get("respuesta"),
+                    "etapa_anterior": entry.get("etapa_anterior"),
+                    "etapa_nueva": entry.get("etapa_nueva"),
+                    "timing": entry.get("timing"),
+                    "tools_used": entry.get("tools_used"),
+                    "agent_runs": entry.get("agent_runs"),
+                },
+                "empresa_id": entry.get("empresa_id"),
+                "contacto_id": entry.get("contacto_id"),
+            },
+        )
+    except Exception as exc:
+        logger.debug("debug_events persist failed (funnel): %s", exc)
 
 
 def add_funnel_debug_run(
@@ -48,6 +79,13 @@ def add_funnel_debug_run(
     with _lock:
         _runs.appendleft(entry)
     logger.debug(f"Funnel debug event added: contacto={contacto_id}, success={success}")
+
+    # Persistir a Supabase async fire-and-forget
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(_persist_funnel_event(entry))
+    except RuntimeError:
+        pass  # No event loop running — skip persistence
 
 
 def get_funnel_debug_runs(limit: int = 50) -> list[dict[str, Any]]:

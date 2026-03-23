@@ -112,16 +112,44 @@ async def _build_graph_schema(empresa_id: int | None = None) -> dict:
     nodes.append({
         "id": "supabase", "label": "Supabase", "kind": "database",
         "desc": "Supabase (PostgreSQL + REST)",
-        "detail": "Tablas principales:\n· wp_contactos (perfil + metadata)\n· agent_memory (memoria conversacional)\n· wp_conversaciones\n· wp_mensajes\n· wp_citas\n· wp_contactos_nota",
+        "detail": "Tablas principales:\n· wp_contactos (perfil + metadata)\n· agent_memory (memoria conversacional)\n· wp_conversaciones\n· wp_mensajes\n· wp_citas\n· wp_contactos_nota\n· wp_multimedia\n· debug_events (realtime)",
+    })
+
+    # ── Supabase Storage ──
+    nodes.append({
+        "id": "storage", "label": "Storage", "kind": "database",
+        "desc": "Supabase Storage (bucket multimedia)",
+        "detail": "Bucket: multimedia (público)\nAlmacena audio, imágenes y documentos\nsubidos desde WhatsApp\nURL pública para acceso directo",
+    })
+
+    # ── Vision Model ──
+    nodes.append({
+        "id": "vision", "label": "Vision", "kind": "external",
+        "desc": "Gemini 2.5 Flash (Vision)",
+        "detail": "Modelo: google/gemini-2.5-flash\nVía OpenRouter API\nDescribe imágenes enviadas por el usuario\nResultado sincrónico para el agente",
+    })
+
+    # ── Edge Functions ──
+    nodes.append({
+        "id": "edge_fn", "label": "Edge Functions", "kind": "external",
+        "desc": "Supabase Edge Functions",
+        "detail": "Funciones:\n· crear-multimedia-inicial-v1\n  → Registra en wp_multimedia\n· guardar-multimedia-v4\n  → Procesa y almacena contenido\nEjecución async (fire-and-forget)",
     })
 
     # ── Orchestrator ──
     nodes.append({
         "id": "orch", "label": "Orquestador", "kind": "orchestrator",
         "desc": "Kapso Inbound Handler",
-        "detail": "POST /api/v1/kapso/inbound\nPhase 1: Funnel + Contact Update (paralelo)\nPhase 2: Enriquecimiento del prompt\nPhase 3: Agente Conversacional\nPhase 4: Merge de resultados",
+        "detail": "POST /api/v1/kapso/inbound\nPhase 0: Multimedia (audio/img/doc)\nPhase 1: Funnel + Contact Update (paralelo)\nPhase 2: Enriquecimiento del prompt\nPhase 3: Agente Conversacional\nPhase 4: Merge de resultados",
     })
     edges.append({"from": "whatsapp", "to": "orch", "label": "mensaje entrante"})
+
+    # Multimedia pipeline edges
+    edges.append({"from": "orch", "to": "storage", "label": "upload media"})
+    edges.append({"from": "orch", "to": "vision", "label": "describe imagen", "dash": True})
+    edges.append({"from": "vision", "to": "openrouter", "label": "Gemini 2.5 Flash"})
+    edges.append({"from": "orch", "to": "edge_fn", "label": "multimedia pipeline", "dash": True})
+    edges.append({"from": "edge_fn", "to": "supabase", "label": "wp_multimedia"})
 
     # ── Conversational Agent — with live LLM model ──
     conv_detail = (
@@ -243,15 +271,18 @@ _DEFAULT_POSITIONS: dict[str, tuple[float, float]] = {
     "orch":       (0.50, 0.22),
     "openrouter": (0.10, 0.28),
     "supabase":   (0.90, 0.28),
+    "storage":    (0.90, 0.50),
+    "vision":     (0.10, 0.50),
+    "edge_fn":    (0.90, 0.72),
     "funnel":     (0.24, 0.45),
     "conv":       (0.50, 0.52),
     "contact":    (0.76, 0.45),
     "t_reaction": (0.64, 0.67),
     "t_mcp":      (0.36, 0.67),
     "t_nota":     (0.50, 0.72),
-    "t_calificado":(0.78, 0.72),
+    "t_calificado":(0.78, 0.60),
     "t_metadata": (0.12, 0.60),
-    "t_update":   (0.88, 0.60),
+    "t_update":   (0.88, 0.40),
     "mcp_srv":    (0.22, 0.80),
 }
 

@@ -1,9 +1,11 @@
 """
-Kapso Debug — Eventos en memoria puros
+Kapso Debug — Eventos en memoria + persistencia Supabase (realtime)
 
-Este módulo mantiene únicamente una lista circular en memoria de los últimos eventos del backend.
-Las interacciones complejas ahora se calculan 100% en el frontend usando estos eventos.
+Mantiene una lista circular en memoria para respuesta instantánea,
+y persiste cada evento a la tabla ``debug_events`` de Supabase de forma
+asíncrona (fire-and-forget) para historial permanente y suscripción realtime.
 """
+import asyncio
 import logging
 from collections import deque
 from datetime import datetime, timezone
@@ -19,6 +21,28 @@ _events: deque[dict[str, Any]] = deque(maxlen=_MAX_KAPSO_DEBUG_EVENTS)
 _lock = Lock()
 
 
+async def _persist_debug_event(entry: dict[str, Any]) -> None:
+    """Inserta el evento en Supabase de forma silenciosa (fire-and-forget)."""
+    try:
+        from app.db.client import get_supabase
+
+        db = await get_supabase()
+        payload = entry.get("payload") or {}
+        await db.insert(
+            "debug_events",
+            {
+                "source": "kapso",
+                "stage": entry["stage"],
+                "payload": payload,
+                "empresa_id": payload.get("empresa_id"),
+                "contacto_id": payload.get("contacto_id"),
+                "message_id": payload.get("message_id"),
+            },
+        )
+    except Exception as exc:
+        logger.debug("debug_events persist failed (kapso): %s", exc)
+
+
 def add_kapso_debug_event(source: str, stage: str, payload: dict[str, Any] | None = None) -> None:
     entry = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -28,6 +52,13 @@ def add_kapso_debug_event(source: str, stage: str, payload: dict[str, Any] | Non
     }
     with _lock:
         _events.appendleft(entry)
+
+    # Persistir a Supabase async fire-and-forget
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(_persist_debug_event(entry))
+    except RuntimeError:
+        pass  # No event loop running — skip persistence
 
 
 def get_kapso_debug_events(limit: int = 100) -> list[dict[str, Any]]:
