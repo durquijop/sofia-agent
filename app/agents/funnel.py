@@ -15,6 +15,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 
 from app.core.config import get_settings
+from app.core.funnel_debug import add_funnel_debug_run
 from app.db import queries as db
 from app.schemas.funnel import (
     FunnelAgentRequest,
@@ -630,7 +631,7 @@ Antes de responder al equipo:
                 available_tools=[
                     ToolDefinition(
                         tool_name="update_etapa_embudo",
-                        description="Actualiza la etapa del embudo (id_etapa: int válido)"
+                        description="Actualiza la etapa del embudo (orden_etapa: int válido)"
                     ),
                     ToolDefinition(
                         tool_name="update_metadata",
@@ -642,6 +643,19 @@ Antes de responder al equipo:
                 llm_iterations=int(final_state.get("llm_iterations", 0)),
             )
         ]
+        
+        # Registrar en debug
+        add_funnel_debug_run(
+            contacto_id=request.contacto_id,
+            empresa_id=request.empresa_id,
+            agent_runs=[run.model_dump() for run in agent_runs],
+            timing=timing.model_dump(),
+            tools_used=[t.model_dump() for t in final_state.get("tools_used", [])],
+            success=True,
+            respuesta=response_text,
+            etapa_anterior=initial_state["etapa_anterior"],
+            etapa_nueva=final_state.get("etapa_nueva"),
+        )
         
         return FunnelAgentResponse(
             success=True,
