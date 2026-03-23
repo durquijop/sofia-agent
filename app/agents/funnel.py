@@ -222,6 +222,7 @@ def _build_funnel_system_prompt(
     contexto_embudo_payload: dict,
 ) -> str:
     contacto_nombre = context.contacto.nombre_completo or "Contacto sin nombre"
+    contacto_payload = context.contacto.model_dump()
     etapa_actual = context.etapa_actual
     etapa_actual_texto = (
         f"{etapa_actual.nombre} (Orden: {etapa_actual.orden})"
@@ -241,6 +242,11 @@ Eres un analista conversacional que identifica etapas del embudo y registra info
 # Datos claves
 
 El contacto {contacto_nombre} se encuentra en la etapa {etapa_actual_texto}
+
+**Datos actuales del contacto (`wp_contactos`):**
+```json
+{_stringify_safe(contacto_payload)}
+```
 
 ---
 
@@ -443,7 +449,23 @@ async def _load_funnel_context(
     info_contacto = ContactInfo(
         contacto_id=contacto["contacto_id"],
         nombre_completo=contacto.get("nombre_completo") or "",
+        nombre=contacto.get("nombre"),
+        apellido=contacto.get("apellido"),
         telefono=contacto.get("telefono"),
+        email=contacto.get("email"),
+        origen=contacto.get("origen"),
+        notas=contacto.get("notas"),
+        fecha_registro=contacto.get("fecha_registro"),
+        ultima_interaccion=contacto.get("ultima_interaccion"),
+        subscriber_id=contacto.get("subscriber_id"),
+        avatar_url=contacto.get("avatar_url"),
+        etapa_emocional=contacto.get("etapa_emocional"),
+        timezone=contacto.get("timezone"),
+        estado=contacto.get("estado"),
+        es_calificado=contacto.get("es_calificado"),
+        is_active=contacto.get("is_active"),
+        team_humano_id=contacto.get("team_humano_id"),
+        url_drive=contacto.get("url_drive"),
         etapa_actual_orden=contacto.get("etapa_actual_orden"),
         metadata=_safe_json_dict(contacto.get("metadata")),
     )

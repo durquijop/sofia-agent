@@ -34,7 +34,23 @@ class ContactInfo(BaseModel):
     """Información básica del contacto."""
     contacto_id: int
     nombre_completo: str
+    nombre: Optional[str] = None
+    apellido: Optional[str] = None
     telefono: Optional[str] = None
+    email: Optional[str] = None
+    origen: Optional[str] = None
+    notas: Optional[str] = None
+    fecha_registro: Optional[str] = None
+    ultima_interaccion: Optional[str] = None
+    subscriber_id: Optional[str] = None
+    avatar_url: Optional[str] = None
+    etapa_emocional: Optional[str] = None
+    timezone: Optional[str] = None
+    estado: Optional[str] = None
+    es_calificado: Optional[bool] = None
+    is_active: Optional[bool] = None
+    team_humano_id: Optional[int] = None
+    url_drive: Optional[str] = None
     etapa_actual_orden: Optional[int] = None
     metadata: Optional[dict] = None
 

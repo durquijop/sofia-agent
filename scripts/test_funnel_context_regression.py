@@ -12,18 +12,19 @@ sys.path.insert(0, str(project_root))
 
 from app.agents.funnel import _build_funnel_system_prompt, _load_funnel_context, run_funnel_agent
 from app.schemas.funnel import FunnelAgentRequest
-from app.schemas.chat import TimingInfo
-
-
 IMAGE_SNAPSHOT = {
     "contexto_embudo": {
         "success": True,
         "data": {
             "informacion_contacto": {
                 "contacto_id": 333358,
+                    "nombre": "",
+                    "apellido": "",
                 "nombre_completo": "",
                 "metadata": {},
                 "telefono": "573197956965",
+                    "email": "",
+                    "origen": "Whatsapp",
                 "etapa_actual_orden": None,
             },
             "etapa_actual": None,
@@ -61,8 +62,12 @@ IMAGE_SNAPSHOT = {
         "data": {
             "contacto": {
                 "id": 333358,
+                "nombre": "",
+                "apellido": "",
                 "nombre_completo": "",
                 "telefono": "573197956965",
+                "email": "",
+                "origen": "Whatsapp",
                 "etapa_actual_orden": None,
             },
             "empresa_id": 4,
@@ -133,8 +138,11 @@ async def test_load_funnel_context_normalizes_local_snapshot() -> None:
             "data": {
                 "informacion_contacto": {
                     "contacto_id": 133678,
+                    "nombre": "Agustin",
+                    "apellido": "Peralta",
                     "nombre_completo": "Agustin Peralta",
                     "telefono": "573133043991",
+                    "email": "apg@urpeailab.com",
                     "etapa_actual_orden": 2,
                     "metadata": '{"etapa_actual": {"informacion_capturada": {"info_reg_1": "apg@urpeailab.com"}}}',
                 },
@@ -183,6 +191,9 @@ async def test_load_funnel_context_normalizes_local_snapshot() -> None:
         context = await _load_funnel_context(contacto_id=133678, empresa_id=1, conversacion_id=64368)
 
     assert context.contacto.contacto_id == 133678
+    assert context.contacto.nombre == "Agustin"
+    assert context.contacto.apellido == "Peralta"
+    assert context.contacto.email == "apg@urpeailab.com"
     assert context.contacto.metadata["etapa_actual"]["informacion_capturada"]["info_reg_1"] == "apg@urpeailab.com"
     assert context.ultimos_mensajes[0]["contenido"] == "apg@urpeailab.com"
     assert context.etapa_actual is not None
@@ -211,8 +222,11 @@ async def test_funnel_system_prompt_includes_operational_sections() -> None:
             "data": {
                 "informacion_contacto": {
                     "contacto_id": 133678,
+                    "nombre": "Agustin",
+                    "apellido": "Peralta",
                     "nombre_completo": "Agustin Peralta",
                     "telefono": "573133043991",
+                    "email": "apg@urpeailab.com",
                     "etapa_actual_orden": 2,
                     "metadata": {"etapa_actual": {"informacion_capturada": {"info_reg_1": "apg@urpeailab.com"}}},
                 },
@@ -254,6 +268,9 @@ async def test_funnel_system_prompt_includes_operational_sections() -> None:
     )
 
     assert "# CONTEXTO DEL EMBUDO" in prompt
+    assert '"nombre": "Agustin"' in prompt
+    assert '"apellido": "Peralta"' in prompt
+    assert '"email": "apg@urpeailab.com"' in prompt
     assert "// CONTEXTO TEMPORAL COMPLETO" in prompt
     assert "Output esperado:" in prompt
     assert "No le respondas al prospecto. Ese no es tu trabajo." in prompt
@@ -274,6 +291,10 @@ async def test_funnel_system_prompt_renders_image_snapshot_data() -> None:
     assert '"id": 218' in prompt
     assert '"nombre_etapa": "Primer contacto"' in prompt
     assert '"telefono": "573197956965"' in prompt
+    assert '"nombre": ""' in prompt
+    assert '"apellido": ""' in prompt
+    assert '"email": ""' in prompt
+    assert '"etapa_actual_orden": null' in prompt
     assert "// CONTEXTO TEMPORAL COMPLETO" in prompt
 
 

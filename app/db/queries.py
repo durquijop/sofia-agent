@@ -28,7 +28,24 @@ def _safe_json_loads(value: Any) -> Any:
 def _contacto_base(contacto: dict[str, Any]) -> dict[str, Any]:
     return {
         "contacto_id": contacto.get("id"),
+        "nombre": contacto.get("nombre") or None,
+        "apellido": contacto.get("apellido") or None,
         "nombre_completo": f"{contacto.get('nombre') or ''} {contacto.get('apellido') or ''}".strip(),
+        "telefono": contacto.get("telefono") or None,
+        "email": contacto.get("email") or None,
+        "origen": contacto.get("origen") or None,
+        "notas": contacto.get("notas") or None,
+        "fecha_registro": contacto.get("fecha_registro") or None,
+        "ultima_interaccion": contacto.get("ultima_interaccion") or None,
+        "subscriber_id": contacto.get("subscriber_id") or None,
+        "avatar_url": contacto.get("avatar_url") or None,
+        "etapa_emocional": contacto.get("etapa_emocional") or None,
+        "timezone": contacto.get("timezone") or None,
+        "estado": contacto.get("estado") or None,
+        "es_calificado": contacto.get("es_calificado"),
+        "is_active": contacto.get("is_active"),
+        "team_humano_id": contacto.get("team_humano_id"),
+        "url_drive": contacto.get("url_drive") or None,
         "metadata": _safe_json_loads(contacto.get("metadata")) or {},
     }
 
@@ -790,7 +807,6 @@ async def load_contexto_completo_local(
         "data": {
             "informacion_contacto": {
                 **info_contacto,
-                "telefono": contacto.get("telefono"),
                 "etapa_actual_orden": contacto_stage_value,
             },
             "etapa_actual": etapa_actual_completa,
@@ -809,8 +825,12 @@ async def load_contexto_completo_local(
         "data": {
             "contacto": {
                 "id": contacto.get("id"),
+                "nombre": contacto.get("nombre") or None,
+                "apellido": contacto.get("apellido") or None,
                 "nombre_completo": info_contacto.get("nombre_completo"),
-                "telefono": contacto.get("telefono"),
+                "telefono": info_contacto.get("telefono"),
+                "email": info_contacto.get("email"),
+                "origen": info_contacto.get("origen"),
                 "etapa_actual_orden": contacto_stage_value,
             },
             "empresa_id": empresa_id,
