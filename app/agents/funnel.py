@@ -1,5 +1,6 @@
 """Agente de Embudo (Funnel Agent) - Identifica etapas y actualiza contactos."""
 import asyncio
+from datetime import datetime, timedelta
 import json
 import logging
 import time
@@ -156,6 +157,217 @@ def _create_llm(model: str, max_tokens: int = 512, temperature: float = 0.5) -> 
         )
         logger.info(f"LLM creado: model={model}, max_tokens={max_tokens}")
     return _llm_cache[cache_key]
+
+
+def _stringify_safe(value) -> str:
+    return json.dumps(value if value is not None else None, ensure_ascii=False, indent=2)
+
+
+def _build_temporal_context() -> str:
+    now = datetime.now().astimezone()
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_end = now.replace(hour=23, minute=59, second=59, microsecond=999999)
+    week_start = today_start - timedelta(days=now.weekday())
+    week_end = week_start + timedelta(days=6, hours=23, minutes=59, seconds=59, microseconds=999999)
+    month_start = today_start.replace(day=1)
+    if month_start.month == 12:
+        next_month_start = month_start.replace(year=month_start.year + 1, month=1)
+    else:
+        next_month_start = month_start.replace(month=month_start.month + 1)
+    month_end = next_month_start - timedelta(microseconds=1)
+    year_start = today_start.replace(month=1, day=1)
+    next_year_start = year_start.replace(year=year_start.year + 1)
+    year_end = next_year_start - timedelta(microseconds=1)
+    ms_per_day = 24 * 60 * 60
+    ms_per_hour = 60 * 60
+    month_progress = ((now - month_start).total_seconds() / max((month_end - month_start).total_seconds(), 1)) * 100
+    week_progress = ((now - week_start).total_seconds() / max((week_end - week_start).total_seconds(), 1)) * 100
+    day_of_year = int((today_start - year_start).total_seconds() // ms_per_day) + 1
+    days_in_year = int((year_end - year_start).total_seconds() // ms_per_day) + 1
+    year_progress = (day_of_year / max(days_in_year, 1)) * 100
+    hours_left_today = max(0, int(((today_end - now).total_seconds() / ms_per_hour) + 0.9999))
+    days_left_week = max(0, int(((week_end - now).total_seconds() / ms_per_day) + 0.9999))
+    days_left_month = max(0, int(((month_end - now).total_seconds() / ms_per_day) + 0.9999))
+    days_done_week = max(0, int((today_start - week_start).total_seconds() // ms_per_day))
+    days_done_month = max(0, int((today_start - month_start).total_seconds() // ms_per_day))
+    quarter = ((now.month - 1) // 3) + 1
+    is_weekend = "Sí" if now.weekday() >= 5 else "No"
+    next_days = [
+        f"En {index} día(s): {(today_start + timedelta(days=index)).strftime('%Y-%m-%d')}"
+        for index in range(1, 8)
+    ]
+    return (
+        "// ============================================\n"
+        "// CONTEXTO TEMPORAL COMPLETO\n"
+        "// ============================================\n"
+        f"Ahora: {now.strftime('%Y-%m-%d %H:%M:%S')} | ISO: {now.isoformat()}\n"
+        f"¿Fin de semana hoy?: {is_weekend}\n"
+        f"Quedan {hours_left_today} hora(s) para que termine el día\n\n"
+        "// SEMANA ACTUAL\n"
+        f"Rango: {week_start.strftime('%Y-%m-%d')} a {week_end.strftime('%Y-%m-%d')}\n"
+        f"Avance: {week_progress:.1f}% | Transcurridos: {days_done_week} día(s) | Restantes: {days_left_week} día(s)\n\n"
+        "// MES ACTUAL\n"
+        f"Rango: {month_start.strftime('%Y-%m-%d')} a {month_end.strftime('%Y-%m-%d')}\n"
+        f"Avance: {month_progress:.1f}% | Transcurridos: {days_done_month} día(s) | Restantes: {days_left_month} día(s)\n\n"
+        "// AÑO ACTUAL\n"
+        f"Día del año: {day_of_year}/{days_in_year} | Avance: {year_progress:.1f}% | Trimestre: Q{quarter}\n\n"
+        "// PRÓXIMOS 7 DÍAS\n"
+        + "\n".join(next_days)
+    )
+
+
+def _build_funnel_system_prompt(
+    context: FunnelContextResponse,
+    etapas_payload: list[dict],
+    contexto_embudo_payload: dict,
+) -> str:
+    contacto_nombre = context.contacto.nombre_completo or "Contacto sin nombre"
+    etapa_actual = context.etapa_actual
+    etapa_actual_texto = (
+        f"{etapa_actual.nombre} (Orden: {etapa_actual.orden})"
+        if etapa_actual
+        else "Sin etapa asignada"
+    )
+    temporal_context = _build_temporal_context()
+    return f"""# IDENTIDAD Y MISIÓN
+
+Eres un analista conversacional que identifica etapas del embudo y registra información del prospecto.
+
+## Objetivos:
+- **IDENTIFICAR** etapa actual del prospecto
+- **ACTUALIZAR** etapa usando `update_etapa_embudo`
+- **REGISTRAR** información usando `update_metadata`
+
+# Datos claves
+
+El contacto {contacto_nombre} se encuentra en la etapa {etapa_actual_texto}
+
+---
+
+# CONTEXTO DEL EMBUDO
+
+**Etapas disponibles:**
+```json
+{_stringify_safe(etapas_payload)}
+```
+
+**Etapa actual identificada + Metadata registrada:**
+```json
+Etapa Actual: {_stringify_safe(contexto_embudo_payload)}
+```
+
+Si la etapa actual y la etapa identificada son la misma, no es necesario actualizarla.
+
+Cada etapa tiene:
+- `nombre_etapa` / `id` como identificador único
+- `orden_etapa` como posición secuencial, solo referencial
+- `descripcion.senales` como comportamientos observables
+- `descripcion.metadata.informacion_registrar` o `descripcion.informacion_registrar` como datos a capturar
+
+---
+
+# HERRAMIENTAS
+
+## 1. `update_etapa_embudo`
+Usa `id_etapa` como identificador único para actualizar la etapa del contacto.
+
+## 2. `update_metadata`
+
+### Cuándo usar:
+- ✅ Después de actualizar etapa
+- ✅ Cuando el prospecto comparte información clave
+- ✅ Al finalizar descubrimiento si hay 3 o más respuestas útiles
+
+## Reglas del uso de la herramienta:
+
+- Úsalas solo si tienes algo para actualizar
+- Si el nuevo mensaje es irrelevante y ya tienes la metadata actualizada, solo genera un output con un "ok"
+
+---
+
+## CÓMO RELLENAR informacion_capturada
+
+Para cada objeto en `informacion_registrar`:
+
+1. Lee el campo `texto` y determina qué dato debes capturar
+2. Busca ese dato en la conversación
+3. Si lo encontraste: usa el `id` como clave y el valor real capturado
+4. Si NO lo encontraste: omite ese `id`
+
+### Ejemplo:
+
+**informacion_registrar:**
+```json
+[
+  {{"id": "info_reg_1", "texto": "Fecha y hora de primer contacto"}},
+  {{"id": "info_reg_2", "texto": "Pregunta inicial del lead"}},
+  {{"id": "info_reg_3", "texto": "Red social y usuario"}}
+]
+```
+
+**Metadata correcta:**
+```ini
+[etapa_1]
+informacion_capturada.info_reg_1: 2025-01-27 10:30 AM
+informacion_capturada.info_reg_2: ¿Cuánto cuesta?
+```
+
+---
+
+## REGLAS DE MERGE
+
+- ✅ Campos existentes se preservan
+- ✅ Nuevos campos se agregan
+- ✅ Valores existentes se actualizan
+- ✅ Secciones se mantienen separadas
+
+---
+
+## REGLAS JSON OBLIGATORIAS
+
+1. Todas las claves entre comillas dobles
+2. Todos los strings entre comillas dobles
+3. No comillas simples
+4. No comas al final del último elemento
+5. Balancear llaves
+
+---
+
+## Reglas extras:
+
+- Si la empresa no tiene embudo creado, no asignar etapa al contacto
+- Si no ha cambiado nada, no actualices ni la metadata ni la etapa
+
+## CHECKLIST FINAL
+
+Antes de responder:
+
+- ¿Cambió de etapa? → `update_etapa_embudo` + `update_metadata`
+- ¿Usé `id_etapa` correcto?
+- ¿Registré TODO según `informacion_registrar`?
+- ¿Usé IDs correctos (`info_reg_X`) como claves?
+- ¿JSON válido con comillas dobles?
+- ¿Valores REALES (no ejemplos)?
+
+Si falta algo, complétalo antes de continuar.
+
+{temporal_context}
+
+---
+
+Output esperado:
+
+Tu respuesta final debe estar orientada a guiar al equipo en el estado actual del embudo. La respuesta debe ser de máximo 3 líneas.
+
+No le respondas al prospecto. Ese no es tu trabajo."""
+
+
+def _build_funnel_user_message(conversacion_memoria_payload: dict) -> str:
+    return (
+        "Historial de la conversación:\n"
+        f"{_stringify_safe(conversacion_memoria_payload)}\n\n"
+        "Usa las tools si es necesario."
+    )
 
 
 def _format_context_para_prompt(context: FunnelContextResponse) -> str:
@@ -569,118 +781,13 @@ async def run_funnel_agent(request: FunnelAgentRequest) -> FunnelAgentResponse:
             "total_etapas": len(context.todas_etapas),
             "todas_etapas": etapas_payload,
         }
-        stage_label = (
-            f"{context.etapa_actual.nombre} (Orden: {context.etapa_actual.orden})"
-            if context.etapa_actual
-            else "Sin etapa asignada"
+        system_prompt = _build_funnel_system_prompt(
+            context=context,
+            etapas_payload=etapas_payload,
+            contexto_embudo_payload=contexto_embudo_payload,
         )
-        
-        system_prompt = f"""# IDENTIDAD Y MISIÓN
 
-    Eres un analista conversacional que identifica etapas del embudo y registra información del prospecto.
-
-    ## Objetivos:
-    - **IDENTIFICAR** etapa actual del prospecto
-    - **ACTUALIZAR** etapa usando `update_etapa_embudo`
-    - **REGISTRAR** información usando `update_metadata`
-
-    # Datos claves
-
-    El contacto {context.contacto.nombre_completo or 'Sin nombre'} se encuentra en la etapa {stage_label}
-
-    ---
-
-    # CONTEXTO DEL EMBUDO
-
-    **Etapas disponibles:**
-    ```json
-    {json.dumps(etapas_payload, ensure_ascii=False, indent=2)}
-    ```
-
-    **Etapa actual identificada + Metadata registrada:**
-    ```json
-    {json.dumps(contexto_embudo_payload, ensure_ascii=False, indent=2)}
-    ```
-
-    Si la etapa actual y la etapa identificada son la misma, no es necesario actualizarla.
-
-    Cada etapa tiene:
-    - `id` como identificador único de etapa
-    - `orden_etapa` como posición secuencial, solo referencial
-    - `descripcion.senales` como comportamientos observables
-    - `descripcion.metadata.informacion_registrar` o `descripcion.informacion_registrar` como datos a capturar
-
-    ---
-
-    # HERRAMIENTAS
-
-    ## 1. `update_etapa_embudo`
-    Usa `id_etapa` como identificador único para actualizar la etapa del contacto.
-
-    ## 2. `update_metadata`
-
-    ### Cuándo usar:
-    - Después de actualizar etapa, si hay datos nuevos que registrar
-    - Cuando el prospecto comparte información clave
-    - Al finalizar descubrimiento si hay 3 o más respuestas útiles
-
-    ## Reglas del uso de la herramienta:
-
-    - Úsalas solo si tienes algo que actualizar
-    - Si el nuevo mensaje es irrelevante y no hay metadata nueva ni cambio de etapa, responde únicamente con `ok`
-
-    ---
-
-    ## CÓMO RELLENAR informacion_capturada
-
-    Para cada objeto en `informacion_registrar`:
-
-    1. Lee el campo `texto`
-    2. Busca ese dato en la conversación
-    3. Si lo encontraste: usa el `id` como clave y el valor real capturado
-    4. Si no lo encontraste: omite ese `id`
-
-    ---
-
-    ## REGLAS DE MERGE
-
-    - Campos existentes se preservan
-    - Nuevos campos se agregan
-    - Valores existentes se actualizan
-    - Secciones se mantienen separadas
-
-    ---
-
-    ## REGLAS JSON OBLIGATORIAS
-
-    1. Todas las claves entre comillas dobles
-    2. Todos los strings entre comillas dobles
-    3. No uses comillas simples
-    4. No pongas comas al final del último elemento
-    5. Balancea llaves correctamente
-
-    ---
-
-    ## Reglas extras:
-
-    - Si la empresa no tiene embudo creado, no asignar etapa al contacto
-    - Si no ha cambiado nada, no actualices ni metadata ni etapa
-
-    ## CHECKLIST FINAL
-
-    Antes de responder al equipo:
-    - ¿Cambió de etapa? → `update_etapa_embudo`
-    - ¿Usé `id_etapa` correcto?
-    - ¿Registré TODO según `informacion_registrar`?
-    - ¿Usé IDs correctos (`info_reg_X`) como claves?
-    - ¿Valores reales y no ejemplos?
-    - ¿Respuesta máxima de 3 líneas orientada al equipo?
-    """
-
-        user_message = (
-            f"Historial de la conversacion: {json.dumps(conversacion_memoria_payload, ensure_ascii=False)} "
-            "--- Use las tools si es necesario"
-        )
+        user_message = _build_funnel_user_message(conversacion_memoria_payload)
         
         # Estado inicial
         initial_state: FunnelAgentState = {
