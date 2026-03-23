@@ -333,6 +333,35 @@ async def _process_audio_message(inbound: KapsoInboundRequest, contacto_id: int 
     return transcript, storage_url
 
 
+def _extract_media_url_from_raw(inbound: KapsoInboundRequest) -> tuple[str | None, str | None]:
+    """Extract media URL and filename from media_raw/kapso enriched content.
+
+    Falls back to kapso.content field which has the enriched text with URL.
+    Returns (url, filename).
+    """
+    media = inbound.media_raw if isinstance(inbound.media_raw, dict) else {}
+    msg_type = str(inbound.message_type or "").strip().lower()
+
+    # Try kapso.content first (enriched text: "Image attached (file.jpg) ... URL: https://...")
+    kapso_payload = media.get("kapso")
+    if isinstance(kapso_payload, dict):
+        content = kapso_payload.get("content")
+        if content:
+            url, filename = _parse_media_content(str(content))
+            if url:
+                return url, filename
+
+    # Try direct media block keys
+    media_block = media.get(msg_type)
+    if isinstance(media_block, dict):
+        for key in ("link", "url"):
+            value = media_block.get(key)
+            if value and str(value).startswith("http"):
+                return str(value).strip(), None
+
+    return None, None
+
+
 async def _process_image_message(
     inbound: KapsoInboundRequest,
     contacto_id: int | None = None,
@@ -344,6 +373,11 @@ async def _process_image_message(
     """
     text = inbound.text or ""
     media_url, filename = _parse_media_content(text)
+
+    # Fallback: extract URL from media_raw/kapso enriched content
+    if not media_url:
+        media_url, filename = _extract_media_url_from_raw(inbound)
+
     if not media_url:
         logger.warning("Image message but no URL found. Raw text: %s", text[:200])
         return None, None
@@ -380,6 +414,11 @@ async def _process_document_message(
     """
     text = inbound.text or ""
     media_url, filename = _parse_media_content(text)
+
+    # Fallback: extract URL from media_raw/kapso enriched content
+    if not media_url:
+        media_url, filename = _extract_media_url_from_raw(inbound)
+
     if not media_url:
         logger.warning("Document message but no URL found. Raw text: %s", text[:200])
         return None, None
@@ -1068,13 +1107,32 @@ async def kapso_inbound(
                 },
             )
             if img_description:
-                message_parts = [{"contenido": img_description, "tipo": "texto"}]
+                # Keep the user's original caption text (if any) alongside the vision description
+                user_caption = (request.text or "").strip()
+                # Remove any enriched media text from the caption (in case text has "Image attached..." prefix)
+                caption_clean = _MEDIA_URL_RE.sub("", user_caption).strip()
+                caption_clean = _MEDIA_FILENAME_RE.sub("", caption_clean).strip()
+                # Remove "Image attached" / "Imagen adjunta" prefix lines if present
+                caption_clean = re.sub(
+                    r"^(?:Image attached|Imagen adjunta)[^\n]*\n?",
+                    "", caption_clean, flags=re.IGNORECASE,
+                ).strip()
+
+                new_parts: list[dict[str, str]] = []
+                if caption_clean:
+                    new_parts.append({"contenido": caption_clean, "tipo": "texto"})
+                new_parts.append({
+                    "contenido": f"[Descripción de la imagen enviada]: {img_description}",
+                    "tipo": "texto",
+                })
                 if img_storage_url:
-                    message_parts.append({"contenido": img_storage_url, "tipo": "multimedia"})
+                    new_parts.append({"contenido": img_storage_url, "tipo": "multimedia"})
+                message_parts = new_parts
                 logger.info(
-                    "Imagen procesada → description=%s... storage_url=%s",
+                    "Imagen procesada → description=%s... storage_url=%s caption=%s",
                     img_description[:80],
                     img_storage_url,
+                    caption_clean[:60] if caption_clean else "(sin caption)",
                 )
 
         # Procesar documento: subir a Storage (referencia para el agente)
