@@ -183,6 +183,21 @@ def _build_command_response(
     )
 
 
+def _build_message_error_update(message: dict, error_text: str, error_type: str) -> dict:
+    metadata = message.get("metadata") if isinstance(message, dict) and isinstance(message.get("metadata"), dict) else {}
+    return {
+        "status": "error",
+        "metadata": {
+            **metadata,
+            "processing_error": {
+                "type": error_type,
+                "detail": error_text,
+                "failed_at": str(time.time()),
+            },
+        },
+    }
+
+
 def _merge_timings(started_at: float, conversational_timing: TimingInfo, funnel_timing: TimingInfo | None = None) -> TimingInfo:
     funnel_timing = funnel_timing or TimingInfo(total_ms=0)
     total_ms = (time.perf_counter() - started_at) * 1000
@@ -655,6 +670,7 @@ async def kapso_inbound(
         )
 
         mensajes_guardados: list[dict] = []
+        inbound_message_ids: list[int] = []
         if conversacion_db and conversacion_db.get("id") is not None:
             metadata_base = {
                 "canal": str(numero.get("canal") or "whatsapp"),
@@ -678,6 +694,9 @@ async def kapso_inbound(
                         empresa_id=empresa_id,
                     )
                 )
+                inserted_message = mensajes_guardados[-1]
+                if inserted_message and inserted_message.get("id") is not None:
+                    inbound_message_ids.append(int(inserted_message["id"]))
 
         add_kapso_debug_event(
             "fastapi",
@@ -810,6 +829,15 @@ async def kapso_inbound(
                 empresa_id=empresa_id,
             )
 
+        for inbound_message_id in inbound_message_ids:
+            try:
+                await db.actualizar_mensaje(inbound_message_id, {"status": "processed"})
+            except Exception:
+                logger.exception(
+                    "kapso.finalize_inbound_status_failed",
+                    extra={"message_id": inbound_message_id},
+                )
+
         reaction_payload = None
         if reaction_emoji:
             reaction_payload = KapsoReactionPayload(
@@ -834,6 +862,22 @@ async def kapso_inbound(
             agent_runs=merged_agent_runs,
         )
     except HTTPException as exc:
+        mensajes_guardados_local = locals().get("mensajes_guardados", [])
+        for message in mensajes_guardados_local:
+            message_id = message.get("id") if isinstance(message, dict) else None
+            if message_id is None:
+                continue
+            try:
+                await db.actualizar_mensaje(
+                    int(message_id),
+                    _build_message_error_update(
+                        message,
+                        str(exc.detail),
+                        "http_error",
+                    ),
+                )
+            except Exception:
+                logger.exception("kapso.fail_inbound_status_update", extra={"message_id": message_id})
         add_kapso_debug_event(
             "fastapi",
             "http_error",
@@ -841,6 +885,22 @@ async def kapso_inbound(
         )
         raise
     except Exception as exc:
+        mensajes_guardados_local = locals().get("mensajes_guardados", [])
+        for message in mensajes_guardados_local:
+            message_id = message.get("id") if isinstance(message, dict) else None
+            if message_id is None:
+                continue
+            try:
+                await db.actualizar_mensaje(
+                    int(message_id),
+                    _build_message_error_update(
+                        message,
+                        str(exc),
+                        type(exc).__name__,
+                    ),
+                )
+            except Exception:
+                logger.exception("kapso.fail_inbound_status_update", extra={"message_id": message_id})
         add_kapso_debug_event(
             "fastapi",
             "exception",

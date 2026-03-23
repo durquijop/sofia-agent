@@ -475,6 +475,152 @@ async def test_funnel_user_prompt_does_not_fallback_to_wp_messages_when_memory_i
     assert '- Agustin Peralta Guarin' not in prompt
 
 
+async def test_run_funnel_agent_executes_stage_and_metadata_updates() -> None:
+    snapshot = {
+        "contexto_embudo": {
+            "success": True,
+            "data": {
+                "informacion_contacto": {
+                    "contacto_id": 133678,
+                    "nombre": "Agustin",
+                    "apellido": "Peralta",
+                    "nombre_completo": "Agustin Peralta",
+                    "telefono": "573133043991",
+                    "email": None,
+                    "etapa_actual_orden": 2,
+                    "metadata": {},
+                },
+                "etapa_actual": {
+                    "id": 22,
+                    "orden": 2,
+                    "nombre": "Calificacion",
+                    "que_es": "Lead calificado",
+                    "senales": [{"id": "senal_1", "texto": "Comparte correo"}],
+                },
+                "tiene_embudo": True,
+                "total_etapas": 2,
+            },
+        },
+        "etapas_embudo": {
+            "success": True,
+            "data": {
+                "etapas": [
+                    {
+                        "id": 22,
+                        "nombre_etapa": "Calificacion",
+                        "orden_etapa": 2,
+                        "descripcion": {
+                            "metadata": {
+                                "informacion_registrar": [
+                                    {"id": "info_reg_1", "texto": "Correo"},
+                                ]
+                            }
+                        },
+                        "es_etapa_actual": True,
+                    },
+                    {
+                        "id": 23,
+                        "nombre_etapa": "Agendamiento",
+                        "orden_etapa": 3,
+                        "descripcion": {
+                            "metadata": {
+                                "informacion_registrar": [
+                                    {"id": "info_reg_1", "texto": "Correo"},
+                                    {"id": "info_reg_2", "texto": "Preferencia horaria"},
+                                ]
+                            }
+                        },
+                        "es_etapa_actual": False,
+                    },
+                ]
+            },
+        },
+        "conversacion_memoria": {
+            "success": True,
+            "data": {
+                "id": 64368,
+                "mensajes": [
+                    {"timestamp": "2026-03-23T08:40:00+00:00", "remitente": "agente", "mensaje": "Compárteme tu correo y horario."},
+                    {"timestamp": "2026-03-23T08:46:47+00:00", "remitente": "usuario", "mensaje": "apg@urpeailab.com"},
+                    {"timestamp": "2026-03-23T08:50:39+00:00", "remitente": "usuario", "mensaje": "Por la tarde"},
+                ],
+            },
+        },
+    }
+    request = FunnelAgentRequest(contacto_id=133678, empresa_id=4, agente_id=7, conversacion_id=64368)
+    recorded_stage_updates: list[tuple[int, int]] = []
+    recorded_metadata_updates: list[tuple[int, dict]] = []
+
+    class DummyLLM:
+        def __init__(self):
+            self.calls = 0
+
+        def bind_tools(self, tools):
+            return self
+
+        async def ainvoke(self, messages):
+            self.calls += 1
+            if self.calls == 1:
+                return AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "update_metadata",
+                            "args": {
+                                "informacion_capturada": {
+                                    "info_reg_1": "apg@urpeailab.com",
+                                    "info_reg_2": "Por la tarde",
+                                },
+                                "seccion": "etapa_actual",
+                            },
+                            "id": "tool-metadata",
+                            "type": "tool_call",
+                        },
+                        {
+                            "name": "update_etapa_embudo",
+                            "args": {
+                                "id_etapa": 23,
+                                "razon": "El prospecto ya compartio correo y preferencia horaria",
+                            },
+                            "id": "tool-stage",
+                            "type": "tool_call",
+                        },
+                    ],
+                )
+            return AIMessage(content="Etapa y metadata actualizadas")
+
+    async def fake_update_stage(contacto_id: int, nueva_etapa_id: int):
+        recorded_stage_updates.append((contacto_id, nueva_etapa_id))
+        return {"id": contacto_id, "etapa_embudo": nueva_etapa_id}
+
+    async def fake_update_metadata(contacto_id: int, nueva_metadata: dict):
+        recorded_metadata_updates.append((contacto_id, nueva_metadata))
+        return {"id": contacto_id, "metadata": nueva_metadata}
+
+    with patch("app.agents.funnel.db.load_contexto_completo_local", return_value=snapshot), patch(
+        "app.agents.funnel._create_llm", return_value=DummyLLM()
+    ), patch("app.agents.funnel.db.actualizar_etapa_contacto", side_effect=fake_update_stage), patch(
+        "app.agents.funnel.db.actualizar_metadata_contacto", side_effect=fake_update_metadata
+    ):
+        response = await run_funnel_agent(request)
+
+    assert response.success is True
+    assert response.etapa_nueva == 23
+    assert response.metadata_actualizada == {
+        "info_reg_1": "apg@urpeailab.com",
+        "info_reg_2": "Por la tarde",
+    }
+    assert recorded_stage_updates == [(133678, 23)]
+    assert recorded_metadata_updates
+    assert recorded_metadata_updates[0][0] == 133678
+    assert recorded_metadata_updates[0][1]["etapa_actual"]["informacion_capturada"] == {
+        "info_reg_1": "apg@urpeailab.com",
+        "info_reg_2": "Por la tarde",
+    }
+    assert {tool.tool_name for tool in response.tools_used} == {"update_metadata", "update_etapa_embudo"}
+    assert all(tool.status == "ok" for tool in response.tools_used)
+
+
 async def main() -> int:
     await test_load_funnel_context_normalizes_local_snapshot()
     await test_run_funnel_agent_returns_diagnostic_trace_on_error()
@@ -485,6 +631,7 @@ async def main() -> int:
     await test_funnel_user_prompt_compacts_transcript_and_keeps_key_data()
     await test_funnel_user_prompt_uses_persistent_agent_memory_turns()
     await test_funnel_user_prompt_does_not_fallback_to_wp_messages_when_memory_is_empty()
+    await test_run_funnel_agent_executes_stage_and_metadata_updates()
     print("OK - funnel regression tests passed")
     return 0
 

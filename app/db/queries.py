@@ -498,6 +498,15 @@ async def insertar_mensaje(
     return await sb.insert("wp_mensajes", payload)
 
 
+async def actualizar_mensaje(mensaje_id: int, data: dict[str, Any]) -> dict | None:
+    """Actualiza un mensaje existente por ID."""
+    sb = await get_supabase()
+    updated = await sb.update("wp_mensajes", {"id": mensaje_id}, data)
+    if updated:
+        return updated[0]
+    return await sb.query("wp_mensajes", filters={"id": mensaje_id}, single=True)
+
+
 async def get_agent_memory(session_id: str, limit: int = 16) -> list[dict]:
     sb = await get_supabase()
     data = await sb.query(
