@@ -1,4 +1,4 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 
 
@@ -11,12 +11,19 @@ class Settings(BaseSettings):
     SUPABASE_EDGE_FUNCTION_URL: str = "https://vecspltvmyopwbjzerow.supabase.co/functions/v1"
     SUPABASE_EDGE_FUNCTION_TOKEN: str | None = None
     KAPSO_INTERNAL_TOKEN: str | None = None
+    KAPSO_API_KEY: str | None = None
+    KAPSO_WEBHOOK_SECRET: str | None = None
+    KAPSO_BRIDGE_PORT: int | None = None
+    KAPSO_BASE_URL: str | None = None
+    INTERNAL_AGENT_API_URL: str | None = None
     APP_NAME: str = "URPE AI Lab - Multi-Agent System"
     DEBUG: bool = False
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
 
 @lru_cache()

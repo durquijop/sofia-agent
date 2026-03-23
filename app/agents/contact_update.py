@@ -301,6 +301,15 @@ async def run_contact_update_agent(request: ContactUpdateAgentRequest) -> Contac
     model = request.model or CONTACT_UPDATE_MODEL
     max_tokens = request.max_tokens or 512
     temperature = request.temperature if request.temperature is not None else 0.2
+    system_prompt = _build_contact_update_system_prompt()
+    available_tools = [
+        ToolDefinition(
+            tool_name="update_contact_info",
+            description="Actualiza columnas permitidas de wp_contactos sin duplicar datos",
+            source="contact_update",
+        )
+    ]
+    user_prompt = ""
 
     try:
         contacto, mensajes, citas = await _load_contact_update_context(
@@ -349,7 +358,6 @@ async def run_contact_update_agent(request: ContactUpdateAgentRequest) -> Contac
         compiled = graph.compile()
         graph_build_ms = (time.perf_counter() - graph_start) * 1000
 
-        system_prompt = _build_contact_update_system_prompt()
         user_prompt = _build_contact_update_user_prompt(contacto, mensajes, citas)
         initial_state: ContactUpdateAgentState = {
             "messages": [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)],
@@ -391,13 +399,7 @@ async def run_contact_update_agent(request: ContactUpdateAgentRequest) -> Contac
                 model_used=model,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
-                available_tools=[
-                    ToolDefinition(
-                        tool_name="update_contact_info",
-                        description="Actualiza columnas permitidas de wp_contactos sin duplicar datos",
-                        source="contact_update",
-                    )
-                ],
+                available_tools=available_tools,
                 tools_used=final_state.get("tools_used", []),
                 timing=timing,
                 llm_iterations=int(final_state.get("llm_iterations", 0)),
@@ -432,15 +434,9 @@ async def run_contact_update_agent(request: ContactUpdateAgentRequest) -> Contac
             conversation_id=str(request.conversacion_id) if request.conversacion_id else None,
             memory_session_id=str(request.contacto_id),
             model_used=model,
-            system_prompt="",
-            user_prompt="",
-            available_tools=[
-                ToolDefinition(
-                    tool_name="contact_update_error",
-                    description="Error interno capturado durante la ejecución del agente de contacto",
-                    source="contact_update",
-                )
-            ],
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            available_tools=available_tools,
             tools_used=[error_tool],
             timing=timing,
             llm_iterations=0,

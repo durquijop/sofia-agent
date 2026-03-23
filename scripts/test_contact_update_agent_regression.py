@@ -12,6 +12,7 @@ sys.path.insert(0, str(project_root))
 
 from app.agents.contact_update import run_contact_update_agent
 from app.schemas.contact_update import ContactUpdateAgentRequest
+from app.core.config import Settings
 
 
 CONTEXT_SNAPSHOT = {
@@ -132,9 +133,45 @@ async def test_contact_update_agent_updates_allowed_contact_fields() -> None:
     assert all(tool.status == "ok" for tool in response.tools_used)
 
 
+async def test_contact_update_agent_error_trace_keeps_prompt_and_tool() -> None:
+    request = ContactUpdateAgentRequest(contacto_id=133678, empresa_id=4, agente_id=7, conversacion_id=64368)
+
+    with patch(
+        "app.agents.contact_update.db.load_contexto_completo_local",
+        side_effect=RuntimeError("fallo cargando contexto"),
+    ):
+        response = await run_contact_update_agent(request)
+
+    assert response.success is False
+    assert response.agent_runs
+    trace = response.agent_runs[0]
+    assert "gestión de datos de contactos" in trace.system_prompt
+    assert trace.available_tools
+    assert trace.available_tools[0].tool_name == "update_contact_info"
+
+
+def test_settings_accepts_kapso_env_fields() -> None:
+    settings = Settings(
+        OPENROUTER_API_KEY="test-key",
+        SUPABASE_URL="https://example.supabase.co",
+        SUPABASE_SERVICE_KEY="service-key",
+        KAPSO_API_KEY="kapso-key",
+        KAPSO_WEBHOOK_SECRET="secret",
+        KAPSO_BRIDGE_PORT=3001,
+        KAPSO_BASE_URL="https://api.kapso.ai/meta/whatsapp",
+        INTERNAL_AGENT_API_URL="http://127.0.0.1:8000/api/v1/kapso/inbound",
+        kapso_unused_debug_value="ignored",
+    )
+
+    assert settings.KAPSO_API_KEY == "kapso-key"
+    assert settings.KAPSO_BRIDGE_PORT == 3001
+
+
 async def main() -> int:
     await test_contact_update_agent_noop_when_no_new_data()
     await test_contact_update_agent_updates_allowed_contact_fields()
+    await test_contact_update_agent_error_trace_keeps_prompt_and_tool()
+    test_settings_accepts_kapso_env_fields()
     print("OK - contact update regression tests passed")
     return 0
 
