@@ -19,6 +19,7 @@ from app.core.kapso_debug import (
 )
 from app.core.kapso_prompt import build_kapso_context_payload, build_kapso_system_prompt
 from app.db import queries as db
+from app.db.client import get_supabase
 from app.schemas.chat import AgentRunTrace, ChatRequest, MCPServerConfig, TimingInfo, ToolCall
 from app.schemas.contact_update import ContactUpdateAgentRequest, ContactUpdateAgentResponse
 from app.schemas.funnel import FunnelAgentRequest, FunnelAgentResponse
@@ -699,6 +700,14 @@ async def kapso_inbound(
         memory_session_id = normalized_from_phone
         if contacto and contacto.get("id") is not None:
             memory_session_id = str(contacto["id"])
+
+        # Marcar origen como Whatsapp si aún no tiene valor
+        if contacto and contacto.get("id") is not None and not contacto.get("origen"):
+            try:
+                supabase = await get_supabase()
+                await supabase.update("wp_contactos", filters={"id": int(contacto["id"])}, data={"origen": "Whatsapp"})
+            except Exception as e:
+                logger.warning("No se pudo actualizar origen del contacto %s: %s", contacto["id"], e)
 
         if slash_command:
             session_ids = {normalized_from_phone, request.from_phone}
