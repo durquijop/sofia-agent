@@ -593,8 +593,29 @@ async def reset_contacto_data(contacto_id: int) -> dict[str, int]:
     try:
         contactos_deleted = await sb.delete("wp_contactos", {"id": contacto_id})
     except Exception as exc:
-        logger.warning("No se pudo eliminar wp_contactos id=%s (posible FK): %s", contacto_id, exc)
+        logger.warning("No se pudo eliminar wp_contactos id=%s (posible FK): %s — reseteando campos", contacto_id, exc)
         contactos_deleted = []
+        # Cannot delete row (FK constraints) → reset all user-specific fields to NULL
+        reset_payload = {
+            "nombre": None,
+            "apellido": None,
+            "email": None,
+            "etapa_embudo": None,
+            "metadata": None,
+            "origen": None,
+            "notas": None,
+            "avatar_url": None,
+            "etapa_emocional": None,
+            "timezone": None,
+            "es_calificado": None,
+            "estado": None,
+            "url_drive": None,
+        }
+        try:
+            await sb.update("wp_contactos", {"id": contacto_id}, reset_payload)
+            logger.info("Campos de wp_contactos id=%s reseteados a NULL", contacto_id)
+        except Exception as reset_exc:
+            logger.error("Error reseteando campos de wp_contactos id=%s: %s", contacto_id, reset_exc)
 
     return {
         "mensajes": mensajes_deleted,
