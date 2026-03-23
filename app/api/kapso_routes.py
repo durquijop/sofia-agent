@@ -76,7 +76,7 @@ _MEDIA_FILENAME_RE = re.compile(r"\(([^)]+\.[a-z0-9]{2,5})\)", re.IGNORECASE)
 SUPABASE_STORAGE_BUCKET = "multimedia"
 SUPABASE_EDGE_CREAR_MULTIMEDIA = "crear-multimedia-inicial-v1"
 SUPABASE_EDGE_GUARDAR_MULTIMEDIA = "guardar-multimedia-v4"
-VISION_MODEL = "google/gemini-2.0-flash-001"
+VISION_MODEL = "google/gemini-2.5-flash"
 _IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
 _DOCUMENT_EXTENSIONS = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv"}
 
