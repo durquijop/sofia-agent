@@ -924,42 +924,36 @@ function triggerFlows(stage){
   });
 }
 
-/* ── Replay: play stored interactions as animated sequences ── */
-let lastSeenCount=0;
+/* ── Real-time event tracking ── */
+const seenEventKeys=new Set();
 let lastPollAt=0;
-const POLL_INTERVAL=5000;
+const POLL_INTERVAL=4000;
 
-function processFreshInteractions(interactions){
-  if(!Array.isArray(interactions))return;
-  if(interactions.length<=lastSeenCount)return;
-  const fresh=interactions.slice(0,interactions.length-lastSeenCount);
-  lastSeenCount=interactions.length;
-  // For each new interaction replay its stage sequence
-  fresh.forEach(function(interaction,ii){
-    const delay=ii*400/SPEED_MULT;
-    // Determine which stages this interaction went through
-    const stageSeq=[];
-    if(interaction.from_phone)stageSeq.push('inbound_received');
-    stageSeq.push('inbound_entities_resolved');
-    stageSeq.push('memory_session_resolved');
-    stageSeq.push('prompt_context_built');
-    stageSeq.push('run_agent_start');
-    if(interaction.funnel_etapa_nueva!=null)stageSeq.push('run_funnel_done');
-    if(interaction.status==='ok')stageSeq.push('run_contact_update_done');
-    stageSeq.push('run_agent_done');
-
-    let acc=delay;
-    stageSeq.forEach(function(stage){
-      setTimeout(function(){ triggerFlows(stage); },acc);
-      acc+=350/SPEED_MULT;
-    });
+function processNewEvents(events){
+  if(!Array.isArray(events))return;
+  const fresh=[];
+  for(let i=0;i<events.length;i++){
+    const e=events[i];
+    if(!e||!e.stage)continue;
+    // Unique key: timestamp+stage+source (avoids duplicates)
+    const key=(e.timestamp||'')+'|'+(e.stage||'')+'|'+(e.source||'');
+    if(seenEventKeys.has(key))continue;
+    seenEventKeys.add(key);
+    if(STAGE_FLOWS[e.stage])fresh.push(e);
+  }
+  if(!fresh.length)return;
+  // Sort by timestamp and fire sequentially with stagger
+  fresh.sort(function(a,b){return new Date(a.timestamp)-new Date(b.timestamp);});
+  let acc=0;
+  fresh.forEach(function(ev){
+    setTimeout(function(){triggerFlows(ev.stage);},acc);
+    acc+=Math.max(180,450/SPEED_MULT);
   });
 }
 
-/* On x speed change, re-replay latest interaction to show effect immediately */
+/* On speed change, emit a demo burst */
 document.querySelectorAll('#speed-ctrl button').forEach(function(btn){
   btn.addEventListener('click',function(){
-    // Already set SPEED_MULT above; emit a demo burst
     triggerFlows('inbound_received');
     setTimeout(function(){triggerFlows('run_agent_start');},300/SPEED_MULT);
     setTimeout(function(){triggerFlows('run_agent_done');},700/SPEED_MULT);
@@ -971,7 +965,7 @@ function pollDebugData(){
   if(now-lastPollAt<POLL_INTERVAL)return;
   lastPollAt=now;
   fetch('/debug/kapso/data').then(function(r){return r.json();}).then(function(data){
-    processFreshInteractions(data.interactions);
+    processNewEvents(data.fastapi_events);
   }).catch(function(){});
 }
 
@@ -982,6 +976,18 @@ if(_injected && _injected.nodes){
   EDGES=_injected.edges||[];
   NODES.forEach(n=>{n.vx=0;n.vy=0;});
   if(LOADER)LOADER.style.display='none';
+
+  // Seed seen events so existing data doesn't replay as particles
+  fetch('/debug/kapso/data').then(function(r){return r.json();}).then(function(data){
+    const evts=data.fastapi_events;
+    if(Array.isArray(evts)){
+      evts.forEach(function(e){
+        if(!e||!e.stage)return;
+        seenEventKeys.add((e.timestamp||'')+'|'+(e.stage||'')+'|'+(e.source||''));
+      });
+    }
+  }).catch(function(){});
+
   // Initial demo burst after 800ms
   setTimeout(function(){triggerFlows('inbound_received');},800);
   setTimeout(function(){triggerFlows('run_agent_start');},1600);
