@@ -34,6 +34,7 @@ const PROCESSING_MESSAGE_TTL_MS = PROCESS_TIMEOUT_MS + 30 * 1000;
 const MAX_SEND_RETRIES = 3;
 const RATE_LIMIT_BASE_DELAY_MS = 2000;
 const IN_FLIGHT_DELAY_MS = 1500;
+const DEFAULT_EMPTY_REPLY_TEXT = 'Hola, te leo. ¿En qué puedo ayudarte?';
 const MEDIA_TYPES = ['image', 'audio', 'video', 'document', 'sticker'];
 
 app.use(cors());
@@ -1064,6 +1065,11 @@ function normalizeWhatsAppText(input) {
     .trim();
 }
 
+function ensureReplyText(input) {
+  const normalized = normalizeWhatsAppText(input);
+  return normalized || DEFAULT_EMPTY_REPLY_TEXT;
+}
+
 async function markKapsoAsRead(phoneNumberId, messageId) {
   if (!phoneNumberId || !messageId) return null;
 
@@ -1154,8 +1160,7 @@ async function callInternalAgent(sqlPayload) {
 }
 
 async function sendKapsoText(recipientPhone, phoneNumberId, text) {
-  const body = normalizeWhatsAppText(text);
-  if (!body) return null;
+  const body = ensureReplyText(text);
   return withKapsoRetry(
     () => client.messages.textSender.send({ phoneNumberId, to: recipientPhone, body }),
     `sendText(${recipientPhone})`,

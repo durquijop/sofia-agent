@@ -28,6 +28,7 @@ router = APIRouter(prefix="/api/v1/kapso", tags=["kapso"])
 DEFAULT_KAPSO_FALLBACK_PHONE = "14705500109"
 DEFAULT_KAPSO_FALLBACK_AGENT_ID = 4
 FUNNEL_TIMEOUT_SECONDS = 25
+DEFAULT_EMPTY_REPLY_TEXT = "Hola, te leo. ¿En qué puedo ayudarte?"
 MULTIMEDIA_EXTENSIONS = (
     ".ogg",
     ".mp3",
@@ -197,6 +198,11 @@ def _build_message_error_update(message: dict, error_text: str, error_type: str)
             },
         },
     }
+
+
+def _ensure_reply_text(reply_text: str | None) -> str:
+    normalized = str(reply_text or "").strip()
+    return normalized or DEFAULT_EMPTY_REPLY_TEXT
 
 
 def _merge_timings(started_at: float, conversational_timing: TimingInfo, funnel_timing: TimingInfo | None = None) -> TimingInfo:
@@ -818,10 +824,22 @@ async def kapso_inbound(
             bool(funnel_result and funnel_result.success),
         )
 
-        if conversacion_db_id and (conversational_result.response or "").strip():
+        final_reply_text = _ensure_reply_text(conversational_result.response)
+        if final_reply_text != str(conversational_result.response or "").strip():
+            add_kapso_debug_event(
+                "fastapi",
+                "empty_reply_fallback",
+                {
+                    "message_id": request.message_id,
+                    "conversation_id": conversational_result.conversation_id,
+                    "fallback_text": final_reply_text,
+                },
+            )
+
+        if conversacion_db_id and final_reply_text:
             await db.insertar_mensaje(
                 conversacion_id=int(conversacion_db_id),
-                contenido=(conversational_result.response or "").strip(),
+                contenido=final_reply_text,
                 remitente="agente",
                 tipo="texto",
                 status="sent",
@@ -853,7 +871,7 @@ async def kapso_inbound(
 
         return KapsoInboundResponse(
             reply_type="text",
-            reply_text=conversational_result.response,
+            reply_text=final_reply_text,
             reaction=reaction_payload,
             recipient_phone=request.from_phone,
             phone_number_id=request.phone_number_id,
