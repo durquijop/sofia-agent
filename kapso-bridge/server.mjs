@@ -819,6 +819,13 @@ canvas{display:block;position:absolute;top:0;left:0}
 #legend span{display:flex;align-items:center;gap:6px}
 #legend i{display:inline-block;width:10px;height:10px;border-radius:50%;box-shadow:0 0 6px currentColor}
 #loader{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:25;color:rgba(167,139,250,.6);font-size:14px;letter-spacing:2px;text-transform:uppercase;pointer-events:none}
+#speed-ctrl{position:fixed;top:20px;right:20px;z-index:20;display:flex;align-items:center;gap:6px;background:rgba(8,4,28,.7);border:1px solid rgba(255,255,255,.08);border-radius:10px;padding:6px 10px;backdrop-filter:blur(12px)}
+#speed-ctrl span{font-size:11px;color:rgba(255,255,255,.35);letter-spacing:1px;text-transform:uppercase;margin-right:4px}
+#speed-ctrl button{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);color:rgba(203,213,225,.7);font-size:11px;font-weight:600;padding:3px 10px;border-radius:6px;cursor:pointer;transition:all .15s;font-family:inherit}
+#speed-ctrl button.active{background:rgba(167,139,250,.25);border-color:rgba(167,139,250,.5);color:#c4b5fd}
+#realtime-badge{position:fixed;top:56px;right:20px;z-index:20;font-size:10px;color:rgba(52,211,153,.7);letter-spacing:1px;text-transform:uppercase;display:flex;align-items:center;gap:5px}
+#realtime-badge i{width:6px;height:6px;border-radius:50%;background:#34d399;box-shadow:0 0 8px #34d399;animation:pulse-rt 1.5s infinite}
+@keyframes pulse-rt{0%,100%{opacity:1}50%{opacity:.3}}
 </style>
 </head>
 <body>
@@ -837,6 +844,14 @@ canvas{display:block;position:absolute;top:0;left:0}
   <span><i style="background:#60a5fa;color:#60a5fa"></i> Externo</span>
   <span><i style="background:#f472b6;color:#f472b6"></i> Base de datos</span>
 </div>
+<div id="speed-ctrl">
+  <span>Velocidad</span>
+  <button class="active" data-speed="1">x1</button>
+  <button data-speed="2">x2</button>
+  <button data-speed="4">x4</button>
+  <button data-speed="8">x8</button>
+</div>
+<div id="realtime-badge"><i></i>Live</div>
 <script>
 const C=document.getElementById('c'),X=C.getContext('2d'),TT=document.getElementById('tooltip');
 const LOADER=document.getElementById('loader');
@@ -846,6 +861,120 @@ const DAMPING=0.97,BOUNCE_MARGIN=0.05;
 
 let NODES=[], EDGES=[];
 
+/* ── Speed control ── */
+let SPEED_MULT=1;
+document.querySelectorAll('#speed-ctrl button').forEach(function(btn){
+  btn.addEventListener('click',function(){
+    SPEED_MULT=parseFloat(btn.dataset.speed);
+    document.querySelectorAll('#speed-ctrl button').forEach(function(b){b.classList.remove('active');});
+    btn.classList.add('active');
+  });
+});
+
+/* ── Flow particles ── */
+// Each particle: { edgeFrom, edgeTo, progress (0→1), speed, color, r, label, trail[] }
+const flowParticles=[];
+const PARTICLE_BASE_DURATION=2200; // ms at x1 to travel full edge
+
+/* Map of stage name → list of edges to animate (each edge: [fromId, toId, color]) */
+const STAGE_FLOWS={
+  'inbound_received':      [['whatsapp','orch','#60a5fa']],
+  'fallback_numero':       [['orch','orch','#f59e0b']],
+  'fallback_agent':        [['orch','orch','#f59e0b']],
+  'inbound_entities_resolved': [['orch','supabase','#f472b6'],['supabase','orch','#f472b6']],
+  'inbound_messages_persisted':[['orch','supabase','#f472b6']],
+  'memory_session_resolved':   [['orch','supabase','#f472b6'],['supabase','orch','#f472b6']],
+  'prompt_context_built':  [['orch','conv','#a78bfa']],
+  'run_agent_start':       [['orch','conv','#a78bfa'],['orch','funnel','#fb923c'],['orch','contact','#fb923c']],
+  'run_funnel_done':       [['funnel','openrouter','#60a5fa'],['funnel','t_metadata','#34d399'],['t_metadata','supabase','#f472b6'],['funnel','orch','#fb923c']],
+  'run_contact_update_done':[['contact','openrouter','#60a5fa'],['contact','t_update','#34d399'],['t_update','supabase','#f472b6']],
+  'run_agent_done':        [['conv','openrouter','#60a5fa'],['conv','t_reaction','#34d399'],['conv','t_mcp','#34d399'],['conv','whatsapp','#a78bfa']],
+  'slash_command_done':    [['orch','whatsapp','#34d399']],
+  'audio_processing':      [['orch','storage','#f472b6'],['orch','edge_fn','#60a5fa']],
+  'image_processing':      [['orch','storage','#f472b6'],['orch','vision','#60a5fa'],['vision','openrouter','#60a5fa']],
+  'document_processing':   [['orch','storage','#f472b6'],['orch','edge_fn','#60a5fa']],
+  'http_error':            [['orch','whatsapp','#ef4444']],
+  'exception':             [['orch','whatsapp','#ef4444']],
+};
+
+/* Node pulse: when a stage hits, briefly light up nodes */
+const nodePulse={}; // nodeId -> { until: timestamp, color }
+
+function triggerFlows(stage){
+  const flows=STAGE_FLOWS[stage];
+  if(!flows)return;
+  const duration=PARTICLE_BASE_DURATION/SPEED_MULT;
+  flows.forEach(function(f,i){
+    const fromId=f[0],toId=f[1],color=f[2];
+    // Stagger multiple particles slightly
+    setTimeout(function(){
+      flowParticles.push({
+        fromId:fromId,toId:toId,
+        progress:0,
+        speed:1/duration,
+        color:color,
+        r:5,
+        trail:[],
+        label:stage.replace(/_/g,' '),
+      });
+      // Pulse both endpoints
+      nodePulse[fromId]={until:Date.now()+800,color:color};
+      nodePulse[toId]={until:Date.now()+800+duration,color:color};
+    },i*180/SPEED_MULT);
+  });
+}
+
+/* ── Replay: play stored interactions as animated sequences ── */
+let lastSeenCount=0;
+let lastPollAt=0;
+const POLL_INTERVAL=5000;
+
+function processFreshInteractions(interactions){
+  if(!Array.isArray(interactions))return;
+  if(interactions.length<=lastSeenCount)return;
+  const fresh=interactions.slice(0,interactions.length-lastSeenCount);
+  lastSeenCount=interactions.length;
+  // For each new interaction replay its stage sequence
+  fresh.forEach(function(interaction,ii){
+    const delay=ii*400/SPEED_MULT;
+    // Determine which stages this interaction went through
+    const stageSeq=[];
+    if(interaction.from_phone)stageSeq.push('inbound_received');
+    stageSeq.push('inbound_entities_resolved');
+    stageSeq.push('memory_session_resolved');
+    stageSeq.push('prompt_context_built');
+    stageSeq.push('run_agent_start');
+    if(interaction.funnel_etapa_nueva!=null)stageSeq.push('run_funnel_done');
+    if(interaction.status==='ok')stageSeq.push('run_contact_update_done');
+    stageSeq.push('run_agent_done');
+
+    let acc=delay;
+    stageSeq.forEach(function(stage){
+      setTimeout(function(){ triggerFlows(stage); },acc);
+      acc+=350/SPEED_MULT;
+    });
+  });
+}
+
+/* On x speed change, re-replay latest interaction to show effect immediately */
+document.querySelectorAll('#speed-ctrl button').forEach(function(btn){
+  btn.addEventListener('click',function(){
+    // Already set SPEED_MULT above; emit a demo burst
+    triggerFlows('inbound_received');
+    setTimeout(function(){triggerFlows('run_agent_start');},300/SPEED_MULT);
+    setTimeout(function(){triggerFlows('run_agent_done');},700/SPEED_MULT);
+  });
+});
+
+function pollDebugData(){
+  const now=Date.now();
+  if(now-lastPollAt<POLL_INTERVAL)return;
+  lastPollAt=now;
+  fetch('/debug/kapso/data').then(function(r){return r.json();}).then(function(data){
+    processFreshInteractions(data.interactions);
+  }).catch(function(){});
+}
+
 /* ── Load graph schema (injected server-side) ── */
 const _injected = ${injectedData};
 if(_injected && _injected.nodes){
@@ -853,6 +982,10 @@ if(_injected && _injected.nodes){
   EDGES=_injected.edges||[];
   NODES.forEach(n=>{n.vx=0;n.vy=0;});
   if(LOADER)LOADER.style.display='none';
+  // Initial demo burst after 800ms
+  setTimeout(function(){triggerFlows('inbound_received');},800);
+  setTimeout(function(){triggerFlows('run_agent_start');},1600);
+  setTimeout(function(){triggerFlows('run_agent_done');},2600);
 }else{
   if(LOADER)LOADER.textContent='Grafo no disponible — reinicia el servidor Python';
 }
@@ -881,24 +1014,27 @@ function physics(){
   for(const n of NODES){
     if(n===dragging)continue;
     if(Math.abs(n.vx)<0.00001&&Math.abs(n.vy)<0.00001)continue;
-    /* damping — slides to a stop */
     n.vx*=DAMPING; n.vy*=DAMPING;
-    /* apply velocity */
     n.x+=n.vx; n.y+=n.vy;
-    /* soft bounce off edges */
     if(n.x<BOUNCE_MARGIN){n.x=BOUNCE_MARGIN;n.vx=Math.abs(n.vx)*.4;}
     if(n.x>1-BOUNCE_MARGIN){n.x=1-BOUNCE_MARGIN;n.vx=-Math.abs(n.vx)*.4;}
     if(n.y<BOUNCE_MARGIN){n.y=BOUNCE_MARGIN;n.vy=Math.abs(n.vy)*.4;}
     if(n.y>1-BOUNCE_MARGIN){n.y=1-BOUNCE_MARGIN;n.vy=-Math.abs(n.vy)*.4;}
-    /* stop when slow enough */
     if(Math.abs(n.vx)<0.00001)n.vx=0;
     if(Math.abs(n.vy)<0.00001)n.vy=0;
   }
 }
 
+let lastFrameTime=performance.now();
 function draw(){
+  const now=performance.now();
+  const dt=(now-lastFrameTime)/1000; // seconds
+  lastFrameTime=now;
+
   t+=.002;
   physics();
+  pollDebugData();
+
   X.clearRect(0,0,W,H);
 
   // Deep space gradient
@@ -923,7 +1059,47 @@ function draw(){
     X.beginPath();X.arc(s.x*W,s.y*H,s.s,0,6.28);X.fill();
   }
 
-  // Edges — always visible
+  // Update + draw flow particles
+  for(let i=flowParticles.length-1;i>=0;i--){
+    const p=flowParticles[i];
+    const fromNode=NODES.find(n=>n.id===p.fromId);
+    const toNode=NODES.find(n=>n.id===p.toId);
+    if(!fromNode||!toNode){flowParticles.splice(i,1);continue;}
+    p.progress+=p.speed*dt*1000*SPEED_MULT;
+    if(p.progress>=1){flowParticles.splice(i,1);continue;}
+
+    const fp=nodePos(fromNode);
+    const tp=nodePos(toNode);
+    const px=fp.x+(tp.x-fp.x)*p.progress;
+    const py=fp.y+(tp.y-fp.y)*p.progress;
+
+    // Trail
+    p.trail.push({x:px,y:py});
+    if(p.trail.length>18)p.trail.shift();
+
+    // Draw trail
+    for(let j=1;j<p.trail.length;j++){
+      const alpha=(j/p.trail.length)*0.45;
+      const tr=p.trail[j-1],tr2=p.trail[j];
+      X.strokeStyle=p.color.replace(')',','+alpha+')').replace('rgb','rgba').replace('rgba','rgba');
+      // Use a simpler approach: set globalAlpha
+      X.save();
+      X.globalAlpha=alpha;
+      X.strokeStyle=p.color;
+      X.lineWidth=2*(j/p.trail.length);
+      X.beginPath();X.moveTo(tr.x,tr.y);X.lineTo(tr2.x,tr2.y);X.stroke();
+      X.restore();
+    }
+
+    // Draw particle head
+    X.save();
+    X.shadowColor=p.color;X.shadowBlur=16;
+    X.fillStyle=p.color;
+    X.beginPath();X.arc(px,py,p.r,0,6.28);X.fill();
+    X.shadowBlur=0;X.restore();
+  }
+
+  // Edges
   for(const e of EDGES){
     const a=NODES.find(n=>n.id===e.from),b=NODES.find(n=>n.id===e.to);
     if(!a||!b)continue;
@@ -931,12 +1107,17 @@ function draw(){
     const isHov=hovered&&(hovered.id===a.id||hovered.id===b.id);
     const isConnected=hovered&&EDGES.some(ed=>(ed.from===hovered.id||ed.to===hovered.id)&&(ed.from===a.id||ed.to===a.id||ed.from===b.id||ed.to===b.id));
 
+    // Check if any active flow particle is on this edge
+    const hasFlow=flowParticles.some(fp=>fp.fromId===e.from&&fp.toId===e.to);
+
     X.save();
     if(isHov){
-      // Glowing edge when hovered
       X.shadowColor=a.color;X.shadowBlur=8;
       X.strokeStyle='rgba(255,255,255,.5)';
       X.lineWidth=2;
+    }else if(hasFlow){
+      X.strokeStyle='rgba(255,255,255,.25)';
+      X.lineWidth=1.5;
     }else if(hovered&&!isConnected){
       X.strokeStyle='rgba(255,255,255,.03)';
       X.lineWidth=.5;
@@ -949,16 +1130,15 @@ function draw(){
     X.shadowBlur=0;
     X.restore();
 
-    // Animated particle on edge
+    // Ambient edge particle
     if(!hovered||isHov){
       const speed=(t*(.3+a.x*.2))%1;
-      const px=p1.x+(p2.x-p1.x)*speed;
-      const py=p1.y+(p2.y-p1.y)*speed;
+      const epx=p1.x+(p2.x-p1.x)*speed;
+      const epy=p1.y+(p2.y-p1.y)*speed;
       X.fillStyle=isHov?'rgba(255,255,255,.6)':'rgba(255,255,255,.12)';
-      X.beginPath();X.arc(px,py,isHov?2.5:1.5,0,6.28);X.fill();
+      X.beginPath();X.arc(epx,epy,isHov?2.5:1.5,0,6.28);X.fill();
     }
 
-    // Edge label on hover
     if(e.label&&isHov){
       const mx2=(p1.x+p2.x)/2,my2=(p1.y+p2.y)/2;
       X.font='500 11px Outfit,system-ui,sans-serif';
@@ -969,28 +1149,35 @@ function draw(){
   }
 
   // Nodes
+  const nowTs=Date.now();
   for(const n of NODES){
     const p=nodePos(n);
     const isHov=hovered&&hovered.id===n.id;
     const isConn=hovered&&EDGES.some(e=>(e.from===hovered.id&&e.to===n.id)||(e.to===hovered.id&&e.from===n.id));
     const dimmed=hovered&&!isHov&&!isConn;
     const pulse=1+.06*Math.sin(t*2.5+n.x*8+n.y*5);
-    const R=n.r*pulse*(isHov?1.2:1);
+
+    // Check pulse from flow
+    const np=nodePulse[n.id];
+    const isPulsing=np&&nowTs<np.until;
+    const pulseExtra=isPulsing?1+.25*Math.sin((nowTs-np.until+800)/800*Math.PI):0;
+    const R=n.r*pulse*(isHov?1.2:1)*(isPulsing?1+pulseExtra*.15:1);
 
     // Outer glow
+    const glowColor=isPulsing?np.color:n.glow;
     const g=X.createRadialGradient(p.x,p.y,R*.2,p.x,p.y,R*(isHov?3:2.5));
-    g.addColorStop(0,n.glow);g.addColorStop(1,'transparent');
+    g.addColorStop(0,isPulsing?(np.color+'88'):n.glow);g.addColorStop(1,'transparent');
     X.globalAlpha=dimmed?.2:1;
     X.fillStyle=g;X.beginPath();X.arc(p.x,p.y,R*(isHov?3:2.5),0,6.28);X.fill();
 
-    // Inner glow ring
-    if(isHov){
-      X.strokeStyle=n.color;X.lineWidth=1.5;X.globalAlpha=.3;
+    if(isHov||isPulsing){
+      X.strokeStyle=isPulsing?np.color:n.color;
+      X.lineWidth=isPulsing?2:1.5;
+      X.globalAlpha=isPulsing?.5:.3;
       X.beginPath();X.arc(p.x,p.y,R*1.6,0,6.28);X.stroke();
       X.globalAlpha=1;
     }
 
-    // Core sphere gradient
     const cg=X.createRadialGradient(p.x-R*.2,p.y-R*.25,R*.1,p.x,p.y,R);
     cg.addColorStop(0,'rgba(255,255,255,.25)');cg.addColorStop(.4,n.color);cg.addColorStop(1,n.color+'99');
     X.fillStyle=cg;
@@ -998,12 +1185,10 @@ function draw(){
     X.beginPath();X.arc(p.x,p.y,R,0,6.28);X.fill();
     X.globalAlpha=1;
 
-    // Border ring
-    X.strokeStyle=dimmed?'rgba(255,255,255,.04)':(isHov?'rgba(255,255,255,.6)':'rgba(255,255,255,.1)');
-    X.lineWidth=isHov?2:1;
+    X.strokeStyle=dimmed?'rgba(255,255,255,.04)':(isHov?'rgba(255,255,255,.6)':isPulsing?'rgba(255,255,255,.35)':'rgba(255,255,255,.1)');
+    X.lineWidth=isHov?2:isPulsing?1.5:1;
     X.beginPath();X.arc(p.x,p.y,R+1,0,6.28);X.stroke();
 
-    // Label
     const fontSize=n.kind==='orchestrator'?15:n.kind==='agent'?14:12;
     X.font=(n.kind==='orchestrator'||n.kind==='agent'?'600 ':'400 ')+fontSize+'px Outfit,system-ui,sans-serif';
     X.fillStyle=dimmed?'rgba(255,255,255,.15)':'rgba(255,255,255,.85)';
@@ -1044,7 +1229,6 @@ C.addEventListener('mousemove',e=>{
   if(dragging){
     dragging.x=(mx-dragOff.x)/W;
     dragging.y=(my-dragOff.y)/H;
-    /* track drag velocity for momentum on release */
     dragVx=0.7*dragVx+0.3*(mx-prevMx)/W;
     dragVy=0.7*dragVy+0.3*(my-prevMy)/H;
     prevMx=mx;prevMy=my;
@@ -1073,7 +1257,6 @@ C.addEventListener('mousemove',e=>{
 });
 window.addEventListener('mouseup',()=>{
   if(dragging){
-    /* transfer drag momentum to node */
     dragging.vx=dragVx*.35;
     dragging.vy=dragVy*.35;
   }
