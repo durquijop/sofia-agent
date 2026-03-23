@@ -126,24 +126,30 @@ def _build_interactions(events: list[dict]) -> list[dict]:
         interaction["events"].append(ev)
 
         if stage == "inbound_received":
-            interaction["from_phone"] = payload.get("from_phone")
+            interaction["from_phone"] = payload.get("from_phone") or payload.get("from")
             interaction["message_type"] = payload.get("message_type")
             interaction["message_text"] = payload.get("text", payload.get("message_text"))
             interaction["contact_name"] = payload.get("contact_name")
 
         if stage == "inbound_entities_resolved":
-            interaction["agent_name"] = payload.get("agent_name")
             interaction["contact_name"] = interaction.get("contact_name") or payload.get("contact_name")
-            interaction["conversation_id"] = payload.get("conversacion_id")
+            interaction["conversation_id"] = payload.get("conversacion_id") or payload.get("conversation_db_id")
+            interaction["from_phone"] = interaction.get("from_phone") or payload.get("normalized_from_phone")
+
+        if stage == "run_agent_start":
+            interaction["agent_name"] = interaction.get("agent_name") or payload.get("agent_name")
+            interaction["model_used"] = interaction.get("model_used") or payload.get("model")
 
         if stage == "run_agent_done":
             interaction["status"] = "ok"
-            interaction["model_used"] = payload.get("model_used")
-            interaction["duration_ms"] = payload.get("total_ms")
+            interaction["agent_name"] = payload.get("agent_name") or interaction.get("agent_name")
+            interaction["model_used"] = payload.get("model_used") or interaction.get("model_used")
+            timing = payload.get("timing") or {}
+            interaction["duration_ms"] = payload.get("total_ms") or timing.get("total_ms")
             interaction["reaction_emoji"] = payload.get("reaction_emoji")
-            interaction["response_preview"] = (payload.get("reply_text") or "")[:200]
+            interaction["response_preview"] = (payload.get("response_preview") or payload.get("reply_text") or "")[:200]
             interaction["reply_type"] = payload.get("reply_type", "text")
-            interaction["timing"] = payload.get("timing") or {}
+            interaction["timing"] = timing
             interaction["tools_used"] = payload.get("tools_used") or []
             interaction["agent_runs"] = payload.get("agent_runs") or []
 
@@ -155,7 +161,7 @@ def _build_interactions(events: list[dict]) -> list[dict]:
         if stage == "run_contact_update_done":
             interaction["contact_update_fields"] = payload.get("updated_fields")
 
-        if stage in ("inbound_error", "error"):
+        if stage in ("inbound_error", "error", "exception", "http_error"):
             interaction["status"] = "error"
             interaction["error"] = payload.get("error") or payload.get("detail")
 
