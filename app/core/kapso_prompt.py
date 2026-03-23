@@ -514,10 +514,10 @@ def build_kapso_context_payload(
     mensajes_recientes: list[dict],
     etapas_embudo: list[dict],
     notas: list[dict],
+    inbound,
     contexto_embudo_snapshot: dict | None = None,
     etapas_embudo_snapshot: dict | None = None,
     conversacion_memoria_snapshot: dict | None = None,
-    inbound,
 ) -> tuple[dict, dict]:
     timezone_empresa = determinar_timezone_empresa(empresa)
     now_utc = datetime.now(timezone.utc)
