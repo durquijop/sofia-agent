@@ -168,6 +168,23 @@ async def _build_graph_schema(empresa_id: int | None = None) -> dict:
     edges.append({"from": "conv", "to": "t_mcp", "label": ""})
     edges.append({"from": "t_mcp", "to": "mcp_srv", "label": "JSON-RPC"})
 
+    # Built-in conversational tools: guardar_nota + marcar_prospecto_calificado
+    nodes.append({
+        "id": "t_nota", "label": "guardar_nota", "kind": "tool",
+        "desc": "Herramienta: guardar_nota",
+        "detail": "Memoria persistente del contacto\nAPPEND-only en wp_contactos.notas\nGuarda acuerdos, contexto, resultados\nFormato: [FECHA] CATEGORÍA: detalles",
+    })
+    edges.append({"from": "conv", "to": "t_nota", "label": ""})
+    edges.append({"from": "t_nota", "to": "supabase", "label": "PATCH notas"})
+
+    nodes.append({
+        "id": "t_calificado", "label": "marcar_calificado", "kind": "tool",
+        "desc": "Herramienta: marcar_prospecto_calificado",
+        "detail": "Marca si el prospecto es calificado\nActualiza wp_contactos.es_calificado\nValores: 'si' o 'no'\nAfecta seguimiento y remarketing",
+    })
+    edges.append({"from": "conv", "to": "t_calificado", "label": ""})
+    edges.append({"from": "t_calificado", "to": "supabase", "label": "PATCH calificado"})
+
     # ── Funnel Agent ──
     nodes.append({
         "id": "funnel", "label": "Embudo", "kind": "agent",
@@ -231,6 +248,8 @@ _DEFAULT_POSITIONS: dict[str, tuple[float, float]] = {
     "contact":    (0.76, 0.45),
     "t_reaction": (0.64, 0.67),
     "t_mcp":      (0.36, 0.67),
+    "t_nota":     (0.50, 0.72),
+    "t_calificado":(0.78, 0.72),
     "t_metadata": (0.12, 0.60),
     "t_update":   (0.88, 0.60),
     "mcp_srv":    (0.22, 0.80),
