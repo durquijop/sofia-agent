@@ -9,6 +9,7 @@ import uuid
 from fastapi import APIRouter, Header, HTTPException
 
 from app.agents.conversational import run_agent
+from app.agents.funnel import run_funnel_agent
 from app.core.config import get_settings
 from app.core.kapso_debug import (
     add_kapso_debug_event,
@@ -17,7 +18,8 @@ from app.core.kapso_debug import (
 )
 from app.core.kapso_prompt import build_kapso_context_payload, build_kapso_system_prompt
 from app.db import queries as db
-from app.schemas.chat import ChatRequest, MCPServerConfig, TimingInfo
+from app.schemas.chat import AgentRunTrace, ChatRequest, MCPServerConfig, TimingInfo, ToolCall
+from app.schemas.funnel import FunnelAgentRequest, FunnelAgentResponse
 from app.schemas.kapso import KapsoInboundRequest, KapsoInboundResponse, KapsoReactionPayload
 
 logger = logging.getLogger(__name__)
@@ -179,6 +181,103 @@ def _build_command_response(
         tools_used=[],
         agent_runs=[],
     )
+
+
+def _merge_timings(started_at: float, conversational_timing: TimingInfo, funnel_timing: TimingInfo | None = None) -> TimingInfo:
+    funnel_timing = funnel_timing or TimingInfo(total_ms=0)
+    total_ms = (time.perf_counter() - started_at) * 1000
+    return TimingInfo(
+        total_ms=round(total_ms, 1),
+        llm_ms=round(float(conversational_timing.llm_ms) + float(funnel_timing.llm_ms), 1),
+        mcp_discovery_ms=round(float(conversational_timing.mcp_discovery_ms), 1),
+        graph_build_ms=round(float(conversational_timing.graph_build_ms) + float(funnel_timing.graph_build_ms), 1),
+        tool_execution_ms=round(float(conversational_timing.tool_execution_ms) + float(funnel_timing.tool_execution_ms), 1),
+    )
+
+
+def _merge_tool_calls(conversational_tools: list[ToolCall], funnel_tools: list[ToolCall] | None = None) -> list[ToolCall]:
+    return [*list(conversational_tools or []), *list(funnel_tools or [])]
+
+
+def _merge_agent_runs(conversational_runs: list[AgentRunTrace], funnel_runs: list[AgentRunTrace] | None = None) -> list[AgentRunTrace]:
+    return [*list(conversational_runs or []), *list(funnel_runs or [])]
+
+
+async def _run_both_agents(
+    *,
+    started_at: float,
+    system_prompt: str,
+    user_message: str,
+    model: str | None,
+    mcp_servers: list[MCPServerConfig],
+    conversation_id: str,
+    memory_session_id: str,
+    contacto_id: int | None,
+    empresa_id: int | None,
+    agente_id: int,
+    conversacion_db_id: int | None,
+):
+    conversational_task = asyncio.create_task(
+        run_agent(
+            ChatRequest(
+                system_prompt=system_prompt,
+                message=user_message,
+                model=model,
+                mcp_servers=mcp_servers,
+                conversation_id=conversation_id,
+                memory_session_id=memory_session_id,
+                memory_window=8,
+            )
+        )
+    )
+
+    funnel_task = None
+    if contacto_id is not None and empresa_id is not None:
+        funnel_task = asyncio.create_task(
+            run_funnel_agent(
+                FunnelAgentRequest(
+                    contacto_id=contacto_id,
+                    empresa_id=empresa_id,
+                    agente_id=agente_id,
+                    conversacion_id=conversacion_db_id,
+                    model=model,
+                )
+            )
+        )
+
+    results = await asyncio.gather(
+        conversational_task,
+        funnel_task if funnel_task is not None else asyncio.sleep(0, result=None),
+        return_exceptions=True,
+    )
+    conversational_result = results[0]
+    funnel_result = results[1]
+
+    if isinstance(conversational_result, Exception):
+        raise conversational_result
+
+    if isinstance(funnel_result, Exception):
+        logger.warning("Kapso inbound: funnel agent fallo pero la respuesta conversacional continua: %s", funnel_result, exc_info=True)
+        funnel_result = None
+
+    if isinstance(funnel_result, FunnelAgentResponse) and not funnel_result.success:
+        logger.warning("Kapso inbound: funnel agent devolvio success=false: %s", funnel_result.error)
+        funnel_result = None
+
+    merged_timing = _merge_timings(
+        started_at,
+        conversational_result.timing,
+        funnel_result.timing if isinstance(funnel_result, FunnelAgentResponse) else None,
+    )
+    merged_tools = _merge_tool_calls(
+        conversational_result.tools_used,
+        funnel_result.tools_used if isinstance(funnel_result, FunnelAgentResponse) else None,
+    )
+    merged_agent_runs = _merge_agent_runs(
+        conversational_result.agent_runs,
+        funnel_result.agent_runs if isinstance(funnel_result, FunnelAgentResponse) else None,
+    )
+    return conversational_result, funnel_result, merged_timing, merged_tools, merged_agent_runs
 
 
 def _build_mcp_servers(agent: dict) -> list[MCPServerConfig]:
@@ -582,23 +681,42 @@ async def kapso_inbound(
             request.message_type,
         )
 
-        result = await run_agent(
-            ChatRequest(
-                system_prompt=system_prompt,
-                message=user_message,
-                model=model,
-                mcp_servers=mcp_servers,
-                conversation_id=conversation_id,
-                memory_session_id=memory_session_id,
-                memory_window=8,
-            )
+        conversational_result, funnel_result, merged_timing, merged_tools, merged_agent_runs = await _run_both_agents(
+            started_at=started_at,
+            system_prompt=system_prompt,
+            user_message=user_message,
+            model=model,
+            mcp_servers=mcp_servers,
+            conversation_id=conversation_id,
+            memory_session_id=memory_session_id,
+            contacto_id=contacto_id,
+            empresa_id=empresa_id,
+            agente_id=int(agente_id),
+            conversacion_db_id=conversacion_db_id,
         )
 
         reaction_emoji: str | None = None
-        for tool_call in result.tools_used:
+        for tool_call in merged_tools:
             if tool_call.tool_name == "send_reaction" and tool_call.tool_input.get("emoji"):
                 reaction_emoji = tool_call.tool_input["emoji"]
                 break
+
+        add_kapso_debug_event(
+            "fastapi",
+            "run_funnel_done",
+            {
+                "agent_id": int(agente_id),
+                "contacto_id": contacto_id,
+                "conversation_db_id": conversacion_db_id,
+                "message_id": request.message_id,
+                "success": bool(funnel_result and funnel_result.success),
+                "error": funnel_result.error if funnel_result else None,
+                "timing": funnel_result.timing.model_dump() if funnel_result else None,
+                "tools_used": [tool.model_dump() for tool in (funnel_result.tools_used if funnel_result else [])],
+                "agent_runs": [agent_run.model_dump() for agent_run in (funnel_result.agent_runs if funnel_result else [])],
+                "etapa_nueva": funnel_result.etapa_nueva if funnel_result else None,
+            },
+        )
 
         add_kapso_debug_event(
             "fastapi",
@@ -606,23 +724,24 @@ async def kapso_inbound(
             {
                 "agent_id": int(agente_id),
                 "agent_name": agent.get("nombre_agente") or str(agente_id),
-                "conversation_id": result.conversation_id,
-                "model_used": result.model_used,
-                "response_chars": len(result.response or ""),
-                "response_preview": (result.response or "")[:600],
+                "conversation_id": conversational_result.conversation_id,
+                "model_used": conversational_result.model_used,
+                "response_chars": len(conversational_result.response or ""),
+                "response_preview": (conversational_result.response or "")[:600],
                 "message_id": request.message_id,
-                "timing": result.timing.model_dump(),
-                "tools_used": [tool.model_dump() for tool in result.tools_used],
-                "agent_runs": [agent_run.model_dump() for agent_run in result.agent_runs],
+                "timing": merged_timing.model_dump(),
+                "tools_used": [tool.model_dump() for tool in merged_tools],
+                "agent_runs": [agent_run.model_dump() for agent_run in merged_agent_runs],
                 "reaction_emoji": reaction_emoji,
             },
         )
         logger.info(
-            "Kapso inbound completado agent_id=%s conversation_id=%s model=%s response_chars=%s",
+            "Kapso inbound completado agent_id=%s conversation_id=%s model=%s response_chars=%s funnel_success=%s",
             agente_id,
-            result.conversation_id,
-            result.model_used,
-            len(result.response or ""),
+            conversational_result.conversation_id,
+            conversational_result.model_used,
+            len(conversational_result.response or ""),
+            bool(funnel_result and funnel_result.success),
         )
 
         reaction_payload = None
@@ -635,18 +754,18 @@ async def kapso_inbound(
 
         return KapsoInboundResponse(
             reply_type="text",
-            reply_text=result.response,
+            reply_text=conversational_result.response,
             reaction=reaction_payload,
             recipient_phone=request.from_phone,
             phone_number_id=request.phone_number_id,
             message_id=request.message_id,
-            conversation_id=result.conversation_id,
+            conversation_id=conversational_result.conversation_id,
             agent_id=int(agente_id),
             agent_name=agent.get("nombre_agente") or str(agente_id),
-            model_used=result.model_used,
-            timing=result.timing,
-            tools_used=result.tools_used,
-            agent_runs=result.agent_runs,
+            model_used=conversational_result.model_used,
+            timing=merged_timing,
+            tools_used=merged_tools,
+            agent_runs=merged_agent_runs,
         )
     except HTTPException as exc:
         add_kapso_debug_event(
