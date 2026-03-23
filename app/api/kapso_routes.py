@@ -15,6 +15,7 @@ from app.core.kapso_debug import (
     get_kapso_debug_events,
     mask_secret,
 )
+from app.core.kapso_prompt import build_kapso_context_payload, build_kapso_system_prompt
 from app.db import queries as db
 from app.schemas.chat import ChatRequest, MCPServerConfig, TimingInfo
 from app.schemas.kapso import KapsoInboundRequest, KapsoInboundResponse, KapsoReactionPayload
@@ -178,58 +179,6 @@ def _build_command_response(
         tools_used=[],
         agent_runs=[],
     )
-
-
-def _build_system_prompt(agent: dict, inbound: KapsoInboundRequest) -> str:
-    sections: list[str] = []
-    nombre_agente = agent.get("nombre_agente") or agent.get("rol") or "Agente"
-    sections.append(f"Eres {nombre_agente}.")
-
-    instrucciones = agent.get("instrucciones")
-    if instrucciones:
-        sections.append(f"INSTRUCCIONES:\n{instrucciones}")
-
-    comportamiento = agent.get("comportamiento")
-    if comportamiento:
-        sections.append(f"COMPORTAMIENTO:\n{comportamiento}")
-
-    restricciones = agent.get("restricciones")
-    if restricciones:
-        sections.append(f"RESTRICCIONES:\n{restricciones}")
-
-    instrucciones_mensajes = agent.get("instrucciones_mensajes")
-    if instrucciones_mensajes:
-        sections.append(f"INSTRUCCIONES DE MENSAJES:\n{instrucciones_mensajes}")
-
-    instrucciones_multimedia = agent.get("instrucciones_multimedia")
-    if instrucciones_multimedia:
-        sections.append(f"INSTRUCCIONES MULTIMEDIA:\n{instrucciones_multimedia}")
-
-    sections.append(
-        "CAPACIDAD DE REACCIÓN:\n"
-        "Tienes la herramienta 'send_reaction' para reaccionar al mensaje del usuario con un emoji en WhatsApp.\n"
-        "Eres libre de usárla cuando lo consideres conveniente.\n"
-        "Ejemplos de situaciones donde una reacción es apropiada:\n"
-        "- El usuario expresa afecto, amor o cariño (❤️, 🥰, 😘)\n"
-        "- El usuario agradece o elogia (🙏, 💙, 👍)\n"
-        "- El usuario comparte buenas noticias o un logro (🎉, 🙌, 🔥)\n"
-        "- El usuario hace un chiste o algo gracioso (😂, 😆)\n"
-        "- El usuario saluda calurosamente (👋, 😊)\n"
-        "No reacciones a mensajes neutros, preguntas técnicas o quejas.\n"
-        "Si reaccionas, úsala UNA sola vez por mensaje y elige el emoji más apropiado.\n"
-        "Puedes reaccionar Y responder con texto al mismo tiempo."
-    )
-
-    sections.append(
-        "CONTEXTO DEL CANAL:\n"
-        f"- Canal: WhatsApp via Kapso\n"
-        f"- Contacto: {inbound.contact_name or 'Sin nombre'}\n"
-        f"- Teléfono: {inbound.from_phone}\n"
-        f"- Tipo de mensaje: {inbound.message_type}\n"
-        f"- Tiene media: {'sí' if inbound.has_media else 'no'}"
-    )
-
-    return "\n\n".join(section for section in sections if section).strip()
 
 
 def _build_mcp_servers(agent: dict) -> list[MCPServerConfig]:
@@ -418,10 +367,6 @@ async def kapso_inbound(
         model = agent.get("llm") or None
         mcp_servers_list = _build_mcp_servers(agent)
         message_parts = _separate_message_parts(request)
-
-        system_prompt = _build_system_prompt(agent, request)
-        user_message = _build_user_message(request, message_parts)
-        mcp_servers = mcp_servers_list
         conversation_id = f"kapso:{request.kapso_conversation_id}"
         memory_session_id = normalized_from_phone
         if contacto and contacto.get("id") is not None:
@@ -448,19 +393,26 @@ async def kapso_inbound(
                 reply_text = f"Memoria del agente borrada. Registros eliminados: {sum(deleted_counts)}."
             elif slash_command == "/borrar2":
                 deleted_counts = await asyncio.gather(*[db.delete_agent_memory(session_id) for session_id in session_ids if session_id])
-                reset_summary = {"mensajes": 0, "conversaciones": 0, "notas": 0, "citas": 0, "contactos": 0}
+                reset_summary = {
+                    "mensajes": 0,
+                    "conversaciones": 0,
+                    "notas": 0,
+                    "contextos": 0,
+                    "citas": 0,
+                    "notificaciones": 0,
+                    "actividades": 0,
+                    "contactos": 0,
+                }
                 if contacto and contacto.get("id") is not None:
                     reset_summary = await db.reset_contacto_data(int(contacto["id"]))
                     reply_text = (
-                        "Datos del número eliminados. "
-                        "La siguiente interacción se tratará como usuario nuevo. "
-                        f"Memoria: {sum(deleted_counts)} | Mensajes: {reset_summary['mensajes']} | "
-                        f"Conversaciones: {reset_summary['conversaciones']} | Contactos: {reset_summary['contactos']}"
+                        "Usuario eliminado correctamente. "
+                        "Se borró su información y la siguiente interacción se tratará como un usuario nuevo."
                     )
                 else:
                     reply_text = (
-                        "No había datos persistidos del número. "
-                        f"Solo se limpió la memoria del agente ({sum(deleted_counts)} registros)."
+                        "No había información persistida del usuario. "
+                        "La siguiente interacción se tratará como un usuario nuevo."
                     )
             else:
                 reply_text = "Comando no reconocido. Usa /borrar o /borrar2."
@@ -486,6 +438,57 @@ async def kapso_inbound(
                 reply_text=reply_text,
                 started_at=started_at,
             )
+
+        contacto_id = int(contacto["id"]) if contacto and contacto.get("id") is not None else None
+        conversacion_db_id = int(conversacion_db["id"]) if conversacion_db and conversacion_db.get("id") is not None else None
+        prompt_context_data = await db.load_kapso_prompt_context(
+            contacto_id=contacto_id,
+            empresa_id=empresa_id,
+            conversacion_id=conversacion_db_id,
+            team_id=int(contacto["team_humano_id"]) if contacto and contacto.get("team_humano_id") is not None else None,
+            agente_rol_id=int(agent["id_rol"]) if agent.get("id_rol") is not None else None,
+            limite_mensajes=8,
+        )
+        context_payload, prompt_extras = build_kapso_context_payload(
+            contacto=contacto,
+            agent=agent,
+            empresa=prompt_context_data.get("empresa"),
+            rol_agente=prompt_context_data.get("rol_agente"),
+            team_humano=prompt_context_data.get("team_humano"),
+            contextos=prompt_context_data.get("contextos") or [],
+            citas=prompt_context_data.get("citas") or [],
+            notificaciones=prompt_context_data.get("notificaciones") or [],
+            mensajes_recientes=prompt_context_data.get("mensajes_recientes") or [],
+            etapas_embudo=prompt_context_data.get("etapas_embudo") or [],
+            notas=prompt_context_data.get("notas") or [],
+            inbound=request,
+        )
+
+        system_prompt = build_kapso_system_prompt(
+            agent=agent,
+            inbound=request,
+            contacto=contacto,
+            context_payload=context_payload,
+            extras=prompt_extras,
+            rol_agente=prompt_context_data.get("rol_agente"),
+        )
+        user_message = _build_user_message(request, message_parts)
+        mcp_servers = mcp_servers_list
+
+        add_kapso_debug_event(
+            "fastapi",
+            "prompt_context_built",
+            {
+                "message_id": request.message_id,
+                "contacto_id": contacto_id,
+                "conversation_db_id": conversacion_db_id,
+                "timezone_empresa": prompt_extras.get("timezone_empresa"),
+                "stage_actual": prompt_extras.get("funnel_stage"),
+                "usuario_interno": prompt_extras.get("es_usuario_interno"),
+                "historial_items": len(prompt_context_data.get("mensajes_recientes") or []),
+                "citas_items": len(prompt_context_data.get("citas") or []),
+            },
+        )
 
         add_kapso_debug_event(
             "fastapi",

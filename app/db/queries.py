@@ -114,6 +114,16 @@ async def get_contacto_notas(contacto_id: int, limit: int = 10) -> list[dict]:
     ) or []
 
 
+async def get_contacto_contextos(contacto_id: int) -> list[dict]:
+    """Obtiene contextos adicionales asociados al contacto."""
+    sb = await get_supabase()
+    return await sb.query(
+        "wp_contextos",
+        select="clave,valor",
+        filters={"contacto_id": contacto_id},
+    ) or []
+
+
 async def get_contacto_con_contexto(contacto_id: int) -> dict | None:
     """Obtiene contacto + notas + citas recientes en paralelo."""
     contacto = await get_contacto(contacto_id)
@@ -271,16 +281,31 @@ async def reset_contacto_data(contacto_id: int) -> dict[str, int]:
         )
         mensajes_deleted = sum(len(items or []) for items in deleted_messages)
 
-    conversaciones_deleted = await sb.delete("wp_conversaciones", {"contacto_id": contacto_id})
-    notas_deleted = await sb.delete("wp_contactos_nota", {"contacto_id": contacto_id})
-    citas_deleted = await sb.delete("wp_citas", {"contacto_id": contacto_id})
+    (
+        conversaciones_deleted,
+        notas_deleted,
+        contextos_deleted,
+        citas_deleted,
+        notificaciones_deleted,
+        actividades_deleted,
+    ) = await asyncio.gather(
+        sb.delete("wp_conversaciones", {"contacto_id": contacto_id}),
+        sb.delete("wp_contactos_nota", {"contacto_id": contacto_id}),
+        sb.delete("wp_contextos", {"contacto_id": contacto_id}),
+        sb.delete("wp_citas", {"contacto_id": contacto_id}),
+        sb.delete("wp_notificaciones_team", {"contacto_id": contacto_id}),
+        sb.delete("wp_actividades_log", {"contacto_id": contacto_id}),
+    )
     contactos_deleted = await sb.delete("wp_contactos", {"id": contacto_id})
 
     return {
         "mensajes": mensajes_deleted,
         "conversaciones": len(conversaciones_deleted or []),
         "notas": len(notas_deleted or []),
+        "contextos": len(contextos_deleted or []),
         "citas": len(citas_deleted or []),
+        "notificaciones": len(notificaciones_deleted or []),
+        "actividades": len(actividades_deleted or []),
         "contactos": len(contactos_deleted or []),
     }
 
@@ -299,6 +324,35 @@ async def get_citas_contacto(contacto_id: int, limit: int = 5) -> list[dict]:
     ) or []
 
 
+async def get_citas_contacto_detalladas(contacto_id: int, limit: int = 10) -> list[dict]:
+    """Obtiene citas recientes con campos extendidos para el prompt de Kapso."""
+    sb = await get_supabase()
+    return await sb.query(
+        "wp_citas",
+        select=(
+            "id,fecha_hora,duracion,titulo,ubicacion,estado,descripcion,event_id,"
+            "cuestionario_asesor,evaluacion_asesor,team_humano_id,timezone_cliente,preguntas_calendario"
+        ),
+        filters={"contacto_id": contacto_id},
+        order="fecha_hora",
+        order_desc=True,
+        limit=limit,
+    ) or []
+
+
+async def get_notificaciones_contacto(contacto_id: int, limit: int = 20) -> list[dict]:
+    """Obtiene notificaciones del team relacionadas con el contacto."""
+    sb = await get_supabase()
+    return await sb.query(
+        "wp_notificaciones_team",
+        select="id,tipo,mensaje,fecha_envio,estado,respuesta,fecha_respuesta,asesor_id,agente_id",
+        filters={"contacto_id": contacto_id},
+        order="fecha_envio",
+        order_desc=True,
+        limit=limit,
+    ) or []
+
+
 # ─── Team Humano ─────────────────────────────────────────────────────────────
 
 async def get_team_member(team_id: int) -> dict | None:
@@ -306,10 +360,72 @@ async def get_team_member(team_id: int) -> dict | None:
     sb = await get_supabase()
     return await sb.query(
         "wp_team_humano",
-        select="id,nombre,apellido,email,telefono,rol,especialidad,is_active,disponibilidad,calendly,acepta_citas",
+        select=(
+            "id,nombre,apellido,email,telefono,rol,especialidad,is_active,disponibilidad,"
+            "calendly,acepta_citas,grupo_whatsapp,webinar,timezone"
+        ),
         filters={"id": team_id},
         single=True,
     )
+
+
+async def get_agente_rol(rol_id: int) -> dict | None:
+    """Obtiene la configuración del rol asignado a un agente."""
+    sb = await get_supabase()
+    return await sb.query(
+        "wp_agente_roles",
+        select="id,nombre_rol,instrucciones_rol",
+        filters={"id": rol_id},
+        single=True,
+    )
+
+
+async def _resolved_value(value: Any) -> Any:
+    return value
+
+
+async def load_kapso_prompt_context(
+    contacto_id: int | None,
+    empresa_id: int | None,
+    conversacion_id: int | None = None,
+    team_id: int | None = None,
+    agente_rol_id: int | None = None,
+    limite_mensajes: int = 8,
+) -> dict[str, Any]:
+    """Carga en paralelo el contexto requerido para construir el prompt de Kapso."""
+    empresa_task = get_empresa(empresa_id) if empresa_id else _resolved_value(None)
+    etapas_task = get_empresa_embudo(empresa_id) if empresa_id else _resolved_value([])
+    contextos_task = get_contacto_contextos(contacto_id) if contacto_id else _resolved_value([])
+    citas_task = get_citas_contacto_detalladas(contacto_id, limit=10) if contacto_id else _resolved_value([])
+    notificaciones_task = get_notificaciones_contacto(contacto_id, limit=20) if contacto_id else _resolved_value([])
+    notas_task = get_contacto_notas(contacto_id, limit=10) if contacto_id else _resolved_value([])
+    team_task = get_team_member(team_id) if team_id else _resolved_value(None)
+    rol_task = get_agente_rol(agente_rol_id) if agente_rol_id else _resolved_value(None)
+    mensajes_task = get_mensajes_recientes(conversacion_id, limit=limite_mensajes) if conversacion_id else _resolved_value([])
+
+    empresa, etapas_embudo, contextos, citas, notificaciones, notas, team_humano, rol_agente, mensajes = await asyncio.gather(
+        empresa_task,
+        etapas_task,
+        contextos_task,
+        citas_task,
+        notificaciones_task,
+        notas_task,
+        team_task,
+        rol_task,
+        mensajes_task,
+    )
+
+    return {
+        "empresa": empresa,
+        "etapas_embudo": etapas_embudo,
+        "contextos": contextos,
+        "citas": citas,
+        "notificaciones": notificaciones,
+        "notas": notas,
+        "team_humano": team_humano,
+        "rol_agente": rol_agente,
+        "mensajes_recientes": mensajes,
+    }
 
 
 async def get_team_disponible(empresa_id: int) -> list[dict]:

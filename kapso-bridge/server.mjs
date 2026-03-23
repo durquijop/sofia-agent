@@ -115,12 +115,14 @@ function buildKapsoInteractions(bridgeEvents = [], fastapiEvents = []) {
       if (event.stage === 'run_agent_start') {
         interaction.agent_id = payload.agent_id;
         interaction.memory_session_id = payload.memory_session_id;
+        if (payload.conversation_id) interaction.conversation_id = payload.conversation_id;
         if (payload.model) interaction.model_used = payload.model;
         if (payload.mcp_servers) interaction.mcp_servers = [`${payload.mcp_servers} servers`];
       }
 
       if (event.stage === 'run_agent_done') {
         interaction.agent_id = payload.agent_id;
+        if (payload.conversation_id) interaction.conversation_id = payload.conversation_id;
         if (payload.agent_name) interaction.agent_name = payload.agent_name;
         if (payload.model_used) interaction.model_used = payload.model_used;
         if (payload.response_chars !== undefined) interaction.response_chars = payload.response_chars;
@@ -150,6 +152,7 @@ function buildKapsoInteractions(bridgeEvents = [], fastapiEvents = []) {
       if (event.stage === 'call_fastapi_done') {
         if (payload.reply_type) interaction.reply_type = payload.reply_type;
         if (payload.agent_id) interaction.agent_id = payload.agent_id;
+        if (payload.conversation_id) interaction.conversation_id = payload.conversation_id;
         if (payload.agent_name) interaction.agent_name = payload.agent_name;
         if (payload.model_used) interaction.model_used = payload.model_used;
         if (payload.response_chars !== undefined) interaction.response_chars = payload.response_chars;
@@ -321,6 +324,99 @@ function renderTimingTable(timing = {}) {
     </table>`;
 }
 
+function renderOverviewGrid(items = []) {
+  const validItems = items.filter(item => item && (item.label || item.value));
+  if (!validItems.length) {
+    return '';
+  }
+
+  return `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin:12px 0">
+      ${validItems.map(item => `
+        <div class="card" style="padding:10px 12px">
+          <div class="label">${escapeHtml(item.label || 'Dato')}</div>
+          <div style="font-size:14px;font-weight:700;margin-top:6px;word-break:break-word">${escapeHtml(item.value || '—')}</div>
+        </div>`).join('')}
+    </div>`;
+}
+
+function buildExecutionRows(item = {}) {
+  const rows = [];
+  const toolsCount = Array.isArray(item.tools_used) ? item.tools_used.length : 0;
+
+  if (item.agent_name || item.agent_id) {
+    rows.push({
+      stage: 'Kapso',
+      name: item.agent_name || `Agente ${item.agent_id}`,
+      type: 'Agente resuelto',
+      model: item.model_used || '—',
+      iterations: '—',
+      tools: toolsCount,
+      conversation: item.conversation_id || '—',
+    });
+  }
+
+  const agentRuns = Array.isArray(item.agent_runs) ? item.agent_runs : [];
+  for (const [index, run] of agentRuns.entries()) {
+    rows.push({
+      stage: 'LangGraph',
+      name: run.agent_name || run.agent_key || `Agente ${index + 1}`,
+      type: run.agent_kind || 'agent',
+      model: run.model_used || item.model_used || '—',
+      iterations: run.llm_iterations != null ? String(run.llm_iterations) : '—',
+      tools: Array.isArray(run.tools_used) ? run.tools_used.length : 0,
+      conversation: run.conversation_id || item.conversation_id || '—',
+    });
+  }
+
+  return rows;
+}
+
+function renderExecutionSummary(item = {}) {
+  const agentRuns = Array.isArray(item.agent_runs) ? item.agent_runs : [];
+  const toolsUsed = Array.isArray(item.tools_used) ? item.tools_used : [];
+  const summaryCards = [
+    { label: 'Agente Kapso', value: item.agent_name || (item.agent_id ? `ID ${item.agent_id}` : '—') },
+    { label: 'Conversación', value: item.conversation_id || '—' },
+    { label: 'Memoria', value: item.memory_session_id || '—' },
+    { label: 'Reply', value: item.reply_type || 'text' },
+    { label: 'Trazas LangGraph', value: String(agentRuns.length) },
+    { label: 'Herramientas', value: String(toolsUsed.length) },
+  ];
+  const executionRows = buildExecutionRows(item);
+
+  return `
+    ${renderOverviewGrid(summaryCards)}
+    <table style="margin-top:8px">
+      <thead>
+        <tr>
+          <th>Etapa</th>
+          <th>Nombre</th>
+          <th>Tipo</th>
+          <th>Modelo</th>
+          <th>Iteraciones</th>
+          <th>Tools</th>
+          <th>Conversation</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${executionRows.length ? executionRows.map(row => `
+          <tr>
+            <td>${escapeHtml(row.stage)}</td>
+            <td>${escapeHtml(row.name)}</td>
+            <td>${escapeHtml(row.type)}</td>
+            <td>${escapeHtml(row.model)}</td>
+            <td>${escapeHtml(row.iterations)}</td>
+            <td>${escapeHtml(String(row.tools))}</td>
+            <td>${escapeHtml(row.conversation)}</td>
+          </tr>`).join('') : `
+          <tr>
+            <td colspan="7" style="padding:16px;color:#94a3b8">Sin datos de ejecución todavía.</td>
+          </tr>`}
+      </tbody>
+    </table>`;
+}
+
 function renderAgentRuns(agentRuns = []) {
   if (!Array.isArray(agentRuns) || !agentRuns.length) {
     return '<div style="color:#94a3b8">Esta interacción no tiene trazas detalladas de agentes todavía.</div>';
@@ -336,16 +432,19 @@ function renderAgentRuns(agentRuns = []) {
         <div style="margin-bottom:10px"><strong>LLM iterations:</strong> ${escapeHtml(run.llm_iterations ?? 0)}</div>
         <div style="margin:12px 0 6px"><strong>Timing</strong></div>
         ${renderTimingTable(run.timing || {})}
-        <div style="margin:12px 0 6px"><strong>System prompt</strong></div>
-        <pre>${escapeHtml(run.system_prompt || '')}</pre>
-        <div style="margin:12px 0 6px"><strong>User prompt</strong></div>
-        <pre>${escapeHtml(run.user_prompt || '')}</pre>
         <div style="margin:12px 0 6px"><strong>Herramientas disponibles</strong></div>
         ${renderAvailableToolList(run.available_tools || [])}
         <div style="margin:12px 0 6px"><strong>Herramientas ejecutadas</strong></div>
         ${renderToolList(run.tools_used || [])}
-        <div style="margin:12px 0 6px"><strong>Trace raw</strong></div>
-        <pre>${escapeHtml(JSON.stringify(run, null, 2))}</pre>
+        <details style="margin-top:12px">
+          <summary>Prompts</summary>
+          <div style="margin-top:12px">
+            <div style="margin:0 0 6px"><strong>System prompt</strong></div>
+            <pre>${escapeHtml(run.system_prompt || '')}</pre>
+            <div style="margin:12px 0 6px"><strong>User prompt</strong></div>
+            <pre>${escapeHtml(run.user_prompt || '')}</pre>
+          </div>
+        </details>
       </div>
     </details>`).join('');
 }
@@ -388,12 +487,12 @@ function renderKapsoBasicHtml(debugData) {
           <pre>${escapeHtml(item.response_preview || '—')}</pre>
           <div style="margin:12px 0 6px"><strong>Timing global</strong></div>
           ${renderTimingTable(item.timing || {})}
+          <div style="margin:12px 0 6px"><strong>Resumen de ejecución</strong></div>
+          ${renderExecutionSummary(item)}
           <div style="margin:12px 0 6px"><strong>Tools globales</strong></div>
           ${renderToolList(item.tools_used || [])}
-          <div style="margin:12px 0 6px"><strong>Agentes ejecutados</strong></div>
+          <div style="margin:12px 0 6px"><strong>Trazas detalladas del agente</strong></div>
           ${renderAgentRuns(item.agent_runs || [])}
-          <div style="margin:12px 0 6px"><strong>Interacción raw</strong></div>
-          <pre>${escapeHtml(JSON.stringify(item, null, 2))}</pre>
         </div>
       </details>`).join('')
     : '';
