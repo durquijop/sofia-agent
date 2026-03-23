@@ -31,7 +31,7 @@ async def _persist_debug_event(entry: dict[str, Any]) -> None:
         await db.insert(
             "debug_events",
             {
-                "source": "kapso",
+                "source": entry.get("source", "kapso"),
                 "stage": entry["stage"],
                 "payload": payload,
                 "empresa_id": payload.get("empresa_id"),
