@@ -423,6 +423,35 @@ async def test_funnel_user_prompt_compacts_transcript_and_keeps_key_data() -> No
     assert '"mensajes": [' not in prompt
 
 
+async def test_funnel_user_prompt_uses_persistent_agent_memory_turns() -> None:
+    payload = {
+        "id": 64368,
+        "contacto_id": 133678,
+        "canal": "Kapso",
+        "total_mensajes": 10,
+        "mensajes_retornados": 10,
+        "mensajes": [
+            {"hora": "08:26:23", "remitente": "usuario", "mensaje": "Agustin Peralta Guarin"},
+            {"hora": "08:46:47", "remitente": "usuario", "mensaje": "apg@urpeailab.com"},
+        ],
+    }
+    memory_turns = [
+        {"speaker": "agente", "content": "Hola, ¿me compartes tu nombre completo?"},
+        {"speaker": "usuario", "content": "Agustin Peralta Guarin"},
+        {"speaker": "agente", "content": "Perfecto, ahora compárteme tu correo."},
+        {"speaker": "usuario", "content": "apg@urpeailab.com"},
+    ]
+
+    prompt = _build_funnel_user_message(payload, memory_turns)
+
+    assert '"memory_turns": 4' in prompt
+    assert '- [memoria 1] agente: Hola, ¿me compartes tu nombre completo?' in prompt
+    assert '- [memoria 2] usuario: Agustin Peralta Guarin' in prompt
+    assert '- [memoria 3] agente: Perfecto, ahora compárteme tu correo.' in prompt
+    assert '- Agustin Peralta Guarin' in prompt
+    assert '- apg@urpeailab.com' in prompt
+
+
 async def main() -> int:
     await test_load_funnel_context_normalizes_local_snapshot()
     await test_run_funnel_agent_returns_diagnostic_trace_on_error()
@@ -431,6 +460,7 @@ async def main() -> int:
     await test_load_funnel_context_accepts_textual_es_calificado()
     await test_run_funnel_agent_keeps_full_system_prompt_in_trace()
     await test_funnel_user_prompt_compacts_transcript_and_keeps_key_data()
+    await test_funnel_user_prompt_uses_persistent_agent_memory_turns()
     print("OK - funnel regression tests passed")
     return 0
 

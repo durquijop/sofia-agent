@@ -75,6 +75,36 @@ def _build_conversation_history_payload(mensajes: list[dict] | None) -> list[dic
     return history
 
 
+async def _load_agent_memory_turns(memory_session_id: str | None, memory_window: int) -> list[dict]:
+    if not memory_session_id:
+        return []
+    try:
+        rows = await db.get_agent_memory(memory_session_id, limit=max(memory_window * 2, 2))
+    except Exception as exc:
+        logger.warning("No se pudo cargar agent_memory para funnel session_id=%s: %s", memory_session_id, exc)
+        return []
+
+    turns: list[dict] = []
+    for row in rows:
+        payload = row.get("message") if isinstance(row, dict) else None
+        if not isinstance(payload, dict):
+            continue
+        role = str(payload.get("role") or "").strip().lower()
+        content = str(payload.get("content") or "").strip()
+        if not content:
+            continue
+        turns.append(
+            {
+                "source": "agent_memory",
+                "role": role,
+                "speaker": "agente" if role in {"assistant", "ai"} else "usuario",
+                "content": content,
+                "conversation_id": payload.get("conversation_id"),
+            }
+        )
+    return turns
+
+
 def _safe_json_dict(value) -> dict:
     if isinstance(value, dict):
         return value
@@ -213,18 +243,35 @@ def _extract_user_highlights(mensajes: list[dict]) -> list[str]:
     return highlights[:8]
 
 
-def _build_funnel_user_message(conversacion_memoria_payload: dict) -> str:
+def _build_funnel_user_message(conversacion_memoria_payload: dict, memory_turns: list[dict] | None = None) -> str:
     mensajes = list((conversacion_memoria_payload or {}).get("mensajes") or [])
     transcript_lines: list[str] = []
-    for msg in mensajes[-12:]:
-        speaker = _normalize_conversation_speaker(msg.get("remitente"))
-        hora = str(msg.get("hora") or msg.get("fecha_hora") or msg.get("timestamp") or "?").strip()
-        content = str(msg.get("mensaje") or msg.get("contenido") or "").strip()
-        if not content:
-            continue
-        transcript_lines.append(f"- [{hora}] {speaker}: {content}")
+    memory_turns = list(memory_turns or [])
+
+    if memory_turns:
+        for index, turn in enumerate(memory_turns[-12:], start=1):
+            speaker = str(turn.get("speaker") or "desconocido").strip()
+            content = str(turn.get("content") or "").strip()
+            if not content:
+                continue
+            transcript_lines.append(f"- [memoria {index}] {speaker}: {content}")
+    else:
+        for msg in mensajes[-12:]:
+            speaker = _normalize_conversation_speaker(msg.get("remitente"))
+            hora = str(msg.get("hora") or msg.get("fecha_hora") or msg.get("timestamp") or "?").strip()
+            content = str(msg.get("mensaje") or msg.get("contenido") or "").strip()
+            if not content:
+                continue
+            transcript_lines.append(f"- [{hora}] {speaker}: {content}")
 
     highlights = _extract_user_highlights(mensajes)
+    if memory_turns:
+        highlights = _extract_user_highlights(
+            [
+                {"remitente": turn.get("speaker"), "mensaje": turn.get("content")}
+                for turn in memory_turns
+            ]
+        ) or highlights
     transcript_block = "\n".join(transcript_lines) if transcript_lines else "- Sin mensajes previos"
     highlights_block = "\n".join(f"- {item}" for item in highlights) if highlights else "- No se detectaron datos claros"
     summary_payload = {
@@ -233,6 +280,7 @@ def _build_funnel_user_message(conversacion_memoria_payload: dict) -> str:
         "canal": conversacion_memoria_payload.get("canal"),
         "total_mensajes": conversacion_memoria_payload.get("total_mensajes"),
         "mensajes_retornados": conversacion_memoria_payload.get("mensajes_retornados"),
+        "memory_turns": len(memory_turns),
     }
     return (
         "Resumen de la conversación:\n"
@@ -865,6 +913,10 @@ async def run_funnel_agent(request: FunnelAgentRequest) -> FunnelAgentResponse:
             "mensajes_retornados": 0,
             "mensajes": [],
         }
+        memory_turns = await _load_agent_memory_turns(
+            request.memory_session_id,
+            max(1, request.memory_window or 8),
+        )
         etapas_payload = ((context.etapas_embudo or {}).get("data") or {}).get("etapas") or [
             etapa.model_dump() for etapa in context.todas_etapas
         ]
@@ -881,7 +933,7 @@ async def run_funnel_agent(request: FunnelAgentRequest) -> FunnelAgentResponse:
             contexto_embudo_payload=contexto_embudo_payload,
         )
 
-        user_message = _build_funnel_user_message(conversacion_memoria_payload)
+        user_message = _build_funnel_user_message(conversacion_memoria_payload, memory_turns)
         
         # Estado inicial
         initial_state: FunnelAgentState = {
@@ -930,7 +982,7 @@ async def run_funnel_agent(request: FunnelAgentRequest) -> FunnelAgentResponse:
                 agent_name="Agente de Embudo",
                 agent_kind="analysis",
                 conversation_id=str(request.conversacion_id) if request.conversacion_id else None,
-                memory_session_id=None,
+                memory_session_id=request.memory_session_id,
                 model_used=model,
                 system_prompt=system_prompt,
                 user_prompt=user_message,
@@ -994,6 +1046,7 @@ async def run_funnel_agent(request: FunnelAgentRequest) -> FunnelAgentResponse:
             agent_kind="analysis_error",
             conversation_id=str(request.conversacion_id) if request.conversacion_id else None,
             memory_session_id=None,
+            
             model_used=model,
             system_prompt=f"Funnel fallo antes de completar la ejecucion: {e}",
             user_prompt="",
