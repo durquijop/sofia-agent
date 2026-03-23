@@ -46,6 +46,33 @@ class FunnelAgentState(TypedDict):
     short_circuit_response: str | None
 
 
+def _is_current_stage_match(contacto_stage_value, etapa: dict) -> bool:
+    if contacto_stage_value is None:
+        return False
+    return contacto_stage_value in {etapa.get("id"), etapa.get("orden_etapa")}
+
+
+def _resolve_stage_by_id(context: FunnelContextResponse, id_etapa: int) -> FunnelStageInfo | None:
+    for etapa in context.todas_etapas:
+        if etapa.id == id_etapa:
+            return etapa
+    return None
+
+
+def _build_conversation_history_payload(mensajes: list[dict] | None) -> list[dict]:
+    history = []
+    for msg in mensajes or []:
+        history.append(
+            {
+                "timestamp": msg.get("timestamp"),
+                "remitente": msg.get("remitente"),
+                "contenido": msg.get("contenido", ""),
+                "tipo": msg.get("tipo", "text"),
+            }
+        )
+    return history
+
+
 _llm_cache: dict[str, ChatOpenAI] = {}
 _shared_http_client: httpx.AsyncClient | None = None
 
@@ -100,7 +127,7 @@ def _format_context_para_prompt(context: FunnelContextResponse) -> str:
         lines.append("\n**Etapas Disponibles:**")
         for etapa in context.todas_etapas:
             marker = " <- ACTUAL" if etapa.es_etapa_actual else ""
-            lines.append(f"  {etapa.orden_etapa}. {etapa.nombre_etapa}{marker}")
+            lines.append(f"  id={etapa.id} | orden={etapa.orden_etapa} | {etapa.nombre_etapa}{marker}")
     
     # Metadata del contacto
     if context.contacto.metadata:
@@ -130,31 +157,38 @@ async def _load_funnel_context(
     conversacion_id: int | None = None,
 ) -> FunnelContextResponse:
     """Carga el contexto completo del embudo en paralelo."""
-    # Cargar en paralelo: contacto, etapas, conversación+mensajes
-    contacto, etapas, (conversacion, mensajes) = await db.load_funnel_context(
+    contexto_local = await db.load_contexto_completo_local(
         contacto_id=contacto_id,
         empresa_id=empresa_id,
+        agente_id=None,
         conversacion_id=conversacion_id,
-        limite_mensajes=20,
     )
-    
+
+    contexto_embudo = contexto_local.get("contexto_embudo") or {}
+    etapas_embudo = contexto_local.get("etapas_embudo") or {}
+    conversacion_memoria = contexto_local.get("conversacion_memoria") or {}
+    contexto_data = contexto_embudo.get("data") or {}
+    etapas_data = etapas_embudo.get("data") or {}
+    conversacion_data = conversacion_memoria.get("data") or {}
+    contacto = contexto_data.get("informacion_contacto") or {}
+    etapa_actual_data = contexto_data.get("etapa_actual")
+    etapas = etapas_data.get("etapas") or []
+
     if not contacto:
         raise ValueError(f"Contacto {contacto_id} no encontrado")
-    
-    # Procesar contacto
+
     info_contacto = ContactInfo(
-        contacto_id=contacto["id"],
-        nombre_completo=f"{contacto.get('nombre', '')} {contacto.get('apellido', '')}".strip(),
+        contacto_id=contacto["contacto_id"],
+        nombre_completo=contacto.get("nombre_completo") or "",
         telefono=contacto.get("telefono"),
-        etapa_actual_orden=contacto.get("etapa_embudo"),
+        etapa_actual_orden=contacto.get("etapa_actual_orden"),
         metadata=contacto.get("metadata"),
     )
-    
-    # Procesar etapas
-    tiene_embudo = bool(etapas)
+
+    tiene_embudo = bool(contexto_data.get("tiene_embudo"))
     etapas_info = []
     etapa_actual_completa = None
-    
+
     if etapas:
         for etapa in etapas:
             etapa_info = FunnelStageInfo(
@@ -162,34 +196,34 @@ async def _load_funnel_context(
                 nombre_etapa=etapa.get("nombre_etapa", ""),
                 orden_etapa=etapa.get("orden_etapa", 0),
                 descripcion=etapa.get("descripcion"),
-                es_etapa_actual=etapa.get("orden_etapa") == contacto.get("etapa_embudo"),
+                es_etapa_actual=_is_current_stage_match(contacto.get("etapa_actual_orden"), etapa),
             )
             etapas_info.append(etapa_info)
-            
-            if etapa_info.es_etapa_actual:
-                descripcion_json = etapa.get("descripcion") or {}
-                etapa_actual_completa = FunnelCurrentStage(
-                    id=etapa.get("id"),
-                    orden=etapa.get("orden_etapa"),
-                    nombre=etapa.get("nombre_etapa"),
-                    que_es=descripcion_json.get("que_es"),
-                    senales=descripcion_json.get("senales"),
-                )
-    
-    # Procesar conversación
-    conversacion_resumen = None
-    ultimos_mensajes = None
-    if conversacion and mensajes:
-        conversacion_resumen = conversacion.get("resumen")
-        # Formatear mensajes
-        ultimos_mensajes = [
-            {
-                "timestamp": msg.get("timestamp"),
-                "remitente": msg.get("remitente"),
-                "contenido": msg.get("contenido", "")[:100],
-            }
-            for msg in mensajes[-3:]
-        ]
+
+        if etapa_actual_data and etapa_actual_completa is None:
+            descripcion_json = etapa_actual_data if isinstance(etapa_actual_data, dict) else {}
+            etapa_actual_completa = FunnelCurrentStage(
+                id=etapa_actual_data.get("id"),
+                orden=etapa_actual_data.get("orden"),
+                nombre=etapa_actual_data.get("nombre"),
+                que_es=descripcion_json.get("que_es"),
+                senales=descripcion_json.get("senales"),
+            )
+        elif etapas_info:
+            for etapa_info in etapas_info:
+                if etapa_info.es_etapa_actual:
+                    descripcion_json = etapa_info.descripcion or {}
+                    etapa_actual_completa = FunnelCurrentStage(
+                        id=etapa_info.id,
+                        orden=etapa_info.orden_etapa,
+                        nombre=etapa_info.nombre_etapa,
+                        que_es=descripcion_json.get("que_es"),
+                        senales=descripcion_json.get("senales"),
+                    )
+                    break
+
+    conversacion_resumen = conversacion_data.get("resumen")
+    ultimos_mensajes = conversacion_data.get("mensajes") or None
     
     return FunnelContextResponse(
         contacto=info_contacto,
@@ -198,6 +232,9 @@ async def _load_funnel_context(
         tiene_embudo=tiene_embudo,
         conversacion_resumen=conversacion_resumen,
         ultimos_mensajes=ultimos_mensajes,
+        contexto_embudo=contexto_embudo,
+        etapas_embudo=etapas_embudo,
+        conversacion_memoria=conversacion_memoria,
     )
 
 
@@ -246,68 +283,63 @@ def _build_graph(llm_with_tools, context: FunnelContextResponse, requestData: Fu
             status = "ok"
             error_text = None
             result = None
-            
+
             try:
                 if tool_name == "update_etapa_embudo":
-                    orden_etapa = tool_input.get("orden_etapa")
+                    id_etapa = tool_input.get("id_etapa")
                     razon = tool_input.get("razon", "Cambio identificado por agente")
+                    etapa_objetivo = _resolve_stage_by_id(context, int(id_etapa)) if id_etapa is not None else None
+                    if etapa_objetivo is None:
+                        raise ValueError(f"Etapa {id_etapa} no es válida en este embudo")
+
                     contacto_actualizado = await db.actualizar_etapa_contacto(
                         contacto_id=requestData.contacto_id,
-                        nueva_etapa_orden=orden_etapa,
+                        nueva_etapa_id=etapa_objetivo.id,
                     )
-                    etapa_nueva = orden_etapa
-                    result = f"✓ Etapa actualizada a {orden_etapa}: {razon}" if contacto_actualizado else "Error al actualizar etapa"
-                
+                    etapa_nueva = etapa_objetivo.id
+                    result = (
+                        f"✓ Etapa actualizada a {etapa_objetivo.nombre_etapa} (id={etapa_objetivo.id}, orden={etapa_objetivo.orden_etapa}): {razon}"
+                        if contacto_actualizado
+                        else "Error al actualizar etapa"
+                    )
+
                 elif tool_name == "update_metadata":
                     informacion_capturada = tool_input.get("informacion_capturada", {})
                     seccion = tool_input.get("seccion", "etapa_actual")
-                    
-                    # POST al endpoint Supabase
-                    http_client = _get_http_client()
-                    settings = get_settings()
-                    metadata_json = {
-                        seccion: {
-                            "informacion_capturada": informacion_capturada,
-                            "actualizado_en": str(time.time()),
-                        }
-                    }
-                    payload = {
-                        "contacto_id": requestData.contacto_id,
-                        "empresa_id": requestData.empresa_id,
-                        "agente_id": requestData.agente_id,
-                        "metadata": json.dumps(metadata_json),
-                    }
-                    
-                    # Construir headers con autorización si está disponible
-                    headers = {}
-                    if settings.SUPABASE_EDGE_FUNCTION_TOKEN:
-                        headers["Authorization"] = f"Bearer {settings.SUPABASE_EDGE_FUNCTION_TOKEN}"
-                    
-                    response = await http_client.post(
-                        f"{settings.SUPABASE_EDGE_FUNCTION_URL}/actualizar-metadata-v3",
-                        json=payload,
-                        headers=headers,
-                        timeout=15.0,
-                    )
-                    
-                    if response.status_code in (200, 201):
-                        metadata_actualizada = informacion_capturada
-                        result = f"✓ Metadata registrada: {len(informacion_capturada)} campos capturados"
+                    if not informacion_capturada:
+                        result = "Sin cambios de metadata: no se capturó información nueva"
                     else:
-                        result = f"Error al actualizar metadata: {response.status_code}"
-                
+                        metadata_json = {
+                            seccion: {
+                                "informacion_capturada": informacion_capturada,
+                                "actualizado_en": str(time.time()),
+                            }
+                        }
+                        contacto_actualizado = await db.actualizar_metadata_contacto(
+                            contacto_id=requestData.contacto_id,
+                            nueva_metadata=metadata_json,
+                        )
+                        if contacto_actualizado:
+                            metadata_actualizada = informacion_capturada
+                            result = f"✓ Metadata registrada en BD: {len(informacion_capturada)} campos capturados"
+                        else:
+                            result = "Error al actualizar metadata en BD"
+
                 else:
                     raise ValueError(f"Herramienta no reconocida: {tool_name}")
-                
+
+                if isinstance(result, str) and result.lower().startswith("error"):
+                    status = "error"
+                    error_text = result
                 tool_output = str(result)[:500]
             except Exception as exc:
                 status = "error"
                 error_text = str(exc)
                 tool_output = f"Error: {exc}"
-            
+
             duration_ms = (time.perf_counter() - tool_start) * 1000
             tool_execution_ms += duration_ms
-            
+
             tool_messages.append(
                 ToolMessage(
                     content=tool_output,
@@ -315,7 +347,7 @@ def _build_graph(llm_with_tools, context: FunnelContextResponse, requestData: Fu
                     tool_call_id=tc.get("id"),
                 )
             )
-            
+
             tool_call = ToolCall(
                 tool_name=tool_name,
                 tool_input=tool_input,
@@ -370,7 +402,6 @@ def _build_graph(llm_with_tools, context: FunnelContextResponse, requestData: Fu
 async def run_funnel_agent(request: FunnelAgentRequest) -> FunnelAgentResponse:
     """Ejecuta el agente de embudo."""
     t_start = time.perf_counter()
-    settings = get_settings()
     
     # Usar x-ai/grok-4.1-fast para este agente (optimizado para embudo)
     model = "x-ai/grok-4.1-fast"
@@ -389,33 +420,31 @@ async def run_funnel_agent(request: FunnelAgentRequest) -> FunnelAgentResponse:
         
         # Definir herramientas que el LLM puede usar
         @tool
-        async def update_etapa_embudo(orden_etapa: int, razon: str = "Cambio identificado por agente") -> str:
+        async def update_etapa_embudo(id_etapa: int, razon: str = "Cambio identificado por agente") -> str:
             """
             Actualiza la etapa del embudo del contacto.
             
             Args:
-                orden_etapa: Orden/número de la nueva etapa (número entero válido del contexto)
+                id_etapa: ID único de la nueva etapa (válido en el contexto)
                 razon: Razón del cambio
             
             Returns:
                 Confirmación de la actualización
             """
-            logger.info(f"Tool: update_etapa_embudo({orden_etapa}, {razon})")
+            logger.info(f"Tool: update_etapa_embudo({id_etapa}, {razon})")
             try:
-                # Validar que la etapa existe en el contexto
-                etapa_valida = any(e.orden_etapa == orden_etapa for e in context.todas_etapas)
-                if not etapa_valida:
-                    return f"Error: Etapa {orden_etapa} no es válida en este embudo"
+                etapa_objetivo = _resolve_stage_by_id(context, id_etapa)
+                if not etapa_objetivo:
+                    return f"Error: Etapa {id_etapa} no es válida en este embudo"
                 
-                # Actualizar en BD
                 contacto_actualizado = await db.actualizar_etapa_contacto(
                     contacto_id=request.contacto_id,
-                    nueva_etapa_orden=orden_etapa,
+                    nueva_etapa_id=etapa_objetivo.id,
                 )
                 
                 if contacto_actualizado:
-                    logger.info(f"Contacto {request.contacto_id} actualizado a etapa {orden_etapa}")
-                    return f"✓ Etapa actualizada a {orden_etapa}: {razon}"
+                    logger.info(f"Contacto {request.contacto_id} actualizado a etapa id={etapa_objetivo.id}")
+                    return f"✓ Etapa actualizada a {etapa_objetivo.nombre_etapa} (id={etapa_objetivo.id}): {razon}"
                 else:
                     return "Error: No se pudo actualizar la etapa"
             except Exception as e:
@@ -436,42 +465,24 @@ async def run_funnel_agent(request: FunnelAgentRequest) -> FunnelAgentResponse:
             """
             logger.info(f"Tool: update_metadata(campos={len(informacion_capturada)}, seccion={seccion})")
             try:
-                # Construir metadata en formato JSON
+                if not informacion_capturada:
+                    return "Sin cambios de metadata: no se capturó información nueva"
+
                 metadata_json = {
                     seccion: {
                         "informacion_capturada": informacion_capturada,
                         "actualizado_en": str(time.time()),
                     }
                 }
-                
-                # POST al endpoint Supabase
-                http_client = _get_http_client()
-                settings = get_settings()
-                payload = {
-                    "contacto_id": request.contacto_id,
-                    "empresa_id": request.empresa_id,
-                    "agente_id": request.agente_id,
-                    "metadata": json.dumps(metadata_json),  # Enviar como string JSON
-                }
-                
-                # Construir headers con autorización si está disponible
-                headers = {}
-                if settings.SUPABASE_EDGE_FUNCTION_TOKEN:
-                    headers["Authorization"] = f"Bearer {settings.SUPABASE_EDGE_FUNCTION_TOKEN}"
-                
-                response = await http_client.post(
-                    f"{settings.SUPABASE_EDGE_FUNCTION_URL}/actualizar-metadata-v3",
-                    json=payload,
-                    headers=headers,
-                    timeout=15.0,
+
+                contacto_actualizado = await db.actualizar_metadata_contacto(
+                    contacto_id=request.contacto_id,
+                    nueva_metadata=metadata_json,
                 )
-                
-                if response.status_code in (200, 201):
-                    logger.info(f"Metadata actualizada para contacto {request.contacto_id}")
-                    return f"✓ Metadata registrada: {len(informacion_capturada)} campos capturados"
-                else:
-                    logger.error(f"Error en actualizar-metadata-v3: {response.status_code} - {response.text}")
-                    return f"Error al actualizar metadata: {response.status_code}"
+                if contacto_actualizado:
+                    logger.info(f"Metadata actualizada en BD para contacto {request.contacto_id}")
+                    return f"✓ Metadata registrada en BD: {len(informacion_capturada)} campos capturados"
+                return "Error al actualizar metadata en BD"
             except Exception as e:
                 logger.error(f"Error en update_metadata: {e}")
                 return f"Error: {str(e)}"
@@ -487,95 +498,134 @@ async def run_funnel_agent(request: FunnelAgentRequest) -> FunnelAgentResponse:
         compiled = graph.compile()
         graph_build_ms = (time.perf_counter() - t_graph) * 1000
         
-        # Armar contexto formateado
-        context_formateado = _format_context_para_prompt(context)
-        mensajes_formateados = _format_mensajes_para_contexto(context.ultimos_mensajes or [])
+        conversacion_memoria_payload = (context.conversacion_memoria or {}).get("data") or {
+            "id": request.conversacion_id,
+            "total_mensajes": 0,
+            "mensajes_retornados": 0,
+            "mensajes": [],
+        }
+        etapas_payload = ((context.etapas_embudo or {}).get("data") or {}).get("etapas") or [
+            etapa.model_dump() for etapa in context.todas_etapas
+        ]
+        contexto_embudo_payload = (context.contexto_embudo or {}).get("data") or {
+            "informacion_contacto": context.contacto.model_dump(),
+            "etapa_actual": context.etapa_actual.model_dump() if context.etapa_actual else None,
+            "tiene_embudo": context.tiene_embudo,
+            "total_etapas": len(context.todas_etapas),
+            "todas_etapas": etapas_payload,
+        }
+        stage_label = (
+            f"{context.etapa_actual.nombre} (Orden: {context.etapa_actual.orden})"
+            if context.etapa_actual
+            else "Sin etapa asignada"
+        )
         
-        # System prompt
         system_prompt = f"""# IDENTIDAD Y MISIÓN
 
-Eres un analista conversacional experto que identifica etapas del embudo y registra información del prospecto.
+    Eres un analista conversacional que identifica etapas del embudo y registra información del prospecto.
 
-## Modelo Utilizado
-**x-ai/grok-4.1-fast** - Optimizado para análisis rápido de embudos
+    ## Objetivos:
+    - **IDENTIFICAR** etapa actual del prospecto
+    - **ACTUALIZAR** etapa usando `update_etapa_embudo`
+    - **REGISTRAR** información usando `update_metadata`
 
-## Objetivos:
-- **IDENTIFICAR** etapa actual basado en señales del prospecto
-- **ACTUALIZAR** etapa usando `update_etapa_embudo` (solo si detectas cambio)
-- **REGISTRAR** TODA información capturada usando `update_metadata` (siempre que haya datos nuevos)
+    # Datos claves
 
-# Datos claves
+    El contacto {context.contacto.nombre_completo or 'Sin nombre'} se encuentra en la etapa {stage_label}
 
-El contacto {context.contacto.nombre_completo} se encuentra en la etapa {context.etapa_actual.nombre if context.etapa_actual else 'Sin etapa asignada'}
+    ---
 
----
+    # CONTEXTO DEL EMBUDO
 
-# CONTEXTO DEL EMBUDO
+    **Etapas disponibles:**
+    ```json
+    {json.dumps(etapas_payload, ensure_ascii=False, indent=2)}
+    ```
 
-{context_formateado}
+    **Etapa actual identificada + Metadata registrada:**
+    ```json
+    {json.dumps(contexto_embudo_payload, ensure_ascii=False, indent=2)}
+    ```
 
----
+    Si la etapa actual y la etapa identificada son la misma, no es necesario actualizarla.
 
-# HISTORIAL DE CONVERSACIÓN
+    Cada etapa tiene:
+    - `id` como identificador único de etapa
+    - `orden_etapa` como posición secuencial, solo referencial
+    - `descripcion.senales` como comportamientos observables
+    - `descripcion.metadata.informacion_registrar` o `descripcion.informacion_registrar` como datos a capturar
 
-{mensajes_formateados}
+    ---
 
----
+    # HERRAMIENTAS
 
-# HERRAMIENTAS DISPONIBLES
+    ## 1. `update_etapa_embudo`
+    Usa `id_etapa` como identificador único para actualizar la etapa del contacto.
 
-## 1. `update_etapa_embudo`
-**Uso:** Actualizar la etapa del embudo
-**Parámetros:**
-- `orden_etapa` (int, requerido): Número de la nueva etapa (válido en el contexto)
-- `razon` (str, opcional): Razón del cambio
+    ## 2. `update_metadata`
 
-**Ejemplo:** Cuando detectes que el lead pasó de "Interesado" a "Calificado"
+    ### Cuándo usar:
+    - Después de actualizar etapa, si hay datos nuevos que registrar
+    - Cuando el prospecto comparte información clave
+    - Al finalizar descubrimiento si hay 3 o más respuestas útiles
 
-## 2. `update_metadata`
-**Uso:** Registrar TODA la información capturada en esta conversación
-**Parámetros:**
-- `informacion_capturada` (dict, requerido): Campos capturados (ej: {{"info_reg_1": "valor", "info_reg_2": "valor"}})
-- `seccion` (str, opcional): Sección donde guardar (default: "etapa_actual")
+    ## Reglas del uso de la herramienta:
 
-**Formato esperado:**
-```json
-{{
-  "info_reg_1": "Fecha y hora: 2025-01-27 10:30 AM",
-  "info_reg_2": "Pregunta del lead: ¿Cuánto cuesta?",
-  "info_reg_3": "Presupuesto: 50000-100000 USD"
-}}
-```
+    - Úsalas solo si tienes algo que actualizar
+    - Si el nuevo mensaje es irrelevante y no hay metadata nueva ni cambio de etapa, responde únicamente con `ok`
 
----
+    ---
 
-## REGLAS IMPORTANTES
+    ## CÓMO RELLENAR informacion_capturada
 
-✅ **Usa update_etapa_embudo SOLO si:**
-- Hay evidencia clara de cambio de etapa
-- La nueva etapa es válida en el embudo
+    Para cada objeto en `informacion_registrar`:
 
-✅ **Usa update_metadata SIEMPRE que:**
-- Haya información nueva capturada
-- Completes los campos según info_registrar
+    1. Lee el campo `texto`
+    2. Busca ese dato en la conversación
+    3. Si lo encontraste: usa el `id` como clave y el valor real capturado
+    4. Si no lo encontraste: omite ese `id`
 
-❌ **NO uses herramientas si:**
-- No hay cambios para hacer
-- El prospecto no mencionó datos relevantes
+    ---
 
----
+    ## REGLAS DE MERGE
 
-## CHECKLIST FINAL
+    - Campos existentes se preservan
+    - Nuevos campos se agregan
+    - Valores existentes se actualizan
+    - Secciones se mantienen separadas
 
-Antes de responder al equipo:
-- [ ] ¿Detecté cambio de etapa? → `update_etapa_embudo` con id_etapa válido
-- [ ] ¿Capturé toda la información? → `update_metadata` con informacion_capturada
-- [ ] ¿Respuesta máximo 3 líneas?
-- [ ] ¿Orientada al equipo (NO al prospecto)?
-"""
-        
-        # User message
-        user_message = f"Analiza el estado actual del contacto {context.contacto.nombre_completo} y actualiza etapa/metadata si es necesario."
+    ---
+
+    ## REGLAS JSON OBLIGATORIAS
+
+    1. Todas las claves entre comillas dobles
+    2. Todos los strings entre comillas dobles
+    3. No uses comillas simples
+    4. No pongas comas al final del último elemento
+    5. Balancea llaves correctamente
+
+    ---
+
+    ## Reglas extras:
+
+    - Si la empresa no tiene embudo creado, no asignar etapa al contacto
+    - Si no ha cambiado nada, no actualices ni metadata ni etapa
+
+    ## CHECKLIST FINAL
+
+    Antes de responder al equipo:
+    - ¿Cambió de etapa? → `update_etapa_embudo`
+    - ¿Usé `id_etapa` correcto?
+    - ¿Registré TODO según `informacion_registrar`?
+    - ¿Usé IDs correctos (`info_reg_X`) como claves?
+    - ¿Valores reales y no ejemplos?
+    - ¿Respuesta máxima de 3 líneas orientada al equipo?
+    """
+
+        user_message = (
+            f"Historial de la conversacion: {json.dumps(conversacion_memoria_payload, ensure_ascii=False)} "
+            "--- Use las tools si es necesario"
+        )
         
         # Estado inicial
         initial_state: FunnelAgentState = {
@@ -631,11 +681,11 @@ Antes de responder al equipo:
                 available_tools=[
                     ToolDefinition(
                         tool_name="update_etapa_embudo",
-                        description="Actualiza la etapa del embudo (orden_etapa: int válido)"
+                        description="Actualiza la etapa del embudo usando id_etapa como identificador único"
                     ),
                     ToolDefinition(
                         tool_name="update_metadata",
-                        description="Registra información capturada (POST a actualizar-metadata-v3)"
+                        description="Registra informacion capturada haciendo merge directo en metadata del contacto"
                     ),
                 ],
                 tools_used=final_state.get("tools_used", []),

@@ -309,23 +309,26 @@ def _build_hora_local_optional(now_utc: datetime, timezone_name: str | None) -> 
 
 
 def _build_funnel_stage(contacto: dict | None, etapas_embudo: list[dict]) -> dict:
-    orden_actual = contacto.get("etapa_embudo") if contacto else None
-    if orden_actual is None:
+    etapa_actual_valor = contacto.get("etapa_embudo") if contacto else None
+    if etapa_actual_valor is None:
         return {
             "orden": None,
+            "id": None,
             "nombre": "sin etapa registrada",
             "descripcion": "No hay etapa actual cargada para este contacto.",
         }
     for etapa in etapas_embudo or []:
-        if etapa.get("orden_etapa") == orden_actual:
+        if etapa_actual_valor in {etapa.get("id"), etapa.get("orden_etapa")}:
             return {
-                "orden": orden_actual,
-                "nombre": etapa.get("nombre_etapa") or f"Etapa {orden_actual}",
+                "id": etapa.get("id"),
+                "orden": etapa.get("orden_etapa"),
+                "nombre": etapa.get("nombre_etapa") or f"Etapa {etapa_actual_valor}",
                 "descripcion": etapa.get("descripcion") or "",
             }
     return {
-        "orden": orden_actual,
-        "nombre": f"Etapa {orden_actual}",
+        "id": etapa_actual_valor,
+        "orden": None,
+        "nombre": f"Etapa {etapa_actual_valor}",
         "descripcion": "Etapa actual detectada sin metadata descriptiva.",
     }
 
@@ -511,6 +514,9 @@ def build_kapso_context_payload(
     mensajes_recientes: list[dict],
     etapas_embudo: list[dict],
     notas: list[dict],
+    contexto_embudo_snapshot: dict | None = None,
+    etapas_embudo_snapshot: dict | None = None,
+    conversacion_memoria_snapshot: dict | None = None,
     inbound,
 ) -> tuple[dict, dict]:
     timezone_empresa = determinar_timezone_empresa(empresa)
@@ -665,6 +671,11 @@ def build_kapso_context_payload(
             "🧠 CONTEXTOS ADICIONALES": contextos_dict,
             "🗒️ NOTAS VISIBLES IA": notas_list,
             "🕘 HISTORIAL RECIENTE": historial_reciente,
+            "🧱 CONTEXTO LOCAL NORMALIZADO": {
+                "contexto_embudo": contexto_embudo_snapshot or "No disponible",
+                "etapas_embudo": etapas_embudo_snapshot or "No disponible",
+                "conversacion_memoria": conversacion_memoria_snapshot or "No disponible",
+            },
             "📊 METADATA": {
                 "contacto_id": contacto.get("id") if contacto else None,
                 "empresa_id": contacto.get("empresa_id") if contacto else empresa.get("id") if empresa else None,

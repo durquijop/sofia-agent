@@ -1,12 +1,186 @@
 """Queries Supabase async via httpx pooled client."""
 import asyncio
 from datetime import datetime, timezone
+import json
 import logging
 from typing import Any
 import httpx
 from app.db.client import get_supabase
 
 logger = logging.getLogger(__name__)
+
+MAX_CONTEXT_MESSAGES = 4000
+DEFAULT_CONTEXT_LIMIT = 400
+MIN_CONTEXT_LIMIT = 1
+
+
+def _safe_json_loads(value: Any) -> Any:
+    if isinstance(value, str):
+        raw = value.strip()
+        if raw and raw[0] in "[{":
+            try:
+                return json.loads(raw)
+            except json.JSONDecodeError:
+                return value
+    return value
+
+
+def _contacto_base(contacto: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "contacto_id": contacto.get("id"),
+        "nombre_completo": f"{contacto.get('nombre') or ''} {contacto.get('apellido') or ''}".strip(),
+        "metadata": _safe_json_loads(contacto.get("metadata")) or {},
+    }
+
+
+def _parse_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    dt = datetime.fromisoformat(text)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _format_fecha_hora(value: str | None) -> str | None:
+    dt = _parse_timestamp(value)
+    if dt is None:
+        return None
+    dias_semana = [
+        "Lunes",
+        "Martes",
+        "Miercoles",
+        "Jueves",
+        "Viernes",
+        "Sabado",
+        "Domingo",
+    ]
+    return f"{dias_semana[dt.weekday()]} {dt.strftime('%d/%m/%Y %H:%M')}"
+
+
+def _format_hora(value: str | None) -> str | None:
+    dt = _parse_timestamp(value)
+    if dt is None:
+        return None
+    return dt.strftime("%H:%M:%S")
+
+
+def _calcular_tiempo_respuesta(timestamp_actual: str | None, timestamp_anterior: str | None) -> str | None:
+    actual = _parse_timestamp(timestamp_actual)
+    anterior = _parse_timestamp(timestamp_anterior)
+    if actual is None or anterior is None:
+        return None
+
+    diferencia_segundos = int((actual - anterior).total_seconds())
+    if diferencia_segundos < 0:
+        diferencia_segundos = abs(diferencia_segundos)
+
+    minutos = diferencia_segundos // 60
+    horas = minutos // 60
+    dias = horas // 24
+
+    if dias > 0:
+        return f"{dias}d {horas % 24}h"
+    if horas > 0:
+        return f"{horas}h {minutos % 60}m"
+    if minutos > 0:
+        return f"{minutos}m {diferencia_segundos % 60}s"
+    return f"{diferencia_segundos}s"
+
+
+def _procesar_uso_herramientas(uso_herramientas: Any) -> str | None:
+    if not uso_herramientas:
+        return None
+
+    payload = uso_herramientas
+    if isinstance(payload, str):
+        cleaned = payload.replace("\\", "")
+        try:
+            payload = json.loads(cleaned)
+        except json.JSONDecodeError:
+            return None
+
+    if isinstance(payload, list):
+        herramientas: list[str] = []
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            action = item.get("action")
+            if isinstance(action, dict) and action.get("tool"):
+                herramientas.append(str(action["tool"]))
+            if item.get("tool"):
+                herramientas.append(str(item["tool"]))
+            nombre = item.get("nombre") or item.get("name") or item.get("herramienta")
+            if nombre:
+                herramientas.append(str(nombre))
+        herramientas_unicas = list(dict.fromkeys(herramientas))
+        return ", ".join(herramientas_unicas) if herramientas_unicas else None
+
+    if isinstance(payload, dict):
+        action = payload.get("action")
+        if isinstance(action, dict) and action.get("tool"):
+            return str(action["tool"])
+        if payload.get("tool"):
+            return str(payload["tool"])
+
+    return None
+
+
+def _normalizar_etapa_actual(contacto_stage_value: Any, etapa: dict[str, Any]) -> bool:
+    if contacto_stage_value is None:
+        return False
+    return contacto_stage_value in {etapa.get("id"), etapa.get("orden_etapa")}
+
+
+def _organizar_mensajes_para_contexto(mensajes: list[dict[str, Any]], limite: int) -> list[dict[str, Any]]:
+    if not mensajes:
+        return []
+
+    mensajes_filtrados = [
+        msg
+        for msg in mensajes
+        if (msg.get("contenido") or "").strip() and "❌" not in str(msg.get("contenido") or "")
+    ]
+    mensajes_filtrados.sort(key=lambda msg: _parse_timestamp(msg.get("timestamp")) or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+    mensajes_filtrados = mensajes_filtrados[:limite]
+    mensajes_filtrados.reverse()
+
+    mensajes_procesados: list[dict[str, Any]] = []
+    for index, msg in enumerate(mensajes_filtrados):
+        mensaje_anterior = mensajes_filtrados[index - 1] if index > 0 else None
+        mensajes_procesados.append(
+            {
+                "fecha_hora": _format_fecha_hora(msg.get("timestamp")),
+                "hora": _format_hora(msg.get("timestamp")),
+                "timestamp": msg.get("timestamp"),
+                "remitente": msg.get("remitente") or "desconocido",
+                "mensaje": (msg.get("contenido") or "").strip(),
+                "uso_herramientas": _procesar_uso_herramientas(msg.get("uso_herramientas")),
+                "tiempo_respuesta": _calcular_tiempo_respuesta(
+                    msg.get("timestamp"),
+                    mensaje_anterior.get("timestamp") if mensaje_anterior else None,
+                ),
+                "tipo": msg.get("tipo"),
+                "modelo_llm": msg.get("modelo_llm"),
+            }
+        )
+    return mensajes_procesados
+
+
+def _deep_merge_dicts(base: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in incoming.items():
+        current = merged.get(key)
+        if isinstance(current, dict) and isinstance(value, dict):
+            merged[key] = _deep_merge_dicts(current, value)
+        else:
+            merged[key] = value
+    return merged
 
 
 def _is_missing_table_error(exc: Exception) -> bool:
@@ -113,6 +287,17 @@ async def get_contacto(contacto_id: int) -> dict | None:
     return await sb.query("wp_contactos", filters={"id": contacto_id}, single=True)
 
 
+async def get_contacto_empresa(contacto_id: int, empresa_id: int) -> dict | None:
+    """Obtiene un contacto validando que pertenezca a la empresa."""
+    sb = await get_supabase()
+    return await sb.query(
+        "wp_contactos",
+        select="id,nombre,apellido,etapa_embudo,empresa_id,metadata,telefono,email,fecha_registro,ultima_interaccion,origen,notas,is_active,created_at,updated_at,subscriber_id,avatar_url,etapa_emocional,team_humano_id,timezone,es_calificado,estado,url_drive",
+        filters={"id": contacto_id, "empresa_id": empresa_id},
+        single=True,
+    )
+
+
 async def get_contacto_por_telefono(telefono: str, empresa_id: int) -> dict | None:
     """Busca un contacto por teléfono dentro de una empresa."""
     sb = await get_supabase()
@@ -193,6 +378,17 @@ async def get_conversacion(conversacion_id: int) -> dict | None:
     """Obtiene una conversación por ID."""
     sb = await get_supabase()
     return await sb.query("wp_conversaciones", filters={"id": conversacion_id}, single=True)
+
+
+async def get_conversacion_contexto(conversacion_id: int, empresa_id: int, contacto_id: int) -> dict | None:
+    """Obtiene la conversación usada por el contexto normalizado del agente."""
+    sb = await get_supabase()
+    return await sb.query(
+        "wp_conversaciones",
+        select="id,empresa_id,agente_id,contacto_id,fecha_inicio,canal,resumen,seguimiento,evaluacion",
+        filters={"id": conversacion_id, "empresa_id": empresa_id, "contacto_id": contacto_id},
+        single=True,
+    )
 
 
 async def get_conversacion_activa(contacto_id: int, numero_id: int) -> dict | None:
@@ -436,6 +632,7 @@ async def load_kapso_prompt_context(
     empresa_id: int | None,
     conversacion_id: int | None = None,
     team_id: int | None = None,
+    agente_id: int | None = None,
     agente_rol_id: int | None = None,
     limite_mensajes: int = 8,
 ) -> dict[str, Any]:
@@ -449,8 +646,19 @@ async def load_kapso_prompt_context(
     team_task = get_team_member(team_id) if team_id else _resolved_value(None)
     rol_task = get_agente_rol(agente_rol_id) if agente_rol_id else _resolved_value(None)
     mensajes_task = get_mensajes_recientes(conversacion_id, limit=limite_mensajes) if conversacion_id else _resolved_value([])
+    contexto_local_task = (
+        load_contexto_completo_local(
+            contacto_id=contacto_id,
+            empresa_id=empresa_id,
+            agente_id=agente_id,
+            conversacion_id=conversacion_id,
+            limite_mensajes=limite_mensajes,
+        )
+        if contacto_id and empresa_id
+        else _resolved_value(None)
+    )
 
-    empresa, etapas_embudo, contextos, citas, notificaciones, notas, team_humano, rol_agente, mensajes = await asyncio.gather(
+    empresa, etapas_embudo, contextos, citas, notificaciones, notas, team_humano, rol_agente, mensajes, contexto_local = await asyncio.gather(
         empresa_task,
         etapas_task,
         contextos_task,
@@ -460,6 +668,7 @@ async def load_kapso_prompt_context(
         team_task,
         rol_task,
         mensajes_task,
+        contexto_local_task,
     )
 
     return {
@@ -472,6 +681,163 @@ async def load_kapso_prompt_context(
         "team_humano": team_humano,
         "rol_agente": rol_agente,
         "mensajes_recientes": mensajes,
+        "contexto_embudo_snapshot": (contexto_local or {}).get("contexto_embudo"),
+        "etapas_embudo_snapshot": (contexto_local or {}).get("etapas_embudo"),
+        "conversacion_memoria_snapshot": (contexto_local or {}).get("conversacion_memoria"),
+    }
+
+
+async def load_contexto_completo_local(
+    contacto_id: int,
+    empresa_id: int,
+    agente_id: int | None = None,
+    conversacion_id: int | None = None,
+    limite_mensajes: int = 20,
+) -> dict[str, Any]:
+    """Replica localmente el contexto que antes entregaba la edge function obtener-contexto-completo-v1."""
+    limite = max(MIN_CONTEXT_LIMIT, min(int(limite_mensajes or DEFAULT_CONTEXT_LIMIT), MAX_CONTEXT_MESSAGES))
+
+    contacto_task = get_contacto_empresa(contacto_id, empresa_id)
+    etapas_task = get_empresa_embudo(empresa_id)
+    conversacion_task = (
+        get_conversacion_contexto(conversacion_id, empresa_id, contacto_id)
+        if conversacion_id
+        else _resolved_value(None)
+    )
+    mensajes_task = (
+        get_mensajes_recientes(conversacion_id, limit=min(limite * 2, MAX_CONTEXT_MESSAGES))
+        if conversacion_id
+        else _resolved_value([])
+    )
+
+    contacto, etapas, conversacion, mensajes = await asyncio.gather(
+        contacto_task,
+        etapas_task,
+        conversacion_task,
+        mensajes_task,
+    )
+
+    if not contacto:
+        raise ValueError(f"Contacto no encontrado con ID {contacto_id} en empresa {empresa_id}")
+
+    consultado_en = datetime.now(timezone.utc).isoformat()
+    info_contacto = _contacto_base(contacto)
+
+    todas_las_etapas: list[dict[str, Any]] = []
+    etapa_actual_completa: dict[str, Any] | None = None
+    tiene_embudo = bool(etapas)
+    contacto_stage_value = contacto.get("etapa_embudo")
+
+    for etapa in etapas or []:
+        descripcion = etapa.get("descripcion") or {}
+        descripcion_filtrada: dict[str, Any] = {}
+        if isinstance(descripcion, dict):
+            if descripcion.get("que_es") is not None:
+                descripcion_filtrada["que_es"] = descripcion.get("que_es")
+            if descripcion.get("senales") is not None:
+                descripcion_filtrada["senales"] = descripcion.get("senales")
+            if descripcion.get("metadata") is not None:
+                descripcion_filtrada["metadata"] = descripcion.get("metadata")
+            if descripcion.get("informacion_registrar") is not None:
+                descripcion_filtrada["informacion_registrar"] = descripcion.get("informacion_registrar")
+
+        es_etapa_actual = _normalizar_etapa_actual(contacto_stage_value, etapa)
+        todas_las_etapas.append(
+            {
+                "id": etapa.get("id"),
+                "nombre_etapa": etapa.get("nombre_etapa"),
+                "orden_etapa": etapa.get("orden_etapa"),
+                "descripcion": descripcion_filtrada,
+                "es_etapa_actual": es_etapa_actual,
+            }
+        )
+
+        if es_etapa_actual and etapa_actual_completa is None:
+            etapa_actual_completa = {
+                "id": etapa.get("id"),
+                "orden": etapa.get("orden_etapa"),
+                "nombre": etapa.get("nombre_etapa"),
+                **descripcion,
+            }
+
+    mensajes_organizados = _organizar_mensajes_para_contexto(mensajes or [], limite)
+    conversacion_data: dict[str, Any]
+    if conversacion:
+        conversacion_data = {
+            "id": conversacion.get("id"),
+            "empresa_id": conversacion.get("empresa_id"),
+            "agente_id": conversacion.get("agente_id"),
+            "contacto_id": conversacion.get("contacto_id"),
+            "fecha_inicio": conversacion.get("fecha_inicio"),
+            "canal": conversacion.get("canal"),
+            "resumen": conversacion.get("resumen"),
+            "seguimiento": conversacion.get("seguimiento"),
+            "evaluacion": conversacion.get("evaluacion"),
+            "total_mensajes": len(mensajes or []),
+            "mensajes_retornados": len(mensajes_organizados),
+            "mensajes": mensajes_organizados,
+        }
+    else:
+        conversacion_data = {
+            "id": conversacion_id,
+            "total_mensajes": 0,
+            "mensajes_retornados": 0,
+            "mensajes": [],
+        }
+
+    contexto_embudo = {
+        "success": True,
+        "data": {
+            "informacion_contacto": {
+                **info_contacto,
+                "telefono": contacto.get("telefono"),
+                "etapa_actual_orden": contacto_stage_value,
+            },
+            "etapa_actual": etapa_actual_completa,
+            "tiene_embudo": tiene_embudo,
+            "total_etapas": len(todas_las_etapas),
+            "todas_etapas": todas_las_etapas,
+        },
+        "metadata": {
+            "consultado_en": consultado_en,
+            **({"agente_id": agente_id} if agente_id is not None else {}),
+        },
+    }
+
+    etapas_embudo = {
+        "success": True,
+        "data": {
+            "contacto": {
+                "id": contacto.get("id"),
+                "nombre_completo": info_contacto.get("nombre_completo"),
+                "telefono": contacto.get("telefono"),
+                "etapa_actual_orden": contacto_stage_value,
+            },
+            "empresa_id": empresa_id,
+            "tiene_embudo": tiene_embudo,
+            "total_etapas": len(todas_las_etapas),
+            "etapas": todas_las_etapas,
+        },
+        "metadata": {
+            "consultado_en": consultado_en,
+            **({"agente_id": agente_id} if agente_id is not None else {}),
+        },
+    }
+
+    conversacion_memoria = {
+        "success": True,
+        "data": conversacion_data,
+        "metadata": {
+            "consultado_en": consultado_en,
+            **({"agente_id": agente_id} if agente_id is not None else {}),
+        },
+    }
+
+    return {
+        "success": True,
+        "contexto_embudo": contexto_embudo,
+        "etapas_embudo": etapas_embudo,
+        "conversacion_memoria": conversacion_memoria,
     }
 
 
@@ -557,13 +923,13 @@ async def registrar_actividad(
 
 # ─── Embudo (Funnel) ────────────────────────────────────────────────────────
 
-async def actualizar_etapa_contacto(contacto_id: int, nueva_etapa_orden: int) -> dict | None:
-    """Actualiza la etapa del embudo de un contacto."""
+async def actualizar_etapa_contacto(contacto_id: int, nueva_etapa_id: int) -> dict | None:
+    """Actualiza la etapa del embudo de un contacto usando el id de la etapa."""
     sb = await get_supabase()
     await sb.update(
         "wp_contactos",
         {"id": contacto_id},
-        {"etapa_embudo": nueva_etapa_orden},
+        {"etapa_embudo": nueva_etapa_id},
     )
     return await get_contacto(contacto_id)
 
@@ -575,8 +941,8 @@ async def actualizar_metadata_contacto(contacto_id: int, nueva_metadata: dict[st
     if not contacto_actual:
         return None
     
-    metadata_existente = contacto_actual.get("metadata") or {}
-    metadata_merged = {**metadata_existente, **nueva_metadata}
+    metadata_existente = _safe_json_loads(contacto_actual.get("metadata")) or {}
+    metadata_merged = _deep_merge_dicts(metadata_existente, nueva_metadata)
     
     await sb.update(
         "wp_contactos",

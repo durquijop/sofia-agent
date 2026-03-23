@@ -545,6 +545,7 @@ async def kapso_inbound(
             empresa_id=empresa_id,
             conversacion_id=conversacion_db_id,
             team_id=int(contacto["team_humano_id"]) if contacto and contacto.get("team_humano_id") is not None else None,
+            agente_id=int(agent["id"]) if agent.get("id") is not None else None,
             agente_rol_id=int(agent["id_rol"]) if agent.get("id_rol") is not None else None,
             limite_mensajes=8,
         )
@@ -560,6 +561,9 @@ async def kapso_inbound(
             mensajes_recientes=prompt_context_data.get("mensajes_recientes") or [],
             etapas_embudo=prompt_context_data.get("etapas_embudo") or [],
             notas=prompt_context_data.get("notas") or [],
+            contexto_embudo_snapshot=prompt_context_data.get("contexto_embudo_snapshot"),
+            etapas_embudo_snapshot=prompt_context_data.get("etapas_embudo_snapshot"),
+            conversacion_memoria_snapshot=prompt_context_data.get("conversacion_memoria_snapshot"),
             inbound=request,
         )
 

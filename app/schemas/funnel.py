@@ -47,6 +47,9 @@ class FunnelContextResponse(BaseModel):
     tiene_embudo: bool = False
     conversacion_resumen: Optional[str] = None
     ultimos_mensajes: Optional[list[dict]] = None
+    contexto_embudo: Optional[dict] = None
+    etapas_embudo: Optional[dict] = None
+    conversacion_memoria: Optional[dict] = None
 
 
 class FunnelAgentRequest(BaseModel):
