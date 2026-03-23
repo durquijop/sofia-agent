@@ -154,6 +154,30 @@ def _normalizar_etapa_actual(contacto_stage_value: Any, etapa: dict[str, Any]) -
     return contacto_stage_value in {etapa.get("id"), etapa.get("orden_etapa")}
 
 
+def _metadata_stage_value(metadata: Any) -> Any:
+    metadata_dict = _safe_json_loads(metadata) or {}
+    if not isinstance(metadata_dict, dict):
+        return None
+    etapa_actual = metadata_dict.get("etapa_actual")
+    if not isinstance(etapa_actual, dict):
+        return None
+    embudo = etapa_actual.get("embudo")
+    if not isinstance(embudo, dict):
+        return None
+    for key in ("etapa_id", "id", "orden_etapa"):
+        value = embudo.get(key)
+        if value is not None:
+            return value
+    return None
+
+
+def _resolved_stage_order(contacto_stage_value: Any, etapas: list[dict[str, Any]]) -> Any:
+    for etapa in etapas or []:
+        if _normalizar_etapa_actual(contacto_stage_value, etapa):
+            return etapa.get("orden_etapa")
+    return contacto_stage_value
+
+
 def _organizar_mensajes_para_contexto(mensajes: list[dict[str, Any]], limite: int) -> list[dict[str, Any]]:
     if not mensajes:
         return []
@@ -752,7 +776,10 @@ async def load_contexto_completo_local(
     todas_las_etapas: list[dict[str, Any]] = []
     etapa_actual_completa: dict[str, Any] | None = None
     tiene_embudo = bool(etapas)
-    contacto_stage_value = contacto.get("etapa_embudo")
+    contacto_stage_value = _metadata_stage_value(contacto.get("metadata"))
+    if contacto_stage_value is None:
+        contacto_stage_value = contacto.get("etapa_embudo")
+    contacto_stage_order = _resolved_stage_order(contacto_stage_value, etapas or [])
 
     for etapa in etapas or []:
         descripcion = etapa.get("descripcion") or {}
@@ -816,7 +843,7 @@ async def load_contexto_completo_local(
         "data": {
             "informacion_contacto": {
                 **info_contacto,
-                "etapa_actual_orden": contacto_stage_value,
+                    "etapa_actual_orden": contacto_stage_order,
             },
             "etapa_actual": etapa_actual_completa,
             "tiene_embudo": tiene_embudo,
@@ -840,7 +867,7 @@ async def load_contexto_completo_local(
                 "telefono": info_contacto.get("telefono"),
                 "email": info_contacto.get("email"),
                 "origen": info_contacto.get("origen"),
-                "etapa_actual_orden": contacto_stage_value,
+                "etapa_actual_orden": contacto_stage_order,
             },
             "empresa_id": empresa_id,
             "tiene_embudo": tiene_embudo,

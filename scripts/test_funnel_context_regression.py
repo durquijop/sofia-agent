@@ -475,7 +475,7 @@ async def test_funnel_user_prompt_does_not_fallback_to_wp_messages_when_memory_i
     assert '- Agustin Peralta Guarin' not in prompt
 
 
-async def test_run_funnel_agent_executes_stage_and_metadata_updates() -> None:
+async def test_run_funnel_agent_persists_stage_inside_metadata_only() -> None:
     snapshot = {
         "contexto_embudo": {
             "success": True,
@@ -548,7 +548,6 @@ async def test_run_funnel_agent_executes_stage_and_metadata_updates() -> None:
         },
     }
     request = FunnelAgentRequest(contacto_id=133678, empresa_id=4, agente_id=7, conversacion_id=64368)
-    recorded_stage_updates: list[tuple[int, int]] = []
     recorded_metadata_updates: list[tuple[int, dict]] = []
 
     class DummyLLM:
@@ -572,26 +571,15 @@ async def test_run_funnel_agent_executes_stage_and_metadata_updates() -> None:
                                     "info_reg_2": "Por la tarde",
                                 },
                                 "seccion": "etapa_actual",
+                                "id_etapa": 23,
+                                "razon_etapa": "El prospecto ya compartio correo y preferencia horaria",
                             },
                             "id": "tool-metadata",
-                            "type": "tool_call",
-                        },
-                        {
-                            "name": "update_etapa_embudo",
-                            "args": {
-                                "id_etapa": 23,
-                                "razon": "El prospecto ya compartio correo y preferencia horaria",
-                            },
-                            "id": "tool-stage",
                             "type": "tool_call",
                         },
                     ],
                 )
             return AIMessage(content="Etapa y metadata actualizadas")
-
-    async def fake_update_stage(contacto_id: int, nueva_etapa_id: int):
-        recorded_stage_updates.append((contacto_id, nueva_etapa_id))
-        return {"id": contacto_id, "etapa_embudo": nueva_etapa_id}
 
     async def fake_update_metadata(contacto_id: int, nueva_metadata: dict):
         recorded_metadata_updates.append((contacto_id, nueva_metadata))
@@ -599,25 +587,37 @@ async def test_run_funnel_agent_executes_stage_and_metadata_updates() -> None:
 
     with patch("app.agents.funnel.db.load_contexto_completo_local", return_value=snapshot), patch(
         "app.agents.funnel._create_llm", return_value=DummyLLM()
-    ), patch("app.agents.funnel.db.actualizar_etapa_contacto", side_effect=fake_update_stage), patch(
-        "app.agents.funnel.db.actualizar_metadata_contacto", side_effect=fake_update_metadata
     ):
-        response = await run_funnel_agent(request)
+        with patch("app.agents.funnel.db.actualizar_metadata_contacto", side_effect=fake_update_metadata):
+            response = await run_funnel_agent(request)
 
     assert response.success is True
     assert response.etapa_nueva == 23
-    assert response.metadata_actualizada == {
+    assert response.metadata_actualizada is not None
+    assert response.metadata_actualizada["informacion_capturada"] == {
         "info_reg_1": "apg@urpeailab.com",
         "info_reg_2": "Por la tarde",
     }
-    assert recorded_stage_updates == [(133678, 23)]
+    assert response.metadata_actualizada["embudo"] == {
+        "etapa_id": 23,
+        "etapa_nombre": "Agendamiento",
+        "orden_etapa": 3,
+        "razon": "El prospecto ya compartio correo y preferencia horaria",
+    }
+    assert response.metadata_actualizada.get("actualizado_en")
     assert recorded_metadata_updates
     assert recorded_metadata_updates[0][0] == 133678
     assert recorded_metadata_updates[0][1]["etapa_actual"]["informacion_capturada"] == {
         "info_reg_1": "apg@urpeailab.com",
         "info_reg_2": "Por la tarde",
     }
-    assert {tool.tool_name for tool in response.tools_used} == {"update_metadata", "update_etapa_embudo"}
+    assert recorded_metadata_updates[0][1]["etapa_actual"]["embudo"] == {
+        "etapa_id": 23,
+        "etapa_nombre": "Agendamiento",
+        "orden_etapa": 3,
+        "razon": "El prospecto ya compartio correo y preferencia horaria",
+    }
+    assert {tool.tool_name for tool in response.tools_used} == {"update_metadata"}
     assert all(tool.status == "ok" for tool in response.tools_used)
 
 
@@ -631,7 +631,7 @@ async def main() -> int:
     await test_funnel_user_prompt_compacts_transcript_and_keeps_key_data()
     await test_funnel_user_prompt_uses_persistent_agent_memory_turns()
     await test_funnel_user_prompt_does_not_fallback_to_wp_messages_when_memory_is_empty()
-    await test_run_funnel_agent_executes_stage_and_metadata_updates()
+    await test_run_funnel_agent_persists_stage_inside_metadata_only()
     print("OK - funnel regression tests passed")
     return 0
 

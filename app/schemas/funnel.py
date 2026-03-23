@@ -86,7 +86,7 @@ class FunnelAgentResponse(BaseModel):
     success: bool = True
     respuesta: str = Field(..., description="Respuesta del agente para el equipo (máx 3 líneas)")
     etapa_anterior: Optional[str] = None
-    etapa_nueva: Optional[int] = None  # Tipo: int (orden_etapa)
+    etapa_nueva: Optional[int] = None  # Tipo: int (id de etapa guardado en metadata)
     metadata_actualizada: Optional[dict] = None
     tools_used: list[ToolCall] = Field(default_factory=list)
     timing: TimingInfo = Field(default_factory=lambda: TimingInfo(total_ms=0))

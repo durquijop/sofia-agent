@@ -366,6 +366,34 @@ def _build_temporal_context() -> str:
     )
 
 
+def _build_metadata_update_payload(
+    context: FunnelContextResponse,
+    informacion_capturada: dict,
+    seccion: str,
+    id_etapa: int | None = None,
+    razon_etapa: str | None = None,
+) -> tuple[dict, int | None]:
+    payload: dict = {
+        seccion: {
+            "informacion_capturada": informacion_capturada,
+            "actualizado_en": str(time.time()),
+        }
+    }
+    etapa_nueva: int | None = None
+    if id_etapa is not None:
+        etapa_objetivo = _resolve_stage_by_id(context, int(id_etapa))
+        if etapa_objetivo is None:
+            raise ValueError(f"Etapa {id_etapa} no es válida en este embudo")
+        payload[seccion]["embudo"] = {
+            "etapa_id": etapa_objetivo.id,
+            "etapa_nombre": etapa_objetivo.nombre_etapa,
+            "orden_etapa": etapa_objetivo.orden_etapa,
+            "razon": razon_etapa or "Cambio identificado por agente",
+        }
+        etapa_nueva = etapa_objetivo.id
+    return payload, etapa_nueva
+
+
 def _build_funnel_system_prompt(
     context: FunnelContextResponse,
     etapas_payload: list[dict],
@@ -386,7 +414,7 @@ Eres un analista conversacional que identifica etapas del embudo y registra info
 
 ## Objetivos:
 - **IDENTIFICAR** etapa actual del prospecto
-- **ACTUALIZAR** etapa usando `update_etapa_embudo`
+- **ACTUALIZAR** el estado del embudo dentro de metadata usando `update_metadata`
 - **REGISTRAR** información usando `update_metadata`
 
 # Datos claves
@@ -424,10 +452,8 @@ Cada etapa tiene:
 
 # HERRAMIENTAS
 
-## 1. `update_etapa_embudo`
-Usa `id_etapa` como identificador único para actualizar la etapa del contacto.
-
-## 2. `update_metadata`
+## 1. `update_metadata`
+Usa esta tool para registrar toda la información del usuario y, si aplica, también la etapa objetivo del embudo dentro de metadata.
 
 ### Cuándo usar:
 - ✅ Después de actualizar etapa
@@ -438,6 +464,7 @@ Usa `id_etapa` como identificador único para actualizar la etapa del contacto.
 
 - Úsalas solo si tienes algo para actualizar
 - Si el nuevo mensaje es irrelevante y ya tienes la metadata actualizada, solo genera un output con un "ok"
+- Si cambió la etapa, incluye `id_etapa` y `razon_etapa` en la misma llamada a `update_metadata`
 
 ---
 
@@ -476,6 +503,7 @@ informacion_capturada.info_reg_2: ¿Cuánto cuesta?
 - ✅ Nuevos campos se agregan
 - ✅ Valores existentes se actualizan
 - ✅ Secciones se mantienen separadas
+- ✅ La etapa del embudo también se guarda en metadata bajo `etapa_actual.embudo`
 
 ---
 
@@ -492,14 +520,14 @@ informacion_capturada.info_reg_2: ¿Cuánto cuesta?
 ## Reglas extras:
 
 - Si la empresa no tiene embudo creado, no asignar etapa al contacto
-- Si no ha cambiado nada, no actualices ni la metadata ni la etapa
+- Si no ha cambiado nada, no actualices metadata
 
 ## CHECKLIST FINAL
 
 Antes de responder:
 
-- ¿Cambió de etapa? → `update_etapa_embudo` + `update_metadata`
-- ¿Usé `id_etapa` correcto?
+- ¿Cambió de etapa? → `update_metadata` con `id_etapa`
+- ¿Usé `id_etapa` correcto dentro de metadata?
 - ¿Registré TODO según `informacion_registrar`?
 - ¿Usé IDs correctos (`info_reg_X`) como claves?
 - ¿JSON válido con comillas dobles?
@@ -714,43 +742,31 @@ def _build_graph(llm_with_tools, context: FunnelContextResponse, requestData: Fu
             result = None
 
             try:
-                if tool_name == "update_etapa_embudo":
-                    id_etapa = tool_input.get("id_etapa")
-                    razon = tool_input.get("razon", "Cambio identificado por agente")
-                    etapa_objetivo = _resolve_stage_by_id(context, int(id_etapa)) if id_etapa is not None else None
-                    if etapa_objetivo is None:
-                        raise ValueError(f"Etapa {id_etapa} no es válida en este embudo")
-
-                    contacto_actualizado = await db.actualizar_etapa_contacto(
-                        contacto_id=requestData.contacto_id,
-                        nueva_etapa_id=etapa_objetivo.id,
-                    )
-                    etapa_nueva = etapa_objetivo.id
-                    result = (
-                        f"✓ Etapa actualizada a {etapa_objetivo.nombre_etapa} (id={etapa_objetivo.id}, orden={etapa_objetivo.orden_etapa}): {razon}"
-                        if contacto_actualizado
-                        else "Error al actualizar etapa"
-                    )
-
-                elif tool_name == "update_metadata":
+                if tool_name == "update_metadata":
                     informacion_capturada = tool_input.get("informacion_capturada", {})
                     seccion = tool_input.get("seccion", "etapa_actual")
-                    if not informacion_capturada:
+                    id_etapa = tool_input.get("id_etapa")
+                    razon_etapa = tool_input.get("razon_etapa", "Cambio identificado por agente")
+                    if not informacion_capturada and id_etapa is None:
                         result = "Sin cambios de metadata: no se capturó información nueva"
                     else:
-                        metadata_json = {
-                            seccion: {
-                                "informacion_capturada": informacion_capturada,
-                                "actualizado_en": str(time.time()),
-                            }
-                        }
+                        metadata_json, etapa_nueva = _build_metadata_update_payload(
+                            context=context,
+                            informacion_capturada=informacion_capturada,
+                            seccion=seccion,
+                            id_etapa=id_etapa,
+                            razon_etapa=razon_etapa,
+                        )
                         contacto_actualizado = await db.actualizar_metadata_contacto(
                             contacto_id=requestData.contacto_id,
                             nueva_metadata=metadata_json,
                         )
                         if contacto_actualizado:
-                            metadata_actualizada = informacion_capturada
-                            result = f"✓ Metadata registrada en BD: {len(informacion_capturada)} campos capturados"
+                            metadata_actualizada = metadata_json.get(seccion, {})
+                            if etapa_nueva is not None:
+                                result = "✓ Metadata y etapa del embudo registradas en BD"
+                            else:
+                                result = f"✓ Metadata registrada en BD: {len(informacion_capturada)} campos capturados"
                         else:
                             result = "Error al actualizar metadata en BD"
 
@@ -849,60 +865,38 @@ async def run_funnel_agent(request: FunnelAgentRequest) -> FunnelAgentResponse:
         
         # Definir herramientas que el LLM puede usar
         @tool
-        async def update_etapa_embudo(id_etapa: int, razon: str = "Cambio identificado por agente") -> str:
+        async def update_metadata(
+            informacion_capturada: dict,
+            seccion: str = "etapa_actual",
+            id_etapa: int | None = None,
+            razon_etapa: str = "Cambio identificado por agente",
+        ) -> str:
             """
-            Actualiza la etapa del embudo del contacto.
-            
-            Args:
-                id_etapa: ID único de la nueva etapa (válido en el contexto)
-                razon: Razón del cambio
-            
-            Returns:
-                Confirmación de la actualización
-            """
-            logger.info(f"Tool: update_etapa_embudo({id_etapa}, {razon})")
-            try:
-                etapa_objetivo = _resolve_stage_by_id(context, id_etapa)
-                if not etapa_objetivo:
-                    return f"Error: Etapa {id_etapa} no es válida en este embudo"
-                
-                contacto_actualizado = await db.actualizar_etapa_contacto(
-                    contacto_id=request.contacto_id,
-                    nueva_etapa_id=etapa_objetivo.id,
-                )
-                
-                if contacto_actualizado:
-                    logger.info(f"Contacto {request.contacto_id} actualizado a etapa id={etapa_objetivo.id}")
-                    return f"✓ Etapa actualizada a {etapa_objetivo.nombre_etapa} (id={etapa_objetivo.id}): {razon}"
-                else:
-                    return "Error: No se pudo actualizar la etapa"
-            except Exception as e:
-                logger.error(f"Error en update_etapa_embudo: {e}")
-                return f"Error: {str(e)}"
-        
-        @tool
-        async def update_metadata(informacion_capturada: dict, seccion: str = "etapa_actual") -> str:
-            """
-            Registra TODA la información capturada en la conversación según la etapa actual.
+            Registra TODA la información capturada y, si aplica, también la etapa del embudo dentro de metadata.
             
             Args:
                 informacion_capturada: Diccionario con los campos capturados (ej: {"info_reg_1": "valor", "info_reg_2": "valor"})
                 seccion: Sección de metadata donde guardar (default: etapa_actual)
+                id_etapa: ID único de la etapa objetivo, si hubo cambio de etapa
+                razon_etapa: Razón del cambio de etapa guardado en metadata
             
             Returns:
                 Confirmación de la actualización
             """
-            logger.info(f"Tool: update_metadata(campos={len(informacion_capturada)}, seccion={seccion})")
+            logger.info(
+                f"Tool: update_metadata(campos={len(informacion_capturada)}, seccion={seccion}, id_etapa={id_etapa})"
+            )
             try:
-                if not informacion_capturada:
+                if not informacion_capturada and id_etapa is None:
                     return "Sin cambios de metadata: no se capturó información nueva"
 
-                metadata_json = {
-                    seccion: {
-                        "informacion_capturada": informacion_capturada,
-                        "actualizado_en": str(time.time()),
-                    }
-                }
+                metadata_json, etapa_nueva = _build_metadata_update_payload(
+                    context=context,
+                    informacion_capturada=informacion_capturada,
+                    seccion=seccion,
+                    id_etapa=id_etapa,
+                    razon_etapa=razon_etapa,
+                )
 
                 contacto_actualizado = await db.actualizar_metadata_contacto(
                     contacto_id=request.contacto_id,
@@ -910,6 +904,8 @@ async def run_funnel_agent(request: FunnelAgentRequest) -> FunnelAgentResponse:
                 )
                 if contacto_actualizado:
                     logger.info(f"Metadata actualizada en BD para contacto {request.contacto_id}")
+                    if etapa_nueva is not None:
+                        return "✓ Metadata y etapa del embudo registradas en BD"
                     return f"✓ Metadata registrada en BD: {len(informacion_capturada)} campos capturados"
                 return "Error al actualizar metadata en BD"
             except Exception as e:
@@ -918,7 +914,7 @@ async def run_funnel_agent(request: FunnelAgentRequest) -> FunnelAgentResponse:
         
         # Crear LLM y bindearlo con las herramientas
         llm = _create_llm(model, max_tokens, temperature)
-        tools = [update_etapa_embudo, update_metadata]
+        tools = [update_metadata]
         llm_with_tools = llm.bind_tools(tools)
         
         # Construir grafo
@@ -1012,12 +1008,8 @@ async def run_funnel_agent(request: FunnelAgentRequest) -> FunnelAgentResponse:
                 user_prompt=user_message,
                 available_tools=[
                     ToolDefinition(
-                        tool_name="update_etapa_embudo",
-                        description="Actualiza la etapa del embudo usando id_etapa como identificador único"
-                    ),
-                    ToolDefinition(
                         tool_name="update_metadata",
-                        description="Registra informacion capturada haciendo merge directo en metadata del contacto"
+                        description="Registra informacion capturada y la etapa del embudo haciendo merge directo en metadata del contacto"
                     ),
                 ],
                 tools_used=final_state.get("tools_used", []),
