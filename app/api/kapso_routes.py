@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/kapso", tags=["kapso"])
 DEFAULT_KAPSO_FALLBACK_PHONE = "14705500109"
 DEFAULT_KAPSO_FALLBACK_AGENT_ID = 4
+FUNNEL_TIMEOUT_SECONDS = 25
 MULTIMEDIA_EXTENSIONS = (
     ".ogg",
     ".mp3",
@@ -295,9 +296,13 @@ async def _run_both_agents(
             )
         )
 
+    funnel_awaitable = asyncio.sleep(0, result=None)
+    if funnel_task is not None:
+        funnel_awaitable = asyncio.wait_for(funnel_task, timeout=FUNNEL_TIMEOUT_SECONDS)
+
     results = await asyncio.gather(
         conversational_task,
-        funnel_task if funnel_task is not None else asyncio.sleep(0, result=None),
+        funnel_awaitable,
         return_exceptions=True,
     )
     conversational_result = results[0]

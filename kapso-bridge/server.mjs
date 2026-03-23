@@ -481,6 +481,8 @@ function renderKapsoBasicHtml(debugData) {
         <summary>${escapeHtml(item.contact_name || item.from_phone || item.message_id || `Interacción ${index + 1}`)} · ${escapeHtml(item.status || 'processing')} · ${escapeHtml(item.duration_ms != null ? `${item.duration_ms} ms` : '—')}</summary>
         <div style="margin-top:12px">
           <div style="margin-bottom:8px"><strong>Message ID:</strong> ${escapeHtml(item.message_id || '—')}</div>
+          <div style="margin:12px 0 6px"><strong>Error</strong></div>
+          <pre>${escapeHtml(item.error || '—')}</pre>
           <div style="margin-bottom:8px"><strong>Mensaje:</strong></div>
           <pre>${escapeHtml(item.message_text || '—')}</pre>
           <div style="margin:12px 0 6px"><strong>Respuesta preview</strong></div>
