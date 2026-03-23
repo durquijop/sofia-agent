@@ -42,7 +42,7 @@ _llm_cache: dict[str, ChatOpenAI] = {}
 _shared_http_client: httpx.AsyncClient | None = None
 
 MAX_CONVERSATIONAL_LLM_ITERATIONS = 4
-AGENT_GRAPH_TIMEOUT_SECONDS = 60
+AGENT_GRAPH_TIMEOUT_SECONDS = 90
 MCP_DISCOVERY_TIMEOUT_SECONDS = 15
 
 
@@ -566,18 +566,23 @@ async def run_agent(request: ChatRequest) -> ChatResponse:
         "short_circuit_response": None,
     }
 
+    timed_out = False
     try:
         final_state = await asyncio.wait_for(
             compiled.ainvoke(initial_state),
             timeout=AGENT_GRAPH_TIMEOUT_SECONDS,
         )
-    except asyncio.TimeoutError as exc:
-        raise TimeoutError(f"run_agent excedió {AGENT_GRAPH_TIMEOUT_SECONDS}s") from exc
+    except asyncio.TimeoutError:
+        logger.warning("run_agent timeout after %ss — returning partial response", AGENT_GRAPH_TIMEOUT_SECONDS)
+        timed_out = True
+        final_state = initial_state  # fallback to initial state
 
     # Extraer respuesta final
     short_circuit_response = final_state.get("short_circuit_response")
     if short_circuit_response:
         response_text = short_circuit_response
+    elif timed_out:
+        response_text = ""
     else:
         last_message = final_state["messages"][-1]
         response_text = str(last_message.content or "") if isinstance(last_message, AIMessage) else ""
