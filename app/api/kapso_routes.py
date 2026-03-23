@@ -203,6 +203,39 @@ def _merge_agent_runs(conversational_runs: list[AgentRunTrace], funnel_runs: lis
     return [*list(conversational_runs or []), *list(funnel_runs or [])]
 
 
+def _build_funnel_error_response(
+    *,
+    model: str | None,
+    conversacion_db_id: int | None,
+    error_text: str,
+    timing: TimingInfo | None = None,
+    tools_used: list[ToolCall] | None = None,
+) -> FunnelAgentResponse:
+    safe_timing = timing or TimingInfo(total_ms=0)
+    trace = AgentRunTrace(
+        agent_key="funnel_agent",
+        agent_name="Agente de Embudo",
+        agent_kind="analysis_error",
+        conversation_id=str(conversacion_db_id) if conversacion_db_id else None,
+        memory_session_id=None,
+        model_used=model or get_settings().DEFAULT_MODEL,
+        system_prompt="",
+        user_prompt="",
+        available_tools=[],
+        tools_used=list(tools_used or []),
+        timing=safe_timing,
+        llm_iterations=0,
+    )
+    return FunnelAgentResponse(
+        success=False,
+        respuesta="Error al procesar el agente de embudo",
+        error=error_text,
+        timing=safe_timing,
+        tools_used=list(tools_used or []),
+        agent_runs=[trace],
+    )
+
+
 async def _run_both_agents(
     *,
     started_at: float,
@@ -258,11 +291,22 @@ async def _run_both_agents(
 
     if isinstance(funnel_result, Exception):
         logger.warning("Kapso inbound: funnel agent fallo pero la respuesta conversacional continua: %s", funnel_result, exc_info=True)
-        funnel_result = None
+        funnel_result = _build_funnel_error_response(
+            model=model,
+            conversacion_db_id=conversacion_db_id,
+            error_text=str(funnel_result),
+        )
 
     if isinstance(funnel_result, FunnelAgentResponse) and not funnel_result.success:
         logger.warning("Kapso inbound: funnel agent devolvio success=false: %s", funnel_result.error)
-        funnel_result = None
+        if not funnel_result.agent_runs:
+            funnel_result = _build_funnel_error_response(
+                model=model,
+                conversacion_db_id=conversacion_db_id,
+                error_text=funnel_result.error or "Funnel agent devolvio success=false",
+                timing=funnel_result.timing,
+                tools_used=funnel_result.tools_used,
+            )
 
     merged_timing = _merge_timings(
         started_at,
