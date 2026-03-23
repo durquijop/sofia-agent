@@ -646,6 +646,8 @@ canvas{display:block;position:absolute;top:0;left:0}
 const C=document.getElementById('c'),X=C.getContext('2d'),TT=document.getElementById('tooltip');
 const LOADER=document.getElementById('loader');
 let W,H,mx=-1,my=-1,hovered=null,dragging=null,dragOff={x:0,y:0},t=0,dpr=1;
+let prevMx=0,prevMy=0,dragVx=0,dragVy=0;
+const DAMPING=0.985,DRIFT=0.00004,BOUNCE_MARGIN=0.05,MAX_SPEED=0.004;
 
 let NODES=[], EDGES=[];
 
@@ -654,6 +656,13 @@ const _injected = ${injectedData};
 if(_injected && _injected.nodes){
   NODES=_injected.nodes;
   EDGES=_injected.edges||[];
+  /* Init physics: velocity + unique drift angle per node */
+  NODES.forEach(n=>{
+    n.vx=(Math.random()-.5)*0.0008;
+    n.vy=(Math.random()-.5)*0.0008;
+    n.driftAngle=Math.random()*6.28;
+    n.driftSpeed=0.3+Math.random()*0.5;
+  });
   if(LOADER)LOADER.style.display='none';
 }else{
   if(LOADER)LOADER.textContent='Grafo no disponible — reinicia el servidor Python';
@@ -679,8 +688,31 @@ window.addEventListener('resize',resize);resize();
 
 function nodePos(n){return{x:n.x*W,y:n.y*H}}
 
+function physics(){
+  for(const n of NODES){
+    if(n===dragging)continue;
+    /* gentle wandering drift */
+    n.driftAngle+=0.002*n.driftSpeed;
+    n.vx+=Math.cos(n.driftAngle)*DRIFT;
+    n.vy+=Math.sin(n.driftAngle)*DRIFT;
+    /* damping */
+    n.vx*=DAMPING; n.vy*=DAMPING;
+    /* clamp speed */
+    const spd=Math.sqrt(n.vx*n.vx+n.vy*n.vy);
+    if(spd>MAX_SPEED){n.vx*=MAX_SPEED/spd;n.vy*=MAX_SPEED/spd;}
+    /* apply velocity */
+    n.x+=n.vx; n.y+=n.vy;
+    /* soft bounce off edges */
+    if(n.x<BOUNCE_MARGIN){n.x=BOUNCE_MARGIN;n.vx=Math.abs(n.vx)*.5;}
+    if(n.x>1-BOUNCE_MARGIN){n.x=1-BOUNCE_MARGIN;n.vx=-Math.abs(n.vx)*.5;}
+    if(n.y<BOUNCE_MARGIN){n.y=BOUNCE_MARGIN;n.vy=Math.abs(n.vy)*.5;}
+    if(n.y>1-BOUNCE_MARGIN){n.y=1-BOUNCE_MARGIN;n.vy=-Math.abs(n.vy)*.5;}
+  }
+}
+
 function draw(){
   t+=.002;
+  physics();
   X.clearRect(0,0,W,H);
 
   // Deep space gradient
@@ -811,9 +843,12 @@ C.addEventListener('mousedown',e=>{
   const hit=hitTest(e.clientX,e.clientY);
   if(hit){
     dragging=hit;
+    hit.vx=0;hit.vy=0;
     const p=nodePos(hit);
     dragOff.x=e.clientX-p.x;
     dragOff.y=e.clientY-p.y;
+    prevMx=e.clientX;prevMy=e.clientY;
+    dragVx=0;dragVy=0;
     TT.style.display='none';
   }
 });
@@ -823,6 +858,10 @@ C.addEventListener('mousemove',e=>{
   if(dragging){
     dragging.x=(mx-dragOff.x)/W;
     dragging.y=(my-dragOff.y)/H;
+    /* track drag velocity for momentum on release */
+    dragVx=0.7*dragVx+0.3*(mx-prevMx)/W;
+    dragVy=0.7*dragVy+0.3*(my-prevMy)/H;
+    prevMx=mx;prevMy=my;
     C.style.cursor='grabbing';
     TT.style.display='none';
     return;
@@ -846,8 +885,20 @@ C.addEventListener('mousemove',e=>{
     TT.style.display='none';
   }
 });
-window.addEventListener('mouseup',()=>{dragging=null;});
-C.addEventListener('mouseleave',()=>{hovered=null;dragging=null;TT.style.display='none';});
+window.addEventListener('mouseup',()=>{
+  if(dragging){
+    /* transfer drag momentum to node */
+    dragging.vx=dragVx*.35;
+    dragging.vy=dragVy*.35;
+  }
+  dragging=null;
+});
+C.addEventListener('mouseleave',()=>{
+  hovered=null;
+  if(dragging){dragging.vx=dragVx*.25;dragging.vy=dragVy*.25;}
+  dragging=null;
+  TT.style.display='none';
+});
 </script>
 </body>
 </html>`;
