@@ -29,7 +29,7 @@ async def test_load_funnel_context_normalizes_local_snapshot() -> None:
                     "orden": 2,
                     "nombre": "Calificacion",
                     "que_es": "Lead calificado",
-                    "senales": ["Comparte correo"],
+                    "senales": [{"id": "senal_1", "texto": "Comparte correo"}],
                 },
                 "tiene_embudo": True,
             },
@@ -42,7 +42,7 @@ async def test_load_funnel_context_normalizes_local_snapshot() -> None:
                         "id": 22,
                         "nombre_etapa": "Calificacion",
                         "orden_etapa": 2,
-                        "descripcion": '{"que_es": "Lead calificado", "senales": ["Comparte correo"]}',
+                        "descripcion": '{"que_es": "Lead calificado", "senales": [{"id": "senal_1", "texto": "Comparte correo"}]}',
                         "es_etapa_actual": True,
                     }
                 ]
@@ -73,6 +73,7 @@ async def test_load_funnel_context_normalizes_local_snapshot() -> None:
     assert context.ultimos_mensajes[0]["contenido"] == "apg@urpeailab.com"
     assert context.etapa_actual is not None
     assert context.etapa_actual.nombre == "Calificacion"
+    assert context.etapa_actual.senales == ["Comparte correo"]
 
 
 async def test_run_funnel_agent_returns_diagnostic_trace_on_error() -> None:

@@ -88,6 +88,24 @@ def _safe_json_dict(value) -> dict:
     return {}
 
 
+def _normalize_senales(value) -> list[str] | None:
+    if not isinstance(value, list):
+        return None
+
+    normalized: list[str] = []
+    for item in value:
+        if isinstance(item, str):
+            text = item.strip()
+            if text:
+                normalized.append(text)
+            continue
+        if isinstance(item, dict):
+            text = str(item.get("texto") or item.get("nombre") or item.get("id") or "").strip()
+            if text:
+                normalized.append(text)
+    return normalized or None
+
+
 def _build_current_stage(payload: dict | None) -> FunnelCurrentStage | None:
     if not isinstance(payload, dict):
         return None
@@ -102,7 +120,7 @@ def _build_current_stage(payload: dict | None) -> FunnelCurrentStage | None:
         orden=stage_order,
         nombre=stage_name,
         que_es=descripcion_json.get("que_es"),
-        senales=descripcion_json.get("senales"),
+        senales=_normalize_senales(descripcion_json.get("senales")),
     )
 
 
@@ -246,7 +264,7 @@ async def _load_funnel_context(
                         orden=etapa_info.orden_etapa,
                         nombre=etapa_info.nombre_etapa,
                         que_es=descripcion_json.get("que_es"),
-                        senales=descripcion_json.get("senales"),
+                        senales=_normalize_senales(descripcion_json.get("senales")),
                     )
                     break
 
