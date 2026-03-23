@@ -909,7 +909,43 @@ def _get_debug_config() -> dict:
 
 @router.get("/debug/events")
 async def kapso_debug_events(limit: int = 100):
-    return {"events": get_kapso_debug_events(limit)}
+    """Return merged events: in-memory (fresh) + Supabase (persistent)."""
+    memory_events = get_kapso_debug_events(limit)
+
+    # Load persisted events from Supabase so data survives deploys
+    db_events: list[dict] = []
+    try:
+        supabase = await get_supabase()
+        rows = await supabase.query(
+            "debug_events",
+            select="*",
+            filters={"source": "kapso"},
+            order="created_at",
+            order_desc=True,
+            limit=limit,
+        )
+        if rows and isinstance(rows, list):
+            for row in rows:
+                db_events.append({
+                    "timestamp": row.get("created_at") or row.get("timestamp"),
+                    "source": row.get("source", "kapso"),
+                    "stage": row.get("stage", ""),
+                    "payload": row.get("payload") or {},
+                })
+    except Exception as exc:
+        logger.warning("debug/events: could not load from Supabase: %s", exc)
+
+    # Dedup by (timestamp, stage) — memory wins
+    seen = {(ev.get("timestamp", ""), ev.get("stage", "")) for ev in memory_events}
+    merged = list(memory_events)
+    for ev in db_events:
+        key = (ev.get("timestamp", ""), ev.get("stage", ""))
+        if key not in seen:
+            merged.append(ev)
+            seen.add(key)
+
+    merged.sort(key=lambda x: x.get("timestamp") or "", reverse=True)
+    return {"events": merged[:limit]}
 
 
 @router.get("/debug/config")
