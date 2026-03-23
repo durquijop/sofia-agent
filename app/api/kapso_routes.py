@@ -6,6 +6,7 @@ import re
 import time
 import uuid
 
+import httpx
 from fastapi import APIRouter, Header, HTTPException
 
 from app.agents.contact_update import run_contact_update_agent
@@ -68,6 +69,12 @@ MULTIMEDIA_EXTENSIONS = (
 )
 MULTIMEDIA_URL_REGEX = re.compile(r"https?://[^\s]+", re.IGNORECASE)
 
+# Regex to parse Kapso audio enrichment text
+_AUDIO_URL_RE = re.compile(r"URL:\s*(https?://[^\s]+)", re.IGNORECASE)
+_AUDIO_TRANSCRIPT_RE = re.compile(r"Transcript:\s*(.+)", re.IGNORECASE | re.DOTALL)
+_AUDIO_FILENAME_RE = re.compile(r"\(([^)]+\.ogg)\)", re.IGNORECASE)
+SUPABASE_STORAGE_BUCKET = "multimedia"
+
 
 def _normalize_phone(value: str | None) -> str | None:
     if not value:
@@ -86,6 +93,82 @@ def _extract_multimedia_urls(message: str | None) -> list[str]:
         return []
     urls = MULTIMEDIA_URL_REGEX.findall(text)
     return [url for url in urls if any(ext in url.lower() for ext in MULTIMEDIA_EXTENSIONS)]
+
+
+def _parse_audio_content(text: str) -> tuple[str | None, str | None, str | None]:
+    """Parse Kapso-enriched audio text into (audio_url, transcript, filename)."""
+    audio_url = None
+    transcript = None
+    filename = None
+
+    url_match = _AUDIO_URL_RE.search(text)
+    if url_match:
+        audio_url = url_match.group(1).strip()
+
+    transcript_match = _AUDIO_TRANSCRIPT_RE.search(text)
+    if transcript_match:
+        transcript = transcript_match.group(1).strip()
+
+    filename_match = _AUDIO_FILENAME_RE.search(text)
+    if filename_match:
+        filename = filename_match.group(1).strip()
+
+    return audio_url, transcript, filename
+
+
+async def _upload_audio_to_storage(audio_url: str, filename: str) -> str | None:
+    """Download audio from Kapso URL and upload to Supabase Storage bucket."""
+    settings = get_settings()
+    try:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as http:
+            # Download audio from Kapso
+            dl_resp = await http.get(audio_url)
+            dl_resp.raise_for_status()
+            audio_bytes = dl_resp.content
+            content_type = dl_resp.headers.get("content-type", "audio/ogg")
+
+        # Upload to Supabase Storage
+        storage_url = f"{settings.SUPABASE_URL}/storage/v1/object/{SUPABASE_STORAGE_BUCKET}/{filename}"
+        headers = {
+            "apikey": settings.SUPABASE_SERVICE_KEY,
+            "Authorization": f"Bearer {settings.SUPABASE_SERVICE_KEY}",
+            "Content-Type": content_type,
+            "x-upsert": "true",
+        }
+        async with httpx.AsyncClient(timeout=30.0) as http:
+            up_resp = await http.post(storage_url, content=audio_bytes, headers=headers)
+            up_resp.raise_for_status()
+
+        public_url = f"{settings.SUPABASE_URL}/storage/v1/object/public/{SUPABASE_STORAGE_BUCKET}/{filename}"
+        logger.info("Audio uploaded to Supabase Storage: %s", public_url)
+        return public_url
+    except Exception as exc:
+        logger.warning("Failed to upload audio to Supabase Storage: %s", exc)
+        return None
+
+
+async def _process_audio_message(inbound: KapsoInboundRequest) -> tuple[str | None, str | None]:
+    """Process an audio message: extract transcript and upload to storage.
+
+    Returns (transcript, storage_url).
+    """
+    message_type = str(inbound.message_type or "").strip().lower()
+    if message_type != "audio":
+        return None, None
+
+    text = inbound.text or ""
+    audio_url, transcript, filename = _parse_audio_content(text)
+
+    # Upload audio to Supabase Storage
+    storage_url = None
+    if audio_url and filename:
+        storage_url = await _upload_audio_to_storage(audio_url, filename)
+    elif audio_url:
+        # Generate filename from URL or message_id
+        fallback_name = f"audio_{inbound.message_id.replace('=', '').replace('.', '_')[-20:]}.ogg"
+        storage_url = await _upload_audio_to_storage(audio_url, fallback_name)
+
+    return transcript, storage_url
 
 
 def _extract_media_reference(inbound: KapsoInboundRequest) -> str:
@@ -700,6 +783,24 @@ async def kapso_inbound(
         memory_session_id = normalized_from_phone
         if contacto and contacto.get("id") is not None:
             memory_session_id = str(contacto["id"])
+
+        # Procesar audio: subir a Supabase Storage y extraer transcript
+        audio_transcript: str | None = None
+        audio_storage_url: str | None = None
+        if request.message_type == "audio" and request.has_media:
+            audio_transcript, audio_storage_url = await _process_audio_message(request)
+            if audio_transcript:
+                # Replace message_parts with clean transcript as text
+                message_parts = [{"contenido": audio_transcript, "tipo": "texto"}]
+                if audio_storage_url:
+                    message_parts.append({"contenido": audio_storage_url, "tipo": "multimedia"})
+                logger.info(
+                    "Audio procesado → transcript=%s... storage_url=%s",
+                    audio_transcript[:60],
+                    audio_storage_url,
+                )
+            elif audio_storage_url:
+                logger.info("Audio subido pero sin transcript. storage_url=%s", audio_storage_url)
 
         # Marcar origen como Whatsapp si aún no tiene valor
         if contacto and contacto.get("id") is not None and not contacto.get("origen"):
