@@ -121,11 +121,18 @@ async def _upload_audio_to_storage(audio_url: str, filename: str) -> str | None:
     settings = get_settings()
     try:
         async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as http:
-            # Download audio from Kapso
+            # Download audio from Kapso (Rails Active Storage redirect)
             dl_resp = await http.get(audio_url)
             dl_resp.raise_for_status()
             audio_bytes = dl_resp.content
             content_type = dl_resp.headers.get("content-type", "audio/ogg")
+            logger.info(
+                "Audio downloaded: %d bytes, content-type=%s, status=%d, final_url=%s",
+                len(audio_bytes), content_type, dl_resp.status_code, str(dl_resp.url),
+            )
+
+        if len(audio_bytes) < 100:
+            logger.warning("Audio download suspiciously small (%d bytes), might be an error page", len(audio_bytes))
 
         # Upload to Supabase Storage
         storage_url = f"{settings.SUPABASE_URL}/storage/v1/object/{SUPABASE_STORAGE_BUCKET}/{filename}"
@@ -137,13 +144,18 @@ async def _upload_audio_to_storage(audio_url: str, filename: str) -> str | None:
         }
         async with httpx.AsyncClient(timeout=30.0) as http:
             up_resp = await http.post(storage_url, content=audio_bytes, headers=headers)
+            if up_resp.status_code >= 400:
+                logger.error(
+                    "Supabase Storage upload failed: status=%d body=%s",
+                    up_resp.status_code, up_resp.text[:500],
+                )
             up_resp.raise_for_status()
 
         public_url = f"{settings.SUPABASE_URL}/storage/v1/object/public/{SUPABASE_STORAGE_BUCKET}/{filename}"
         logger.info("Audio uploaded to Supabase Storage: %s", public_url)
         return public_url
     except Exception as exc:
-        logger.warning("Failed to upload audio to Supabase Storage: %s", exc)
+        logger.error("Failed to upload audio to Supabase Storage: %s", exc, exc_info=True)
         return None
 
 
@@ -158,6 +170,12 @@ async def _process_audio_message(inbound: KapsoInboundRequest) -> tuple[str | No
 
     text = inbound.text or ""
     audio_url, transcript, filename = _parse_audio_content(text)
+    logger.info(
+        "Audio parse result: url=%s, transcript=%s, filename=%s",
+        audio_url[:80] if audio_url else None,
+        (transcript or "")[:60],
+        filename,
+    )
 
     # Upload audio to Supabase Storage
     storage_url = None
@@ -167,6 +185,8 @@ async def _process_audio_message(inbound: KapsoInboundRequest) -> tuple[str | No
         # Generate filename from URL or message_id
         fallback_name = f"audio_{inbound.message_id.replace('=', '').replace('.', '_')[-20:]}.ogg"
         storage_url = await _upload_audio_to_storage(audio_url, fallback_name)
+    else:
+        logger.warning("Audio message but no audio_url found. Raw text: %s", text[:200])
 
     return transcript, storage_url
 
@@ -789,6 +809,15 @@ async def kapso_inbound(
         audio_storage_url: str | None = None
         if request.message_type == "audio" and request.has_media:
             audio_transcript, audio_storage_url = await _process_audio_message(request)
+            add_kapso_debug_event(
+                "fastapi",
+                "audio_processing",
+                {
+                    "transcript": (audio_transcript or "")[:120],
+                    "storage_url": audio_storage_url,
+                    "upload_ok": audio_storage_url is not None,
+                },
+            )
             if audio_transcript:
                 # Replace message_parts with clean transcript as text
                 message_parts = [{"contenido": audio_transcript, "tipo": "texto"}]
