@@ -8,6 +8,7 @@ import uuid
 
 from fastapi import APIRouter, Header, HTTPException
 
+from app.agents.contact_update import run_contact_update_agent
 from app.agents.conversational import run_agent
 from app.agents.funnel import run_funnel_agent
 from app.core.config import get_settings
@@ -19,6 +20,7 @@ from app.core.kapso_debug import (
 from app.core.kapso_prompt import build_kapso_context_payload, build_kapso_system_prompt
 from app.db import queries as db
 from app.schemas.chat import AgentRunTrace, ChatRequest, MCPServerConfig, TimingInfo, ToolCall
+from app.schemas.contact_update import ContactUpdateAgentRequest, ContactUpdateAgentResponse
 from app.schemas.funnel import FunnelAgentRequest, FunnelAgentResponse
 from app.schemas.kapso import KapsoInboundRequest, KapsoInboundResponse, KapsoReactionPayload
 
@@ -28,6 +30,7 @@ router = APIRouter(prefix="/api/v1/kapso", tags=["kapso"])
 DEFAULT_KAPSO_FALLBACK_PHONE = "14705500109"
 DEFAULT_KAPSO_FALLBACK_AGENT_ID = 4
 FUNNEL_TIMEOUT_SECONDS = 25
+CONTACT_UPDATE_TIMEOUT_SECONDS = 20
 DEFAULT_EMPTY_REPLY_TEXT = "Hola, te leo. ¿En qué puedo ayudarte?"
 FUNNEL_SKIP_TEXTS = {
     "hola",
@@ -274,6 +277,42 @@ def _build_funnel_error_response(
     )
 
 
+def _build_contact_update_error_response(
+    *,
+    model: str | None,
+    conversacion_db_id: int | None,
+    contacto_id: int | None,
+    error_text: str,
+    timing: TimingInfo | None = None,
+    tools_used: list[ToolCall] | None = None,
+) -> ContactUpdateAgentResponse:
+    safe_timing = timing or TimingInfo(total_ms=0)
+    trace = AgentRunTrace(
+        agent_key="contact_update_agent",
+        agent_name="Agente de Actualización de Contacto",
+        agent_kind="analysis_error",
+        conversation_id=str(conversacion_db_id) if conversacion_db_id else None,
+        memory_session_id=str(contacto_id) if contacto_id else None,
+        model_used=model or get_settings().DEFAULT_MODEL,
+        system_prompt="",
+        user_prompt="",
+        available_tools=[],
+        tools_used=list(tools_used or []),
+        timing=safe_timing,
+        llm_iterations=0,
+    )
+    return ContactUpdateAgentResponse(
+        success=False,
+        respuesta="Error al procesar el agente de actualización de contacto",
+        updated_fields=[],
+        contact_updates=None,
+        timing=safe_timing,
+        tools_used=list(tools_used or []),
+        agent_runs=[trace],
+        error=error_text,
+    )
+
+
 def _should_run_funnel_agent(message: str | None) -> bool:
     normalized = re.sub(r"\s+", " ", str(message or "").strip().lower())
     if not normalized:
@@ -326,17 +365,37 @@ async def _run_both_agents(
             )
         )
 
+    contact_update_task = None
+    if contacto_id is not None and empresa_id is not None:
+        contact_update_task = asyncio.create_task(
+            run_contact_update_agent(
+                ContactUpdateAgentRequest(
+                    contacto_id=contacto_id,
+                    empresa_id=empresa_id,
+                    agente_id=agente_id,
+                    conversacion_id=conversacion_db_id,
+                    model=model,
+                )
+            )
+        )
+
     funnel_awaitable = asyncio.sleep(0, result=None)
     if funnel_task is not None:
         funnel_awaitable = asyncio.wait_for(funnel_task, timeout=FUNNEL_TIMEOUT_SECONDS)
 
+    contact_update_awaitable = asyncio.sleep(0, result=None)
+    if contact_update_task is not None:
+        contact_update_awaitable = asyncio.wait_for(contact_update_task, timeout=CONTACT_UPDATE_TIMEOUT_SECONDS)
+
     results = await asyncio.gather(
         conversational_task,
         funnel_awaitable,
+        contact_update_awaitable,
         return_exceptions=True,
     )
     conversational_result = results[0]
     funnel_result = results[1]
+    contact_update_result = results[2]
 
     if isinstance(conversational_result, Exception):
         raise conversational_result
@@ -360,20 +419,69 @@ async def _run_both_agents(
                 tools_used=funnel_result.tools_used,
             )
 
+    if isinstance(contact_update_result, Exception):
+        logger.warning(
+            "Kapso inbound: contact update agent fallo pero la respuesta conversacional continua: %s",
+            contact_update_result,
+            exc_info=True,
+        )
+        contact_update_result = _build_contact_update_error_response(
+            model=model,
+            conversacion_db_id=conversacion_db_id,
+            contacto_id=contacto_id,
+            error_text=str(contact_update_result),
+        )
+
+    if isinstance(contact_update_result, ContactUpdateAgentResponse) and not contact_update_result.success:
+        logger.warning("Kapso inbound: contact update agent devolvio success=false: %s", contact_update_result.error)
+        if not contact_update_result.agent_runs:
+            contact_update_result = _build_contact_update_error_response(
+                model=model,
+                conversacion_db_id=conversacion_db_id,
+                contacto_id=contacto_id,
+                error_text=contact_update_result.error or "Contact update agent devolvio success=false",
+                timing=contact_update_result.timing,
+                tools_used=contact_update_result.tools_used,
+            )
+
     merged_timing = _merge_timings(
         started_at,
         conversational_result.timing,
-        funnel_result.timing if isinstance(funnel_result, FunnelAgentResponse) else None,
+        TimingInfo(
+            total_ms=0,
+            llm_ms=round(
+                float((funnel_result.timing if isinstance(funnel_result, FunnelAgentResponse) else TimingInfo(total_ms=0)).llm_ms)
+                + float((contact_update_result.timing if isinstance(contact_update_result, ContactUpdateAgentResponse) else TimingInfo(total_ms=0)).llm_ms),
+                1,
+            ),
+            mcp_discovery_ms=0,
+            graph_build_ms=round(
+                float((funnel_result.timing if isinstance(funnel_result, FunnelAgentResponse) else TimingInfo(total_ms=0)).graph_build_ms)
+                + float((contact_update_result.timing if isinstance(contact_update_result, ContactUpdateAgentResponse) else TimingInfo(total_ms=0)).graph_build_ms),
+                1,
+            ),
+            tool_execution_ms=round(
+                float((funnel_result.timing if isinstance(funnel_result, FunnelAgentResponse) else TimingInfo(total_ms=0)).tool_execution_ms)
+                + float((contact_update_result.timing if isinstance(contact_update_result, ContactUpdateAgentResponse) else TimingInfo(total_ms=0)).tool_execution_ms),
+                1,
+            ),
+        ),
     )
     merged_tools = _merge_tool_calls(
         conversational_result.tools_used,
-        funnel_result.tools_used if isinstance(funnel_result, FunnelAgentResponse) else None,
+        [
+            *(funnel_result.tools_used if isinstance(funnel_result, FunnelAgentResponse) else []),
+            *(contact_update_result.tools_used if isinstance(contact_update_result, ContactUpdateAgentResponse) else []),
+        ],
     )
     merged_agent_runs = _merge_agent_runs(
         conversational_result.agent_runs,
-        funnel_result.agent_runs if isinstance(funnel_result, FunnelAgentResponse) else None,
+        [
+            *(funnel_result.agent_runs if isinstance(funnel_result, FunnelAgentResponse) else []),
+            *(contact_update_result.agent_runs if isinstance(contact_update_result, ContactUpdateAgentResponse) else []),
+        ],
     )
-    return conversational_result, funnel_result, merged_timing, merged_tools, merged_agent_runs
+    return conversational_result, funnel_result, contact_update_result, merged_timing, merged_tools, merged_agent_runs
 
 
 def _build_mcp_servers(agent: dict) -> list[MCPServerConfig]:
@@ -785,7 +893,7 @@ async def kapso_inbound(
             request.message_type,
         )
 
-        conversational_result, funnel_result, merged_timing, merged_tools, merged_agent_runs = await _run_both_agents(
+        conversational_result, funnel_result, contact_update_result, merged_timing, merged_tools, merged_agent_runs = await _run_both_agents(
             started_at=started_at,
             system_prompt=system_prompt,
             user_message=user_message,
@@ -821,6 +929,24 @@ async def kapso_inbound(
                 "agent_runs": [agent_run.model_dump() for agent_run in (funnel_result.agent_runs if funnel_result else [])],
                 "etapa_nueva": funnel_result.etapa_nueva if funnel_result else None,
                 "metadata_actualizada": funnel_result.metadata_actualizada if funnel_result else None,
+            },
+        )
+
+        add_kapso_debug_event(
+            "fastapi",
+            "run_contact_update_done",
+            {
+                "agent_id": int(agente_id),
+                "contacto_id": contacto_id,
+                "conversation_db_id": conversacion_db_id,
+                "message_id": request.message_id,
+                "success": bool(contact_update_result and contact_update_result.success),
+                "error": contact_update_result.error if contact_update_result else None,
+                "timing": contact_update_result.timing.model_dump() if contact_update_result else None,
+                "tools_used": [tool.model_dump() for tool in (contact_update_result.tools_used if contact_update_result else [])],
+                "agent_runs": [agent_run.model_dump() for agent_run in (contact_update_result.agent_runs if contact_update_result else [])],
+                "updated_fields": contact_update_result.updated_fields if contact_update_result else [],
+                "contact_updates": contact_update_result.contact_updates if contact_update_result else None,
             },
         )
 

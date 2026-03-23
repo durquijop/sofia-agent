@@ -1008,6 +1008,44 @@ async def actualizar_metadata_contacto(contacto_id: int, nueva_metadata: dict[st
     return await get_contacto(contacto_id)
 
 
+async def actualizar_campos_contacto(contacto_id: int, cambios: dict[str, Any]) -> dict | None:
+    """Actualiza columnas permitidas de wp_contactos preservando el resto del registro."""
+    sb = await get_supabase()
+    contacto_actual = await get_contacto(contacto_id)
+    if not contacto_actual:
+        return None
+
+    campos_permitidos = {
+        "nombre",
+        "apellido",
+        "email",
+        "telefono",
+        "etapa_emocional",
+        "timezone",
+        "es_calificado",
+        "estado",
+    }
+    payload: dict[str, Any] = {}
+    for key, value in cambios.items():
+        if key not in campos_permitidos or value is None:
+            continue
+        if isinstance(value, str):
+            value = " ".join(value.strip().split())
+            if not value:
+                continue
+        payload[key] = value
+
+    if not payload:
+        return contacto_actual
+
+    await sb.update(
+        "wp_contactos",
+        {"id": contacto_id},
+        payload,
+    )
+    return await get_contacto(contacto_id)
+
+
 async def get_conversacion_con_mensajes(conversacion_id: int, limite_mensajes: int = 20) -> tuple[dict | None, list[dict]]:
     """Obtiene una conversación y sus mensajes en paralelo."""
     conversacion = await get_conversacion(conversacion_id)
