@@ -145,7 +145,9 @@ async def debug_realtime_dashboard():
     from app.core.config import get_settings
 
     settings = get_settings()
-    return _render_realtime_debug_html(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_KEY)
+    # Usar anon key para el browser (Realtime requiere anon, no service_role)
+    anon_key = settings.SUPABASE_ANON_KEY or settings.SUPABASE_SERVICE_KEY
+    return _render_realtime_debug_html(settings.SUPABASE_URL, anon_key)
 
 
 def _escape_html(text: str | None) -> str:
