@@ -147,6 +147,13 @@ function buildKapsoInteractions(bridgeEvents = [], fastapiEvents = []) {
         interaction.error = payload.error || payload.detail || 'Error en FastAPI';
         interaction.finished_at = event.timestamp;
       }
+
+      if (event.stage === 'slash_command_done') {
+        interaction.status = 'ok';
+        interaction.finished_at = event.timestamp;
+        if (payload.reply_text) interaction.response_preview = payload.reply_text;
+        if (payload.command) interaction.message_text = payload.command;
+      }
     }
 
     if (event.source === 'bridge') {
@@ -197,6 +204,21 @@ function buildKapsoInteractions(bridgeEvents = [], fastapiEvents = []) {
 
     if (interaction.started_at && interaction.finished_at) {
       interaction.duration_ms = new Date(interaction.finished_at) - new Date(interaction.started_at);
+    }
+  }
+
+  // Second pass: infer status & timing from FastAPI events when bridge events are missing
+  for (const interaction of interactionMap.values()) {
+    // If we never got a bridge "message_processing_done", derive from FastAPI data
+    if (interaction.status === 'processing') {
+      // If run_agent_done fired, the request completed successfully
+      if (interaction.response_preview || interaction.agent_name) {
+        interaction.status = 'ok';
+      }
+    }
+    // If no duration_ms yet, use timing.total_ms from run_agent_done payload
+    if (interaction.duration_ms == null && interaction.timing?.total_ms != null) {
+      interaction.duration_ms = Math.round(interaction.timing.total_ms);
     }
   }
 
