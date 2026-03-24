@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, HTTPException
 
 from app.db.client import get_supabase
-from app.nylas_client.client import get_nylas
+from app.nylas_client.client import NylasClient, get_nylas, get_nylas2
 from app.schemas.scheduling import (
     CrearEventoRequest,
     CrearEventoResponse,
@@ -39,12 +39,26 @@ router = APIRouter(prefix="/api/v1/scheduling", tags=["scheduling"])
 # ════════════════════════════════════════════════════════════
 
 
+async def _get_nylas_for_asesor(asesor: dict[str, Any]) -> "NylasClient":
+    """Retorna el NylasClient correcto según el campo nylas_key del asesor.
+
+    Cada asesor tiene su propia aplicación Nylas (y note-taker).
+    nylas_key=2 usa NYLAS_API_KEY_2, cualquier otro valor usa NYLAS_API_KEY.
+    """
+    if asesor.get("nylas_key") == 2:
+        client = await get_nylas2()
+        if client:
+            return client
+        logger.warning("NYLAS_API_KEY_2 no configurada, fallback a key principal para asesor %s", asesor.get("id"))
+    return await get_nylas()
+
+
 async def _get_asesores_by_empresa(empresa_id: int) -> list[dict[str, Any]]:
     """Obtiene asesores activos con calendario de una empresa."""
     db = await get_supabase()
     asesores = await db.query(
         "wp_team_humano",
-        select="id,nombre,apellido,email,grant_id,timezone,duracion_cita_minutos,disponibilidad",
+        select="id,nombre,apellido,email,grant_id,timezone,duracion_cita_minutos,disponibilidad,nylas_key",
         filters={"empresa_id": empresa_id, "is_active": True, "acepta_citas": True},
     )
     if not asesores or not isinstance(asesores, list):
@@ -56,7 +70,7 @@ async def _get_asesor_by_id(asesor_id: int) -> dict[str, Any] | None:
     db = await get_supabase()
     return await db.query(
         "wp_team_humano",
-        select="id,nombre,apellido,email,grant_id,timezone,duracion_cita_minutos,disponibilidad",
+        select="id,nombre,apellido,email,grant_id,timezone,duracion_cita_minutos,disponibilidad,nylas_key",
         filters={"id": asesor_id, "is_active": True, "acepta_citas": True},
         single=True,
     )
@@ -369,7 +383,6 @@ async def _seleccionar_mejor_asesor(
 ) -> dict[str, Any] | None:
     """Selecciona el mejor asesor: disponible en horario + menos citas pendientes.
     Si el contacto tiene cita Realizada, usa siempre el mismo asesor."""
-    nylas = await get_nylas()
 
     # Parsear fecha
     dt = datetime.fromisoformat(fecha_hora_iso.replace("Z", "+00:00")) if "T" in fecha_hora_iso else datetime.fromisoformat(fecha_hora_iso)
@@ -384,7 +397,8 @@ async def _seleccionar_mejor_asesor(
             dur = duracion_min or asesor_fijo.get("duracion_cita_minutos") or 30
             end_unix = start_unix + (dur * 60)
 
-            ocupado = await _asesor_ocupado(nylas, asesor_fijo, start_unix, end_unix, exclude_event_id)
+            nylas_fijo = await _get_nylas_for_asesor(asesor_fijo)
+            ocupado = await _asesor_ocupado(nylas_fijo, asesor_fijo, start_unix, end_unix, exclude_event_id)
 
             if ocupado:
                 return {
@@ -403,7 +417,8 @@ async def _seleccionar_mejor_asesor(
         dur = duracion_min or asesor.get("duracion_cita_minutos") or 30
         end_unix = start_unix + (dur * 60)
         try:
-            ocupado = await _asesor_ocupado(nylas, asesor, start_unix, end_unix, exclude_event_id)
+            nylas_asesor = await _get_nylas_for_asesor(asesor)
+            ocupado = await _asesor_ocupado(nylas_asesor, asesor, start_unix, end_unix, exclude_event_id)
             return {"asesor": asesor, "ok": True, "ocupado": ocupado}
         except Exception:
             return {"asesor": asesor, "ok": False, "ocupado": True}
@@ -450,11 +465,6 @@ async def disponibilidad_agenda(req: DisponibilidadRequest):
     start_time = time.time()
     tz_name = req.time_zone_contacto or "America/Bogota"
 
-    try:
-        nylas = await get_nylas()
-    except RuntimeError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
     # Asesor fijo
     asesor_fijo = await _get_asesor_fijo_de_contacto(req.contacto_id)
     cita_info = await _get_cita_contacto(req.contacto_id)
@@ -483,10 +493,11 @@ async def disponibilidad_agenda(req: DisponibilidadRequest):
     fin_rango = ahora + timedelta(days=7)
     fin_unix = int(fin_rango.timestamp())
 
-    # Free/Busy en paralelo
+    # Free/Busy en paralelo (cada asesor usa su propia Nylas API key)
     async def _fb(asesor: dict):
         try:
-            data = await nylas.get_free_busy(asesor["grant_id"], asesor["email"], ahora_unix, fin_unix)
+            nylas_asesor = await _get_nylas_for_asesor(asesor)
+            data = await nylas_asesor.get_free_busy(asesor["grant_id"], asesor["email"], ahora_unix, fin_unix)
             return {"asesor": asesor, "freeBusy": data, "ok": True}
         except Exception as e:
             logger.warning("Error free/busy asesor %s: %s", asesor["id"], e)
@@ -625,7 +636,6 @@ async def disponibilidad_agenda(req: DisponibilidadRequest):
 async def crear_evento_calendario(req: CrearEventoRequest):
     """Crea un evento/cita en el calendario del asesor."""
     tz_name = req.time_zone_contacto or "America/Bogota"
-    nylas = await get_nylas()
     db = await get_supabase()
 
     logger.info("📅 Crear evento — Contacto: %s, Empresa: %s, Horario: %s", req.contacto_id, req.empresa_id, req.start)
@@ -691,7 +701,8 @@ async def crear_evento_calendario(req: CrearEventoRequest):
     else:
         event_data["location"] = "Presencial"
 
-    logger.info("📤 Creando evento en Nylas...")
+    logger.info("📤 Creando evento en Nylas (asesor %s, nylas_key=%s)...", asesor["id"], asesor.get("nylas_key", 1))
+    nylas = await _get_nylas_for_asesor(asesor)
     evento = await nylas.create_event(asesor["grant_id"], calendar_id, event_data)
     logger.info("✅ Evento creado: %s", evento.get("id"))
 
@@ -740,7 +751,6 @@ async def crear_evento_calendario(req: CrearEventoRequest):
 async def reagendar_evento(req: ReagendarEventoRequest):
     """Reagenda un evento existente a nueva fecha/hora."""
     tz_name = req.time_zone_contacto or "America/Bogota"
-    nylas = await get_nylas()
     db = await get_supabase()
 
     logger.info("📅 Reagendar evento: %s → %s", req.event_id, req.start)
@@ -786,10 +796,11 @@ async def reagendar_evento(req: ReagendarEventoRequest):
         # Marcar cita anterior como reagendada
         await _actualizar_estado_cita(req.event_id, "reagendada")
 
-        # Eliminar evento del calendario anterior
+        # Eliminar evento del calendario anterior (con la Nylas key del asesor anterior)
         if asesor_actual and asesor_actual.get("grant_id"):
             try:
-                await nylas.delete_event(asesor_actual["grant_id"], asesor_actual["email"], req.event_id)
+                nylas_anterior = await _get_nylas_for_asesor(asesor_actual)
+                await nylas_anterior.delete_event(asesor_actual["grant_id"], asesor_actual["email"], req.event_id)
             except Exception as e:
                 logger.warning("No se pudo eliminar evento anterior: %s", e)
 
@@ -817,7 +828,8 @@ async def reagendar_evento(req: ReagendarEventoRequest):
         else:
             event_data["location"] = "Presencial"
 
-        evento = await nylas.create_event(asesor_nuevo["grant_id"], calendar_id, event_data)
+        nylas_nuevo = await _get_nylas_for_asesor(asesor_nuevo)
+        evento = await nylas_nuevo.create_event(asesor_nuevo["grant_id"], calendar_id, event_data)
     else:
         # Mismo asesor — solo actualizar
         update_data: dict[str, Any] = {
@@ -846,7 +858,8 @@ async def reagendar_evento(req: ReagendarEventoRequest):
         elif modalidad == "Presencial":
             update_data["location"] = "Presencial"
 
-        evento = await nylas.update_event(asesor_nuevo["grant_id"], calendar_id, req.event_id, update_data)
+        nylas_nuevo = await _get_nylas_for_asesor(asesor_nuevo)
+        evento = await nylas_nuevo.update_event(asesor_nuevo["grant_id"], calendar_id, req.event_id, update_data)
 
     meet_link = (evento.get("conferencing") or {}).get("details", {}).get("url")
 
@@ -899,7 +912,6 @@ async def reagendar_evento(req: ReagendarEventoRequest):
 @router.post("/eliminar-evento", response_model=EliminarEventoResponse)
 async def eliminar_evento(req: EliminarEventoRequest):
     """Cancela un evento — elimina de Nylas y marca como 'cancelada' en Supabase."""
-    nylas = await get_nylas()
     db = await get_supabase()
 
     logger.info("🗑️ Eliminar evento: %s", req.event_id)
@@ -912,7 +924,7 @@ async def eliminar_evento(req: EliminarEventoRequest):
     # Obtener asesor
     asesor = await db.query(
         "wp_team_humano",
-        select="id,nombre,apellido,email,grant_id",
+        select="id,nombre,apellido,email,grant_id,nylas_key",
         filters={"id": cita["team_humano_id"]},
         single=True,
     )
@@ -925,9 +937,10 @@ async def eliminar_evento(req: EliminarEventoRequest):
     eliminado_en_nylas = False
 
     try:
+        nylas = await _get_nylas_for_asesor(asesor)
         await nylas.delete_event(asesor["grant_id"], calendar_id, req.event_id)
         eliminado_en_nylas = True
-        logger.info("✅ Evento eliminado de Nylas")
+        logger.info("✅ Evento eliminado de Nylas (nylas_key=%s)", asesor.get("nylas_key", 1))
     except Exception as e:
         logger.warning("⚠️ Error al eliminar en Nylas: %s — continuando con cancelación en Supabase", e)
 
