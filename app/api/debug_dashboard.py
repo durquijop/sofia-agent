@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["debug"])
 
-DEFAULT_KAPSO_FALLBACK_PHONE = "14704047294"
+DEFAULT_KAPSO_FALLBACK_PHONE = "14705500109"
 DEFAULT_KAPSO_FALLBACK_AGENT_ID = 4
 
 
