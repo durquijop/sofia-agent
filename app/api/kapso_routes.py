@@ -29,7 +29,7 @@ from app.schemas.kapso import KapsoInboundRequest, KapsoInboundResponse, KapsoRe
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/kapso", tags=["kapso"])
-DEFAULT_KAPSO_FALLBACK_PHONE = "14705500109"
+DEFAULT_KAPSO_FALLBACK_PHONE = "14704047294"
 DEFAULT_KAPSO_FALLBACK_AGENT_ID = 4
 FUNNEL_TIMEOUT_SECONDS = 25
 CONTACT_UPDATE_TIMEOUT_SECONDS = 20

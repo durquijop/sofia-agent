@@ -142,6 +142,12 @@ function buildKapsoInteractions(bridgeEvents = [], fastapiEvents = []) {
         if (payload.error) interaction.funnel_error = payload.error;
       }
 
+      if (event.stage === 'run_contact_update_done') {
+        if (payload.timing) interaction.contact_timing = Object.assign(interaction.contact_timing || {}, payload.timing);
+        if (payload.updated_fields) interaction.contact_updated_fields = payload.updated_fields;
+        if (payload.error) interaction.contact_error = payload.error;
+      }
+
       if (event.stage === 'http_error' || event.stage === 'exception') {
         interaction.status = 'error';
         interaction.error = payload.error || payload.detail || 'Error en FastAPI';
@@ -268,6 +274,51 @@ async function collectKapsoDebugPayload() {
   };
 }
 
+function fmtMs(v) { return v != null ? Math.round(v) + ' ms' : '—'; }
+
+function computeInfraMs(item) {
+  const t = item.timing;
+  if (!t || t.total_ms == null) return null;
+  const infra = t.total_ms - (t.llm_ms || 0) - (t.tool_execution_ms || 0) - (t.mcp_discovery_ms || 0) - (t.graph_build_ms || 0);
+  return Math.max(0, Math.round(infra));
+}
+
+function timingColorClass(ms) {
+  if (ms == null) return '';
+  if (ms < 5000) return 'color:#34d399';
+  if (ms < 15000) return 'color:#fbbf24';
+  return 'color:#f87171';
+}
+
+function renderTimingCells(item) {
+  const t = item.timing || {};
+  const totalMs = item.duration_ms != null ? item.duration_ms : (t.total_ms != null ? Math.round(t.total_ms) : null);
+  const infraMs = computeInfraMs(item);
+  const llmMs = t.llm_ms != null ? Math.round(t.llm_ms) : null;
+  const toolMs = t.tool_execution_ms != null ? Math.round(t.tool_execution_ms) : null;
+
+  // Per-agent breakdown
+  const runs = Array.isArray(item.agent_runs) ? item.agent_runs : [];
+  const agentParts = runs.map(r => {
+    const name = escapeHtml(r.agent_name || r.agent_key || '?');
+    const ms = r.timing?.total_ms != null ? Math.round(r.timing.total_ms) : null;
+    return `<span style="white-space:nowrap">${name}: <b>${fmtMs(ms)}</b></span>`;
+  });
+  // Also show funnel + contact if separate
+  if (item.funnel_timing?.total_ms != null && !runs.some(r => (r.agent_key || '').includes('funnel'))) {
+    agentParts.push(`<span style="white-space:nowrap">Funnel: <b>${fmtMs(item.funnel_timing.total_ms)}</b></span>`);
+  }
+  if (item.contact_timing?.total_ms != null && !runs.some(r => (r.agent_key || '').includes('contact'))) {
+    agentParts.push(`<span style="white-space:nowrap">Contact: <b>${fmtMs(item.contact_timing.total_ms)}</b></span>`);
+  }
+
+  return `<td style="${timingColorClass(totalMs)}"><b>${fmtMs(totalMs)}</b></td>`
+    + `<td>${fmtMs(infraMs)}</td>`
+    + `<td>${fmtMs(llmMs)}</td>`
+    + `<td>${fmtMs(toolMs)}</td>`
+    + `<td style="font-size:11px">${agentParts.length ? agentParts.join('<br>') : '—'}</td>`;
+}
+
 function renderToolList(items = []) {
   if (!Array.isArray(items) || !items.length) {
     return '<div style="color:#94a3b8">Sin herramientas.</div>';
@@ -332,11 +383,15 @@ function renderAvailableToolList(items = []) {
 }
 
 function renderTimingTable(timing = {}) {
+  const infraMs = timing.total_ms != null
+    ? Math.max(0, Math.round(timing.total_ms - (timing.llm_ms || 0) - (timing.tool_execution_ms || 0) - (timing.mcp_discovery_ms || 0) - (timing.graph_build_ms || 0)))
+    : null;
   return `
     <table style="margin-top:8px">
       <thead>
         <tr>
           <th>Total</th>
+          <th>Infra</th>
           <th>LLM</th>
           <th>MCP</th>
           <th>Graph</th>
@@ -345,11 +400,12 @@ function renderTimingTable(timing = {}) {
       </thead>
       <tbody>
         <tr>
-          <td>${escapeHtml(timing.total_ms != null ? `${timing.total_ms} ms` : '—')}</td>
-          <td>${escapeHtml(timing.llm_ms != null ? `${timing.llm_ms} ms` : '—')}</td>
-          <td>${escapeHtml(timing.mcp_discovery_ms != null ? `${timing.mcp_discovery_ms} ms` : '—')}</td>
-          <td>${escapeHtml(timing.graph_build_ms != null ? `${timing.graph_build_ms} ms` : '—')}</td>
-          <td>${escapeHtml(timing.tool_execution_ms != null ? `${timing.tool_execution_ms} ms` : '—')}</td>
+          <td style="${timing.total_ms != null ? (timing.total_ms < 5000 ? 'color:#34d399' : timing.total_ms < 15000 ? 'color:#fbbf24' : 'color:#f87171') : ''}"><b>${fmtMs(timing.total_ms)}</b></td>
+          <td>${fmtMs(infraMs)}</td>
+          <td>${fmtMs(timing.llm_ms)}</td>
+          <td>${fmtMs(timing.mcp_discovery_ms)}</td>
+          <td>${fmtMs(timing.graph_build_ms)}</td>
+          <td>${fmtMs(timing.tool_execution_ms)}</td>
         </tr>
       </tbody>
     </table>`;
@@ -484,8 +540,19 @@ function renderKapsoBasicHtml(debugData) {
   const interactions = Array.isArray(debugData?.interactions) ? debugData.interactions : [];
   const okCount = interactions.filter(item => item.status === 'ok').length;
   const errorCount = interactions.filter(item => item.status === 'error').length;
-  const avgDuration = interactions.length
-    ? Math.round(interactions.reduce((acc, item) => acc + (item.duration_ms || 0), 0) / interactions.length)
+  const withTiming = interactions.filter(item => item.duration_ms != null || item.timing?.total_ms != null);
+  const avgDuration = withTiming.length
+    ? Math.round(withTiming.reduce((acc, item) => acc + (item.duration_ms || item.timing?.total_ms || 0), 0) / withTiming.length)
+    : null;
+  const avgLlm = withTiming.length
+    ? Math.round(withTiming.reduce((acc, item) => acc + (item.timing?.llm_ms || 0), 0) / withTiming.length)
+    : null;
+  const avgInfra = withTiming.length
+    ? Math.round(withTiming.reduce((acc, item) => {
+        const t = item.timing;
+        if (!t || t.total_ms == null) return acc;
+        return acc + Math.max(0, t.total_ms - (t.llm_ms || 0) - (t.tool_execution_ms || 0) - (t.mcp_discovery_ms || 0) - (t.graph_build_ms || 0));
+      }, 0) / withTiming.length)
     : null;
 
   const interactionRows = interactions.length
@@ -500,11 +567,11 @@ function renderKapsoBasicHtml(debugData) {
           <td>${escapeHtml(item.model_used || '—')}</td>
           <td>${escapeHtml(item.reply_type || 'text')}</td>
           <td>${escapeHtml(item.reaction_emoji || '—')}</td>
-          <td>${escapeHtml(item.duration_ms != null ? `${item.duration_ms} ms` : '—')}</td>
+          ${renderTimingCells(item)}
           <td>${escapeHtml(item.status || 'processing')}</td>
            <td><a href="#interaction-${index}" style="color:#93c5fd">Ver detalle</a></td>
         </tr>`).join('')
-    : '<tr><td colspan="12" style="padding:20px;color:#94a3b8">Sin interacciones todavía.</td></tr>';
+    : '<tr><td colspan="16" style="padding:20px;color:#94a3b8">Sin interacciones todavía.</td></tr>';
 
   const interactionDetails = interactions.length
     ? interactions.map((item, index) => `
@@ -576,7 +643,9 @@ function renderKapsoBasicHtml(debugData) {
     <div class="card"><div class="label">Total</div><div class="value">${interactions.length}</div></div>
     <div class="card"><div class="label">OK</div><div class="value">${okCount}</div></div>
     <div class="card"><div class="label">Errores</div><div class="value">${errorCount}</div></div>
-    <div class="card"><div class="label">Tiempo avg</div><div class="value">${avgDuration != null ? `${avgDuration} ms` : '—'}</div></div>
+    <div class="card"><div class="label">Tiempo AVG</div><div class="value">${avgDuration != null ? `${avgDuration} ms` : '—'}</div></div>
+    <div class="card"><div class="label">LLM AVG</div><div class="value">${avgLlm != null ? `${avgLlm} ms` : '—'}</div></div>
+    <div class="card"><div class="label">Infra AVG</div><div class="value">${avgInfra != null ? `${avgInfra} ms` : '—'}</div></div>
   </div>
 
   <div class="section">
@@ -592,7 +661,11 @@ function renderKapsoBasicHtml(debugData) {
           <th>Modelo</th>
           <th>Reply</th>
           <th>Rx</th>
-          <th>Tiempo</th>
+          <th style="min-width:60px">Total</th>
+          <th style="min-width:50px">Infra</th>
+          <th style="min-width:50px">LLM</th>
+          <th style="min-width:50px">Tools</th>
+          <th>Agentes</th>
           <th>Status</th>
           <th>Detalle</th>
         </tr>
@@ -625,8 +698,34 @@ function renderKapsoBasicHtml(debugData) {
   let timer = null;
 
   function esc(v){ return String(v??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function fms(v){ return v!=null?Math.round(v)+' ms':'—'; }
+  function tcls(ms){ if(ms==null)return ''; if(ms<5000)return 'color:#34d399'; if(ms<15000)return 'color:#fbbf24'; return 'color:#f87171'; }
+  function infraMs(item){
+    var t=item.timing; if(!t||t.total_ms==null)return null;
+    return Math.max(0,Math.round(t.total_ms-(t.llm_ms||0)-(t.tool_execution_ms||0)-(t.mcp_discovery_ms||0)-(t.graph_build_ms||0)));
+  }
+  function agentBreakdown(item){
+    var runs=Array.isArray(item.agent_runs)?item.agent_runs:[];
+    var parts=runs.map(function(r){
+      var name=esc(r.agent_name||r.agent_key||'?');
+      var ms=r.timing&&r.timing.total_ms!=null?Math.round(r.timing.total_ms):null;
+      return '<span style="white-space:nowrap">'+name+': <b>'+fms(ms)+'</b></span>';
+    });
+    if(item.funnel_timing&&item.funnel_timing.total_ms!=null&&!runs.some(function(r){return (r.agent_key||'').indexOf('funnel')>=0})){
+      parts.push('<span style="white-space:nowrap">Funnel: <b>'+fms(item.funnel_timing.total_ms)+'</b></span>');
+    }
+    if(item.contact_timing&&item.contact_timing.total_ms!=null&&!runs.some(function(r){return (r.agent_key||'').indexOf('contact')>=0})){
+      parts.push('<span style="white-space:nowrap">Contact: <b>'+fms(item.contact_timing.total_ms)+'</b></span>');
+    }
+    return parts.length?parts.join('<br>'):'—';
+  }
 
   function renderRow(item, idx){
+    var t=item.timing||{};
+    var totalMs=item.duration_ms!=null?item.duration_ms:(t.total_ms!=null?Math.round(t.total_ms):null);
+    var inf=infraMs(item);
+    var llm=t.llm_ms!=null?Math.round(t.llm_ms):null;
+    var tools=t.tool_execution_ms!=null?Math.round(t.tool_execution_ms):null;
     return '<tr>'
       +'<td>'+esc(item.started_at?new Date(item.started_at).toLocaleString():'—')+'</td>'
       +'<td>'+esc(item.contact_name||'—')+'</td>'
@@ -637,7 +736,11 @@ function renderKapsoBasicHtml(debugData) {
       +'<td>'+esc(item.model_used||'—')+'</td>'
       +'<td>'+esc(item.reply_type||'text')+'</td>'
       +'<td>'+esc(item.reaction_emoji||'—')+'</td>'
-      +'<td>'+esc(item.duration_ms!=null?item.duration_ms+' ms':'—')+'</td>'
+      +'<td style="'+tcls(totalMs)+'"><b>'+fms(totalMs)+'</b></td>'
+      +'<td>'+fms(inf)+'</td>'
+      +'<td>'+fms(llm)+'</td>'
+      +'<td>'+fms(tools)+'</td>'
+      +'<td style="font-size:11px">'+agentBreakdown(item)+'</td>'
       +'<td>'+esc(item.status||'processing')+'</td>'
       +'<td><a href="#interaction-'+idx+'" style="color:#93c5fd">Ver detalle</a></td>'
       +'</tr>';
@@ -645,12 +748,14 @@ function renderKapsoBasicHtml(debugData) {
 
   function renderTimingTbl(t){
     if(!t)return '<div style="color:#94a3b8">—</div>';
-    return '<table style="margin-top:8px"><thead><tr><th>Total</th><th>LLM</th><th>MCP</th><th>Graph</th><th>Tools</th></tr></thead><tbody><tr>'
-      +'<td>'+esc(t.total_ms!=null?t.total_ms+' ms':'—')+'</td>'
-      +'<td>'+esc(t.llm_ms!=null?t.llm_ms+' ms':'—')+'</td>'
-      +'<td>'+esc(t.mcp_discovery_ms!=null?t.mcp_discovery_ms+' ms':'—')+'</td>'
-      +'<td>'+esc(t.graph_build_ms!=null?t.graph_build_ms+' ms':'—')+'</td>'
-      +'<td>'+esc(t.tool_execution_ms!=null?t.tool_execution_ms+' ms':'—')+'</td>'
+    var inf=t.total_ms!=null?Math.max(0,Math.round(t.total_ms-(t.llm_ms||0)-(t.tool_execution_ms||0)-(t.mcp_discovery_ms||0)-(t.graph_build_ms||0))):null;
+    return '<table style="margin-top:8px"><thead><tr><th>Total</th><th>Infra</th><th>LLM</th><th>MCP</th><th>Graph</th><th>Tools</th></tr></thead><tbody><tr>'
+      +'<td style="'+tcls(t.total_ms)+'"><b>'+fms(t.total_ms)+'</b></td>'
+      +'<td>'+fms(inf)+'</td>'
+      +'<td>'+fms(t.llm_ms)+'</td>'
+      +'<td>'+fms(t.mcp_discovery_ms)+'</td>'
+      +'<td>'+fms(t.graph_build_ms)+'</td>'
+      +'<td>'+fms(t.tool_execution_ms)+'</td>'
       +'</tr></tbody></table>';
   }
 
@@ -722,19 +827,27 @@ function renderKapsoBasicHtml(debugData) {
     var items=Array.isArray(data.interactions)?data.interactions:[];
     var ok=items.filter(function(i){return i.status==='ok'}).length;
     var err=items.filter(function(i){return i.status==='error'}).length;
-    var avg=items.length?Math.round(items.reduce(function(a,i){return a+(i.duration_ms||0)},0)/items.length):null;
+    var wt=items.filter(function(i){return i.duration_ms!=null||(i.timing&&i.timing.total_ms!=null)});
+    var avg=wt.length?Math.round(wt.reduce(function(a,i){return a+(i.duration_ms||i.timing&&i.timing.total_ms||0)},0)/wt.length):null;
+    var avgLlm=wt.length?Math.round(wt.reduce(function(a,i){return a+(i.timing&&i.timing.llm_ms||0)},0)/wt.length):null;
+    var avgInf=wt.length?Math.round(wt.reduce(function(a,i){
+      var t=i.timing; if(!t||t.total_ms==null)return a;
+      return a+Math.max(0,t.total_ms-(t.llm_ms||0)-(t.tool_execution_ms||0)-(t.mcp_discovery_ms||0)-(t.graph_build_ms||0));
+    },0)/wt.length):null;
 
     var cards=document.querySelectorAll('.card .value');
     if(cards[0])cards[0].textContent=items.length;
     if(cards[1])cards[1].textContent=ok;
     if(cards[2])cards[2].textContent=err;
     if(cards[3])cards[3].textContent=avg!=null?avg+' ms':'—';
+    if(cards[4])cards[4].textContent=avgLlm!=null?avgLlm+' ms':'—';
+    if(cards[5])cards[5].textContent=avgInf!=null?avgInf+' ms':'—';
 
     var tbody=document.querySelector('table tbody');
     if(tbody){
       tbody.innerHTML=items.length
         ?items.map(renderRow).join('')
-        :'<tr><td colspan="12" style="padding:20px;color:#94a3b8">Sin interacciones todavía.</td></tr>';
+        :'<tr><td colspan="16" style="padding:20px;color:#94a3b8">Sin interacciones todavía.</td></tr>';
     }
 
     // Preserve open state of ALL details with IDs (interaction + run + prompts)
