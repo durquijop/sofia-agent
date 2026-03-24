@@ -35,7 +35,7 @@ const PROCESSING_MESSAGE_TTL_MS = PROCESS_TIMEOUT_MS + 30 * 1000;
 const MAX_SEND_RETRIES = 3;
 const RATE_LIMIT_BASE_DELAY_MS = 2000;
 const IN_FLIGHT_DELAY_MS = 1500;
-const DEFAULT_EMPTY_REPLY_TEXT = 'Hola, te leo. ¿En qué puedo ayudarte?';
+const DEFAULT_EMPTY_REPLY_TEXT = 'Hola, te leo. Â¿En quÃ© puedo ayudarte?';
 const MEDIA_TYPES = ['image', 'audio', 'video', 'document', 'sticker'];
 
 app.use(cors());
@@ -79,6 +79,44 @@ function getBridgeDebugConfig() {
   };
 }
 
+function getFastApiBaseUrl() {
+  return INTERNAL_AGENT_API_URL.replace(/\/api\/v1\/kapso\/inbound$/, '');
+}
+
+async function proxyFastApiRequest(req, res, pathname) {
+  const headers = {};
+  if (KAPSO_INTERNAL_TOKEN) {
+    headers['x-kapso-internal-token'] = KAPSO_INTERNAL_TOKEN;
+  }
+  if (req.headers['content-type']) {
+    headers['content-type'] = req.headers['content-type'];
+  }
+
+  const targetUrl = new URL(pathname, `${getFastApiBaseUrl()}/`).toString();
+  const requestInit = {
+    method: req.method,
+    headers,
+  };
+
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    requestInit.body = JSON.stringify(req.body ?? {});
+  }
+
+  try {
+    const response = await fetch(targetUrl, requestInit);
+    const contentType = response.headers.get('content-type') || 'application/json; charset=utf-8';
+    const bodyText = await response.text();
+    res.status(response.status);
+    res.set('Content-Type', contentType);
+    res.send(bodyText);
+  } catch (error) {
+    res.status(502).json({
+      error: 'fastapi_proxy_error',
+      detail: String(error?.message || error),
+      target: pathname,
+    });
+  }
+}
 function buildKapsoInteractions(bridgeEvents = [], fastapiEvents = []) {
   const allEvents = [...bridgeEvents, ...fastapiEvents]
     .filter(event => event && event.timestamp && event.stage)
@@ -238,7 +276,7 @@ async function fetchFastApiDebugJson(pathname) {
   });
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(`FastAPI debug respondió ${response.status}: ${body}`);
+    throw new Error(`FastAPI debug respondiÃ³ ${response.status}: ${body}`);
   }
   return response.json();
 }
@@ -274,7 +312,7 @@ async function collectKapsoDebugPayload() {
   };
 }
 
-function fmtMs(v) { return v != null ? Math.round(v) + ' ms' : '—'; }
+function fmtMs(v) { return v != null ? Math.round(v) + ' ms' : 'â€”'; }
 
 function computeInfraMs(item) {
   const t = item.timing;
@@ -316,7 +354,7 @@ function renderTimingCells(item) {
     + `<td>${fmtMs(infraMs)}</td>`
     + `<td>${fmtMs(llmMs)}</td>`
     + `<td>${fmtMs(toolMs)}</td>`
-    + `<td style="font-size:11px">${agentParts.length ? agentParts.join('<br>') : '—'}</td>`;
+    + `<td style="font-size:11px">${agentParts.length ? agentParts.join('<br>') : 'â€”'}</td>`;
 }
 
 function renderToolList(items = []) {
@@ -332,24 +370,24 @@ function renderToolList(items = []) {
           <th>Source</th>
           <th>Estado</th>
           <th>Tiempo</th>
-          <th>Descripción</th>
+          <th>DescripciÃ³n</th>
         </tr>
       </thead>
       <tbody>
         ${items.map(item => `
           <tr>
-            <td>${escapeHtml(item.tool_name || '—')}</td>
-            <td>${escapeHtml(item.source || '—')}</td>
+            <td>${escapeHtml(item.tool_name || 'â€”')}</td>
+            <td>${escapeHtml(item.source || 'â€”')}</td>
             <td>${escapeHtml(item.status || 'ok')}</td>
-            <td>${escapeHtml(item.duration_ms != null ? `${item.duration_ms} ms` : '—')}</td>
-            <td>${escapeHtml(item.description || '—')}</td>
+            <td>${escapeHtml(item.duration_ms != null ? `${item.duration_ms} ms` : 'â€”')}</td>
+            <td>${escapeHtml(item.description || 'â€”')}</td>
           </tr>
           <tr>
             <td colspan="5">
               <div style="margin-bottom:8px"><strong>Input</strong></div>
               <pre>${escapeHtml(JSON.stringify(item.tool_input || {}, null, 2))}</pre>
               <div style="margin:8px 0 8px"><strong>Output</strong></div>
-              <pre>${escapeHtml(item.tool_output || '—')}</pre>
+              <pre>${escapeHtml(item.tool_output || 'â€”')}</pre>
               ${item.error ? `<div style="margin-top:8px;color:#fca5a5"><strong>Error:</strong> ${escapeHtml(item.error)}</div>` : ''}
             </td>
           </tr>`).join('')}
@@ -368,15 +406,15 @@ function renderAvailableToolList(items = []) {
         <tr>
           <th>Tool</th>
           <th>Source</th>
-          <th>Descripción</th>
+          <th>DescripciÃ³n</th>
         </tr>
       </thead>
       <tbody>
         ${items.map(item => `
           <tr>
-            <td>${escapeHtml(item.tool_name || '—')}</td>
-            <td>${escapeHtml(item.source || '—')}</td>
-            <td>${escapeHtml(item.description || '—')}</td>
+            <td>${escapeHtml(item.tool_name || 'â€”')}</td>
+            <td>${escapeHtml(item.source || 'â€”')}</td>
+            <td>${escapeHtml(item.description || 'â€”')}</td>
           </tr>`).join('')}
       </tbody>
     </table>`;
@@ -422,7 +460,7 @@ function renderOverviewGrid(items = []) {
       ${validItems.map(item => `
         <div class="card" style="padding:10px 12px">
           <div class="label">${escapeHtml(item.label || 'Dato')}</div>
-          <div style="font-size:14px;font-weight:700;margin-top:6px;word-break:break-word">${escapeHtml(item.value || '—')}</div>
+          <div style="font-size:14px;font-weight:700;margin-top:6px;word-break:break-word">${escapeHtml(item.value || 'â€”')}</div>
         </div>`).join('')}
     </div>`;
 }
@@ -436,10 +474,10 @@ function buildExecutionRows(item = {}) {
       stage: 'Kapso',
       name: item.agent_name || `Agente ${item.agent_id}`,
       type: 'Agente resuelto',
-      model: item.model_used || '—',
-      iterations: '—',
+      model: item.model_used || 'â€”',
+      iterations: 'â€”',
       tools: toolsCount,
-      conversation: item.conversation_id || '—',
+      conversation: item.conversation_id || 'â€”',
     });
   }
 
@@ -449,10 +487,10 @@ function buildExecutionRows(item = {}) {
       stage: 'LangGraph',
       name: run.agent_name || run.agent_key || `Agente ${index + 1}`,
       type: run.agent_kind || 'agent',
-      model: run.model_used || item.model_used || '—',
-      iterations: run.llm_iterations != null ? String(run.llm_iterations) : '—',
+      model: run.model_used || item.model_used || 'â€”',
+      iterations: run.llm_iterations != null ? String(run.llm_iterations) : 'â€”',
       tools: Array.isArray(run.tools_used) ? run.tools_used.length : 0,
-      conversation: run.conversation_id || item.conversation_id || '—',
+      conversation: run.conversation_id || item.conversation_id || 'â€”',
     });
   }
 
@@ -463,9 +501,9 @@ function renderExecutionSummary(item = {}) {
   const agentRuns = Array.isArray(item.agent_runs) ? item.agent_runs : [];
   const toolsUsed = Array.isArray(item.tools_used) ? item.tools_used : [];
   const summaryCards = [
-    { label: 'Agente Kapso', value: item.agent_name || (item.agent_id ? `ID ${item.agent_id}` : '—') },
-    { label: 'Conversación', value: item.conversation_id || '—' },
-    { label: 'Memoria', value: item.memory_session_id || '—' },
+    { label: 'Agente Kapso', value: item.agent_name || (item.agent_id ? `ID ${item.agent_id}` : 'â€”') },
+    { label: 'ConversaciÃ³n', value: item.conversation_id || 'â€”' },
+    { label: 'Memoria', value: item.memory_session_id || 'â€”' },
     { label: 'Reply', value: item.reply_type || 'text' },
     { label: 'Trazas LangGraph', value: String(agentRuns.length) },
     { label: 'Herramientas', value: String(toolsUsed.length) },
@@ -498,7 +536,7 @@ function renderExecutionSummary(item = {}) {
             <td>${escapeHtml(row.conversation)}</td>
           </tr>`).join('') : `
           <tr>
-            <td colspan="7" style="padding:16px;color:#94a3b8">Sin datos de ejecución todavía.</td>
+            <td colspan="7" style="padding:16px;color:#94a3b8">Sin datos de ejecuciÃ³n todavÃ­a.</td>
           </tr>`}
       </tbody>
     </table>`;
@@ -506,16 +544,16 @@ function renderExecutionSummary(item = {}) {
 
 function renderAgentRuns(agentRuns = []) {
   if (!Array.isArray(agentRuns) || !agentRuns.length) {
-    return '<div style="color:#94a3b8">Esta interacción no tiene trazas detalladas de agentes todavía.</div>';
+    return '<div style="color:#94a3b8">Esta interacciÃ³n no tiene trazas detalladas de agentes todavÃ­a.</div>';
   }
 
   return agentRuns.map((run, index) => `
     <details style="margin-top:12px">
-      <summary>${escapeHtml(run.agent_name || run.agent_key || `Agente ${index + 1}`)} · ${escapeHtml(run.agent_kind || 'agent')} · ${escapeHtml(run.model_used || '—')}</summary>
+      <summary>${escapeHtml(run.agent_name || run.agent_key || `Agente ${index + 1}`)} Â· ${escapeHtml(run.agent_kind || 'agent')} Â· ${escapeHtml(run.model_used || 'â€”')}</summary>
       <div style="margin-top:12px">
-        <div style="margin-bottom:10px"><strong>Agent key:</strong> ${escapeHtml(run.agent_key || '—')}</div>
-        <div style="margin-bottom:10px"><strong>Conversation:</strong> ${escapeHtml(run.conversation_id || '—')}</div>
-        <div style="margin-bottom:10px"><strong>Memory session:</strong> ${escapeHtml(run.memory_session_id || '—')}</div>
+        <div style="margin-bottom:10px"><strong>Agent key:</strong> ${escapeHtml(run.agent_key || 'â€”')}</div>
+        <div style="margin-bottom:10px"><strong>Conversation:</strong> ${escapeHtml(run.conversation_id || 'â€”')}</div>
+        <div style="margin-bottom:10px"><strong>Memory session:</strong> ${escapeHtml(run.memory_session_id || 'â€”')}</div>
         <div style="margin-bottom:10px"><strong>LLM iterations:</strong> ${escapeHtml(run.llm_iterations ?? 0)}</div>
         <div style="margin:12px 0 6px"><strong>Timing</strong></div>
         ${renderTimingTable(run.timing || {})}
@@ -558,33 +596,33 @@ function renderKapsoBasicHtml(debugData) {
   const interactionRows = interactions.length
     ? interactions.map((item, index) => `
         <tr>
-          <td>${escapeHtml(item.started_at ? new Date(item.started_at).toLocaleString() : '—')}</td>
-          <td>${escapeHtml(item.contact_name || '—')}</td>
-          <td>${escapeHtml(item.from_phone || '—')}</td>
+          <td>${escapeHtml(item.started_at ? new Date(item.started_at).toLocaleString() : 'â€”')}</td>
+          <td>${escapeHtml(item.contact_name || 'â€”')}</td>
+          <td>${escapeHtml(item.from_phone || 'â€”')}</td>
           <td>${escapeHtml(item.message_type || 'text')}</td>
-          <td style="white-space:pre-wrap;max-width:320px">${escapeHtml(item.message_text || '—')}</td>
-          <td>${escapeHtml(item.agent_name || '—')}</td>
-          <td>${escapeHtml(item.model_used || '—')}</td>
+          <td style="white-space:pre-wrap;max-width:320px">${escapeHtml(item.message_text || 'â€”')}</td>
+          <td>${escapeHtml(item.agent_name || 'â€”')}</td>
+          <td>${escapeHtml(item.model_used || 'â€”')}</td>
           <td>${escapeHtml(item.reply_type || 'text')}</td>
-          <td>${escapeHtml(item.reaction_emoji || '—')}</td>
+          <td>${escapeHtml(item.reaction_emoji || 'â€”')}</td>
           ${renderTimingCells(item)}
           <td>${escapeHtml(item.status || 'processing')}</td>
            <td><a href="#interaction-${index}" style="color:#93c5fd">Ver detalle</a></td>
         </tr>`).join('')
-    : '<tr><td colspan="16" style="padding:20px;color:#94a3b8">Sin interacciones todavía.</td></tr>';
+    : '<tr><td colspan="16" style="padding:20px;color:#94a3b8">Sin interacciones todavÃ­a.</td></tr>';
 
   const interactionDetails = interactions.length
     ? interactions.map((item, index) => `
       <details class="section" id="interaction-${index}">
-        <summary>${escapeHtml(item.contact_name || item.from_phone || item.message_id || `Interacción ${index + 1}`)} · ${escapeHtml(item.status || 'processing')} · ${escapeHtml(item.duration_ms != null ? `${item.duration_ms} ms` : '—')}</summary>
+        <summary>${escapeHtml(item.contact_name || item.from_phone || item.message_id || `InteracciÃ³n ${index + 1}`)} Â· ${escapeHtml(item.status || 'processing')} Â· ${escapeHtml(item.duration_ms != null ? `${item.duration_ms} ms` : 'â€”')}</summary>
         <div style="margin-top:12px">
-          <div style="margin-bottom:8px"><strong>Message ID:</strong> ${escapeHtml(item.message_id || '—')}</div>
+          <div style="margin-bottom:8px"><strong>Message ID:</strong> ${escapeHtml(item.message_id || 'â€”')}</div>
           <div style="margin:12px 0 6px"><strong>Error</strong></div>
-          <pre>${escapeHtml(item.error || '—')}</pre>
+          <pre>${escapeHtml(item.error || 'â€”')}</pre>
           <div style="margin-bottom:8px"><strong>Mensaje:</strong></div>
-          <pre>${escapeHtml(item.message_text || '—')}</pre>
+          <pre>${escapeHtml(item.message_text || 'â€”')}</pre>
           <div style="margin:12px 0 6px"><strong>Respuesta preview</strong></div>
-          <pre>${escapeHtml(item.response_preview || '—')}</pre>
+          <pre>${escapeHtml(item.response_preview || 'â€”')}</pre>
           <div style="margin:12px 0 6px"><strong>Embudo en metadata</strong></div>
           <pre>${escapeHtml(JSON.stringify({
             etapa_nueva: item.funnel_etapa_nueva ?? null,
@@ -593,7 +631,7 @@ function renderKapsoBasicHtml(debugData) {
           }, null, 2))}</pre>
           <div style="margin:12px 0 6px"><strong>Timing global</strong></div>
           ${renderTimingTable(item.timing || {})}
-          <div style="margin:12px 0 6px"><strong>Resumen de ejecución</strong></div>
+          <div style="margin:12px 0 6px"><strong>Resumen de ejecuciÃ³n</strong></div>
           ${renderExecutionSummary(item)}
           <div style="margin:12px 0 6px"><strong>Tools globales</strong></div>
           ${renderToolList(item.tools_used || [])}
@@ -608,7 +646,7 @@ function renderKapsoBasicHtml(debugData) {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Kapso Debug Básico</title>
+  <title>Kapso Debug BÃ¡sico</title>
   <style>
     body{font-family:Arial,sans-serif;background:#0f172a;color:#e2e8f0;margin:0;padding:16px}
     .top{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px}
@@ -629,13 +667,13 @@ function renderKapsoBasicHtml(debugData) {
 </head>
 <body>
   <div class="top">
-    <div class="title">Kapso Debug Básico</div>
+    <div class="title">Kapso Debug BÃ¡sico</div>
     <div class="actions">
       <span id="last-update" style="color:#94a3b8;font-size:11px"></span>
-      <button id="toggle-auto" style="background:#16a34a;color:#fff;border:none;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:12px">⏸ Pausar</button>
+      <button id="toggle-auto" style="background:#16a34a;color:#fff;border:none;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:12px">â¸ Pausar</button>
       <a href="/debug/kapso">Refrescar</a>
       <a href="/debug/kapso/data" target="_blank" rel="noreferrer">Ver JSON</a>
-      <a href="/debug/kapso/visual" style="background:#6366f1;color:#fff;padding:4px 10px;border-radius:6px;text-decoration:none;font-size:12px">🔍 Ver visual</a>
+      <a href="/debug/kapso/visual" style="background:#6366f1;color:#fff;padding:4px 10px;border-radius:6px;text-decoration:none;font-size:12px">ðŸ” Ver visual</a>
     </div>
   </div>
 
@@ -643,9 +681,9 @@ function renderKapsoBasicHtml(debugData) {
     <div class="card"><div class="label">Total</div><div class="value">${interactions.length}</div></div>
     <div class="card"><div class="label">OK</div><div class="value">${okCount}</div></div>
     <div class="card"><div class="label">Errores</div><div class="value">${errorCount}</div></div>
-    <div class="card"><div class="label">Tiempo AVG</div><div class="value">${avgDuration != null ? `${avgDuration} ms` : '—'}</div></div>
-    <div class="card"><div class="label">LLM AVG</div><div class="value">${avgLlm != null ? `${avgLlm} ms` : '—'}</div></div>
-    <div class="card"><div class="label">Infra AVG</div><div class="value">${avgInfra != null ? `${avgInfra} ms` : '—'}</div></div>
+    <div class="card"><div class="label">Tiempo AVG</div><div class="value">${avgDuration != null ? `${avgDuration} ms` : 'â€”'}</div></div>
+    <div class="card"><div class="label">LLM AVG</div><div class="value">${avgLlm != null ? `${avgLlm} ms` : 'â€”'}</div></div>
+    <div class="card"><div class="label">Infra AVG</div><div class="value">${avgInfra != null ? `${avgInfra} ms` : 'â€”'}</div></div>
   </div>
 
   <div class="section">
@@ -654,7 +692,7 @@ function renderKapsoBasicHtml(debugData) {
         <tr>
           <th>Hora</th>
           <th>Contacto</th>
-          <th>Teléfono</th>
+          <th>TelÃ©fono</th>
           <th>Tipo</th>
           <th>Mensaje</th>
           <th>Agente</th>
@@ -698,7 +736,7 @@ function renderKapsoBasicHtml(debugData) {
   let timer = null;
 
   function esc(v){ return String(v??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-  function fms(v){ return v!=null?Math.round(v)+' ms':'—'; }
+  function fms(v){ return v!=null?Math.round(v)+' ms':'â€”'; }
   function tcls(ms){ if(ms==null)return ''; if(ms<5000)return 'color:#34d399'; if(ms<15000)return 'color:#fbbf24'; return 'color:#f87171'; }
   function infraMs(item){
     var t=item.timing; if(!t||t.total_ms==null)return null;
@@ -717,7 +755,7 @@ function renderKapsoBasicHtml(debugData) {
     if(item.contact_timing&&item.contact_timing.total_ms!=null&&!runs.some(function(r){return (r.agent_key||'').indexOf('contact')>=0})){
       parts.push('<span style="white-space:nowrap">Contact: <b>'+fms(item.contact_timing.total_ms)+'</b></span>');
     }
-    return parts.length?parts.join('<br>'):'—';
+    return parts.length?parts.join('<br>'):'â€”';
   }
 
   function renderRow(item, idx){
@@ -727,15 +765,15 @@ function renderKapsoBasicHtml(debugData) {
     var llm=t.llm_ms!=null?Math.round(t.llm_ms):null;
     var tools=t.tool_execution_ms!=null?Math.round(t.tool_execution_ms):null;
     return '<tr>'
-      +'<td>'+esc(item.started_at?new Date(item.started_at).toLocaleString():'—')+'</td>'
-      +'<td>'+esc(item.contact_name||'—')+'</td>'
-      +'<td>'+esc(item.from_phone||'—')+'</td>'
+      +'<td>'+esc(item.started_at?new Date(item.started_at).toLocaleString():'â€”')+'</td>'
+      +'<td>'+esc(item.contact_name||'â€”')+'</td>'
+      +'<td>'+esc(item.from_phone||'â€”')+'</td>'
       +'<td>'+esc(item.message_type||'text')+'</td>'
-      +'<td style="white-space:pre-wrap;max-width:320px">'+esc(item.message_text||'—')+'</td>'
-      +'<td>'+esc(item.agent_name||'—')+'</td>'
-      +'<td>'+esc(item.model_used||'—')+'</td>'
+      +'<td style="white-space:pre-wrap;max-width:320px">'+esc(item.message_text||'â€”')+'</td>'
+      +'<td>'+esc(item.agent_name||'â€”')+'</td>'
+      +'<td>'+esc(item.model_used||'â€”')+'</td>'
       +'<td>'+esc(item.reply_type||'text')+'</td>'
-      +'<td>'+esc(item.reaction_emoji||'—')+'</td>'
+      +'<td>'+esc(item.reaction_emoji||'â€”')+'</td>'
       +'<td style="'+tcls(totalMs)+'"><b>'+fms(totalMs)+'</b></td>'
       +'<td>'+fms(inf)+'</td>'
       +'<td>'+fms(llm)+'</td>'
@@ -747,7 +785,7 @@ function renderKapsoBasicHtml(debugData) {
   }
 
   function renderTimingTbl(t){
-    if(!t)return '<div style="color:#94a3b8">—</div>';
+    if(!t)return '<div style="color:#94a3b8">â€”</div>';
     var inf=t.total_ms!=null?Math.max(0,Math.round(t.total_ms-(t.llm_ms||0)-(t.tool_execution_ms||0)-(t.mcp_discovery_ms||0)-(t.graph_build_ms||0))):null;
     return '<table style="margin-top:8px"><thead><tr><th>Total</th><th>Infra</th><th>LLM</th><th>MCP</th><th>Graph</th><th>Tools</th></tr></thead><tbody><tr>'
       +'<td style="'+tcls(t.total_ms)+'"><b>'+fms(t.total_ms)+'</b></td>'
@@ -761,11 +799,11 @@ function renderKapsoBasicHtml(debugData) {
 
   function renderTools(items){
     if(!Array.isArray(items)||!items.length) return '<div style="color:#94a3b8">Sin herramientas.</div>';
-    return '<table style="margin-top:8px"><thead><tr><th>Tool</th><th>Source</th><th>Estado</th><th>Tiempo</th><th>Descripción</th></tr></thead><tbody>'
+    return '<table style="margin-top:8px"><thead><tr><th>Tool</th><th>Source</th><th>Estado</th><th>Tiempo</th><th>DescripciÃ³n</th></tr></thead><tbody>'
       +items.map(function(it){
-        return '<tr><td>'+esc(it.tool_name||'—')+'</td><td>'+esc(it.source||'—')+'</td><td>'+esc(it.status||'ok')+'</td><td>'+esc(it.duration_ms!=null?it.duration_ms+' ms':'—')+'</td><td>'+esc(it.description||'—')+'</td></tr>'
+        return '<tr><td>'+esc(it.tool_name||'â€”')+'</td><td>'+esc(it.source||'â€”')+'</td><td>'+esc(it.status||'ok')+'</td><td>'+esc(it.duration_ms!=null?it.duration_ms+' ms':'â€”')+'</td><td>'+esc(it.description||'â€”')+'</td></tr>'
           +'<tr><td colspan="5"><div style="margin-bottom:8px"><strong>Input</strong></div><pre>'+esc(JSON.stringify(it.tool_input||{},null,2))+'</pre>'
-          +'<div style="margin:8px 0"><strong>Output</strong></div><pre>'+esc(it.tool_output||'—')+'</pre>'
+          +'<div style="margin:8px 0"><strong>Output</strong></div><pre>'+esc(it.tool_output||'â€”')+'</pre>'
           +(it.error?'<div style="margin-top:8px;color:#fca5a5"><strong>Error:</strong> '+esc(it.error)+'</div>':'')
           +'</td></tr>';
       }).join('')+'</tbody></table>';
@@ -773,9 +811,9 @@ function renderKapsoBasicHtml(debugData) {
 
   function renderAvailableTools(items){
     if(!Array.isArray(items)||!items.length) return '<div style="color:#94a3b8">Sin herramientas disponibles.</div>';
-    return '<table style="margin-top:8px"><thead><tr><th>Tool</th><th>Source</th><th>Descripción</th></tr></thead><tbody>'
+    return '<table style="margin-top:8px"><thead><tr><th>Tool</th><th>Source</th><th>DescripciÃ³n</th></tr></thead><tbody>'
       +items.map(function(it){
-        return '<tr><td>'+esc(it.tool_name||'—')+'</td><td>'+esc(it.source||'—')+'</td><td>'+esc(it.description||'—')+'</td></tr>';
+        return '<tr><td>'+esc(it.tool_name||'â€”')+'</td><td>'+esc(it.source||'â€”')+'</td><td>'+esc(it.description||'â€”')+'</td></tr>';
       }).join('')+'</tbody></table>';
   }
 
@@ -785,11 +823,11 @@ function renderKapsoBasicHtml(debugData) {
     return agentRuns.map(function(r,i){
       var runId='run-'+interactionIdx+'-'+i;
       return '<details id="'+runId+'" style="margin-top:12px">'
-        +'<summary>'+esc(r.agent_name||r.agent_key||'Agente '+(i+1))+' · '+esc(r.agent_kind||'agent')+' · '+esc(r.model_used||'—')+'</summary>'
+        +'<summary>'+esc(r.agent_name||r.agent_key||'Agente '+(i+1))+' Â· '+esc(r.agent_kind||'agent')+' Â· '+esc(r.model_used||'â€”')+'</summary>'
         +'<div style="margin-top:12px">'
-        +'<div style="margin-bottom:10px"><strong>Agent key:</strong> '+esc(r.agent_key||'—')+'</div>'
-        +'<div style="margin-bottom:10px"><strong>Conversation:</strong> '+esc(r.conversation_id||'—')+'</div>'
-        +'<div style="margin-bottom:10px"><strong>Memory session:</strong> '+esc(r.memory_session_id||'—')+'</div>'
+        +'<div style="margin-bottom:10px"><strong>Agent key:</strong> '+esc(r.agent_key||'â€”')+'</div>'
+        +'<div style="margin-bottom:10px"><strong>Conversation:</strong> '+esc(r.conversation_id||'â€”')+'</div>'
+        +'<div style="margin-bottom:10px"><strong>Memory session:</strong> '+esc(r.memory_session_id||'â€”')+'</div>'
         +'<div style="margin-bottom:10px"><strong>LLM iterations:</strong> '+esc(r.llm_iterations??0)+'</div>'
         +'<div style="margin:12px 0 6px"><strong>Timing</strong></div>'+renderTimingTbl(r.timing||{})
         +'<div style="margin:12px 0 6px"><strong>Herramientas disponibles</strong></div>'+renderAvailableTools(r.available_tools||[])
@@ -810,12 +848,12 @@ function renderKapsoBasicHtml(debugData) {
     var agentRuns=Array.isArray(item.agent_runs)?item.agent_runs:[];
 
     return '<details class="section" id="interaction-'+idx+'">'
-      +'<summary>'+esc(item.contact_name||item.from_phone||item.message_id||'Interacción '+(idx+1))+' · '+esc(item.status||'processing')+' · '+esc(item.duration_ms!=null?item.duration_ms+' ms':'—')+'</summary>'
+      +'<summary>'+esc(item.contact_name||item.from_phone||item.message_id||'InteracciÃ³n '+(idx+1))+' Â· '+esc(item.status||'processing')+' Â· '+esc(item.duration_ms!=null?item.duration_ms+' ms':'â€”')+'</summary>'
       +'<div style="margin-top:12px">'
-      +'<div style="margin-bottom:8px"><strong>Message ID:</strong> '+esc(item.message_id||'—')+'</div>'
-      +'<div style="margin:12px 0 6px"><strong>Error</strong></div><pre>'+esc(item.error||'—')+'</pre>'
-      +'<div style="margin-bottom:8px"><strong>Mensaje:</strong></div><pre>'+esc(item.message_text||'—')+'</pre>'
-      +'<div style="margin:12px 0 6px"><strong>Respuesta preview</strong></div><pre>'+esc(item.response_preview||'—')+'</pre>'
+      +'<div style="margin-bottom:8px"><strong>Message ID:</strong> '+esc(item.message_id||'â€”')+'</div>'
+      +'<div style="margin:12px 0 6px"><strong>Error</strong></div><pre>'+esc(item.error||'â€”')+'</pre>'
+      +'<div style="margin-bottom:8px"><strong>Mensaje:</strong></div><pre>'+esc(item.message_text||'â€”')+'</pre>'
+      +'<div style="margin:12px 0 6px"><strong>Respuesta preview</strong></div><pre>'+esc(item.response_preview||'â€”')+'</pre>'
       +'<div style="margin:12px 0 6px"><strong>Embudo en metadata</strong></div><pre>'+esc(funnel)+'</pre>'
       +'<div style="margin:12px 0 6px"><strong>Timing global</strong></div>'+renderTimingTbl(item.timing||{})
       +'<div style="margin:12px 0 6px"><strong>Tools globales</strong></div>'+renderTools(item.tools_used||[])
@@ -839,15 +877,15 @@ function renderKapsoBasicHtml(debugData) {
     if(cards[0])cards[0].textContent=items.length;
     if(cards[1])cards[1].textContent=ok;
     if(cards[2])cards[2].textContent=err;
-    if(cards[3])cards[3].textContent=avg!=null?avg+' ms':'—';
-    if(cards[4])cards[4].textContent=avgLlm!=null?avgLlm+' ms':'—';
-    if(cards[5])cards[5].textContent=avgInf!=null?avgInf+' ms':'—';
+    if(cards[3])cards[3].textContent=avg!=null?avg+' ms':'â€”';
+    if(cards[4])cards[4].textContent=avgLlm!=null?avgLlm+' ms':'â€”';
+    if(cards[5])cards[5].textContent=avgInf!=null?avgInf+' ms':'â€”';
 
     var tbody=document.querySelector('table tbody');
     if(tbody){
       tbody.innerHTML=items.length
         ?items.map(renderRow).join('')
-        :'<tr><td colspan="16" style="padding:20px;color:#94a3b8">Sin interacciones todavía.</td></tr>';
+        :'<tr><td colspan="16" style="padding:20px;color:#94a3b8">Sin interacciones todavÃ­a.</td></tr>';
     }
 
     // Preserve open state of ALL details with IDs (interaction + run + prompts)
@@ -872,7 +910,7 @@ function renderKapsoBasicHtml(debugData) {
     if(jsonPre)jsonPre.textContent=JSON.stringify(data,null,2);
 
     var ts=document.getElementById('last-update');
-    if(ts)ts.textContent='Última actualización: '+new Date().toLocaleTimeString();
+    if(ts)ts.textContent='Ãšltima actualizaciÃ³n: '+new Date().toLocaleTimeString();
   }
 
   function poll(){
@@ -887,11 +925,11 @@ function renderKapsoBasicHtml(debugData) {
     autoRefresh=!autoRefresh;
     var btn=document.getElementById('toggle-auto');
     if(autoRefresh){
-      btn.textContent='⏸ Pausar';
+      btn.textContent='â¸ Pausar';
       btn.style.background='#16a34a';
       timer=setInterval(poll,POLL_INTERVAL);
     }else{
-      btn.textContent='▶ Reanudar';
+      btn.textContent='â–¶ Reanudar';
       btn.style.background='#dc2626';
       clearInterval(timer);
     }
@@ -912,7 +950,7 @@ function renderConstellationHtml(graphData) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Monica Brain — Neural Map</title>
+<title>Monica Brain â€” Neural Map</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
 *{margin:0;padding:0;box-sizing:border-box}
@@ -942,13 +980,13 @@ canvas{display:block;position:absolute;top:0;left:0}
 </style>
 </head>
 <body>
-<a href="/debug/kapso" id="back">← Panel</a>
+<a href="/debug/kapso" id="back">â† Panel</a>
 <div id="header">
   <h1>Monica Brain</h1>
   <p>Neural Architecture Map</p>
 </div>
 <canvas id="c"></canvas>
-<div id="loader">Cargando grafo…</div>
+<div id="loader">Cargando grafoâ€¦</div>
 <div id="tooltip"></div>
 <div id="legend">
   <span><i style="background:#a78bfa;color:#a78bfa"></i> Orquestador</span>
@@ -974,7 +1012,7 @@ const DAMPING=0.97,BOUNCE_MARGIN=0.05;
 
 let NODES=[], EDGES=[];
 
-/* ── Speed control ── */
+/* â”€â”€ Speed control â”€â”€ */
 let SPEED_MULT=1;
 document.querySelectorAll('#speed-ctrl button').forEach(function(btn){
   btn.addEventListener('click',function(){
@@ -984,12 +1022,12 @@ document.querySelectorAll('#speed-ctrl button').forEach(function(btn){
   });
 });
 
-/* ── Flow particles ── */
-// Each particle: { edgeFrom, edgeTo, progress (0→1), speed, color, r, label, trail[] }
+/* â”€â”€ Flow particles â”€â”€ */
+// Each particle: { edgeFrom, edgeTo, progress (0â†’1), speed, color, r, label, trail[] }
 const flowParticles=[];
 const PARTICLE_BASE_DURATION=2200; // ms at x1 to travel full edge
 
-/* Map of stage name → list of edges to animate (each edge: [fromId, toId, color]) */
+/* Map of stage name â†’ list of edges to animate (each edge: [fromId, toId, color]) */
 const STAGE_FLOWS={
   'inbound_received':      [['whatsapp','orch','#60a5fa']],
   'fallback_numero':       [['orch','orch','#f59e0b']],
@@ -1037,7 +1075,7 @@ function triggerFlows(stage){
   });
 }
 
-/* ── Real-time event tracking ── */
+/* â”€â”€ Real-time event tracking â”€â”€ */
 const seenEventKeys=new Set();
 let lastPollAt=0;
 const POLL_INTERVAL=4000;
@@ -1082,7 +1120,7 @@ function pollDebugData(){
   }).catch(function(){});
 }
 
-/* ── Load graph schema (injected server-side) ── */
+/* â”€â”€ Load graph schema (injected server-side) â”€â”€ */
 const _injected = ${injectedData};
 if(_injected && _injected.nodes){
   NODES=_injected.nodes;
@@ -1106,10 +1144,10 @@ if(_injected && _injected.nodes){
   setTimeout(function(){triggerFlows('run_agent_start');},1600);
   setTimeout(function(){triggerFlows('run_agent_done');},2600);
 }else{
-  if(LOADER)LOADER.textContent='Grafo no disponible — reinicia el servidor Python';
+  if(LOADER)LOADER.textContent='Grafo no disponible â€” reinicia el servidor Python';
 }
 
-/* ── Nebula & stars ── */
+/* â”€â”€ Nebula & stars â”€â”€ */
 const stars=Array.from({length:400},()=>({x:Math.random(),y:Math.random(),s:Math.random()*1.2+.3,b:Math.random(),sp:Math.random()*.5+.5}));
 const nebulae=[
   {x:.3,y:.35,rx:220,ry:140,color:'rgba(99,102,241,.04)'},
@@ -1319,7 +1357,7 @@ function draw(){
 }
 requestAnimationFrame(draw);
 
-/* ── Interaction: drag & hover ── */
+/* â”€â”€ Interaction: drag & hover â”€â”€ */
 function hitTest(ex,ey){
   for(const n of NODES){
     const p=nodePos(n);
@@ -1502,9 +1540,9 @@ function renderKapsoDebugHtml() {
     <span class="pill">LIVE</span>
     <div class="hdr-r">
       <span class="muted" id="upd">cargando...</span>
-      <button class="btn btn-g" id="ar-btn">⏸ Pausar</button>
-      <button class="btn" id="refresh-btn">↻ Refrescar</button>
-      <button class="btn" id="visual-btn" style="background:#6366f1;color:#fff;">🔍 Ver visual</button>
+      <button class="btn btn-g" id="ar-btn">â¸ Pausar</button>
+      <button class="btn" id="refresh-btn">â†» Refrescar</button>
+      <button class="btn" id="visual-btn" style="background:#6366f1;color:#fff;">ðŸ” Ver visual</button>
     </div>
   </div>
   <div class="layout">
@@ -1513,7 +1551,7 @@ function renderKapsoDebugHtml() {
         <div class="stat"><div class="stat-n" id="st">0</div><div class="stat-l">Total</div></div>
         <div class="stat s-ok"><div class="stat-n" id="sk">0</div><div class="stat-l">OK</div></div>
         <div class="stat s-err"><div class="stat-n" id="se">0</div><div class="stat-l">Errores</div></div>
-        <div class="stat s-avg"><div class="stat-n" id="sa">—</div><div class="stat-l">Tiempo avg</div></div>
+        <div class="stat s-avg"><div class="stat-n" id="sa">â€”</div><div class="stat-l">Tiempo avg</div></div>
       </div>
       <div class="sb-title">Bridge Config</div>
       <div id="bcfg"></div>
@@ -1523,7 +1561,7 @@ function renderKapsoDebugHtml() {
     <div class="main">
       <div class="tbar">
         <h2>Interacciones</h2>
-        <input class="fi" id="fi" placeholder="Filtrar por teléfono o nombre...">
+        <input class="fi" id="fi" placeholder="Filtrar por telÃ©fono o nombre...">
       </div>
       <table>
         <thead><tr>
@@ -1539,7 +1577,7 @@ function renderKapsoDebugHtml() {
     <div class="modal">
       <div class="mhdr">
         <div>
-          <div class="mttl" id="mttl">Interacción <span id="msub"></span></div>
+          <div class="mttl" id="mttl">InteracciÃ³n <span id="msub"></span></div>
         </div>
         <button class="mcls" id="close-btn">&#x2715;</button>
       </div>
@@ -1564,16 +1602,16 @@ function renderKapsoDebugScript() {
   return `let D={},sel=null,ar=true,arT=null,fq='';
 
 const esc=s=>String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-const trunc=(s,n=45)=>!s?'<span class="muted">—</span>':s.length>n?esc(s.slice(0,n))+'&hellip;':esc(s);
-function rel(t){if(!t)return'—';const d=Date.now()-new Date(t);if(d<60e3)return Math.round(d/1e3)+'s';if(d<3600e3)return Math.round(d/60e3)+'m ago';return new Date(t).toLocaleTimeString();}
-function fms(ms){if(!ms&&ms!==0)return'—';if(ms<1e3)return Math.round(ms)+'ms';return(ms/1e3).toFixed(1)+'s';}
+const trunc=(s,n=45)=>!s?'<span class="muted">â€”</span>':s.length>n?esc(s.slice(0,n))+'&hellip;':esc(s);
+function rel(t){if(!t)return'â€”';const d=Date.now()-new Date(t);if(d<60e3)return Math.round(d/1e3)+'s';if(d<3600e3)return Math.round(d/60e3)+'m ago';return new Date(t).toLocaleTimeString();}
+function fms(ms){if(!ms&&ms!==0)return'â€”';if(ms<1e3)return Math.round(ms)+'ms';return(ms/1e3).toFixed(1)+'s';}
 function tcls(ms){if(!ms)return'';if(ms<1500)return'tf';if(ms<4e3)return'tm';return'ts';}
 function sBadge(s){if(s==='ok')return'<span class="bok"><span class="dot"></span>OK</span>';if(s==='error')return'<span class="berr"><span class="dot"></span>Error</span>';return'<span class="bprc"><span class="sp"></span></span>';}
-function mshort(m){if(!m)return'—';const p=m.split('/');return p[p.length-1];}
+function mshort(m){if(!m)return'â€”';const p=m.split('/');return p[p.length-1];}
 
 function filt(items){return fq?items.filter(i=>(i.from_phone||'').includes(fq)||(i.contact_name||'').toLowerCase().includes(fq.toLowerCase())):items;}
 
-function renderCfg(id,obj){document.getElementById(id).innerHTML=Object.entries(obj||{}).map(([k,v])=>'<div class="cfg-row"><div class="cfg-k">'+esc(k)+'</div><div class="cfg-v">'+esc(v??'—')+'</div></div>').join('');}
+function renderCfg(id,obj){document.getElementById(id).innerHTML=Object.entries(obj||{}).map(([k,v])=>'<div class="cfg-row"><div class="cfg-k">'+esc(k)+'</div><div class="cfg-v">'+esc(v??'â€”')+'</div></div>').join('');}
 
 function renderStats(items){
   const ok=items.filter(i=>i.status==='ok').length;
@@ -1589,18 +1627,18 @@ function renderStats(items){
 function renderTable(items){
   const rows=filt(items);
   const tbody=document.getElementById('tbody');
-  if(!rows.length){tbody.innerHTML='<tr><td colspan="10" class="nd">'+(items.length?'Sin resultados para ese filtro.':'Sin interacciones aún. Envía un mensaje WhatsApp para ver actividad.')+'</td></tr>';return;}
+  if(!rows.length){tbody.innerHTML='<tr><td colspan="10" class="nd">'+(items.length?'Sin resultados para ese filtro.':'Sin interacciones aÃºn. EnvÃ­a un mensaje WhatsApp para ver actividad.')+'</td></tr>';return;}
   tbody.innerHTML=rows.map((it,i)=>
     '<tr class="'+(sel&&sel.id===it.id?'sel':'')+'" data-row-idx="'+i+'">'+
       '<td class="muted">'+rel(it.started_at)+'</td>'+
-      '<td><div style="font-weight:600;color:#f1f5f9">'+esc(it.contact_name||'—')+'</div><div class="muted">'+esc(it.from_phone||'')+'</div></td>'+
+      '<td><div style="font-weight:600;color:#f1f5f9">'+esc(it.contact_name||'â€”')+'</div><div class="muted">'+esc(it.from_phone||'')+'</div></td>'+
       '<td class="muted">'+esc(it.message_type||'text')+'</td>'+
       '<td style="max-width:180px">'+trunc(it.message_text)+'</td>'+
-      '<td><div style="color:#e2e8f0">'+esc(it.agent_name||'—')+'</div><div class="muted">#'+(it.agent_id||'?')+'</div></td>'+
+      '<td><div style="color:#e2e8f0">'+esc(it.agent_name||'â€”')+'</div><div class="muted">#'+(it.agent_id||'?')+'</div></td>'+
       '<td><span class="bm" title="'+esc(it.model_used||'')+'">'+esc(mshort(it.model_used))+'</span></td>'+
       '<td><span class="tp '+tcls(it.duration_ms)+'">'+fms(it.duration_ms)+'</span></td>'+
-      '<td>'+((it.tools_used||[]).length?'<span class="bt">'+((it.tools_used||[]).length)+' tool'+((it.tools_used||[]).length>1?'s':'')+'</span>':'<span class="muted">—</span>')+'</td>'+
-      '<td style="font-size:14px">'+(it.reaction_emoji||'<span class="muted">—</span>')+'</td>'+
+      '<td>'+((it.tools_used||[]).length?'<span class="bt">'+((it.tools_used||[]).length)+' tool'+((it.tools_used||[]).length>1?'s':'')+'</span>':'<span class="muted">â€”</span>')+'</td>'+
+      '<td style="font-size:14px">'+(it.reaction_emoji||'<span class="muted">â€”</span>')+'</td>'+
       '<td>'+sBadge(it.status)+'</td>'+
     '</tr>'
   ).join('');
@@ -1616,37 +1654,37 @@ function openM(idx){
   const tm=it.timing||{};
   const tools=it.tools_used||[];
   const maxMs=tm.total_ms||1;
-  document.getElementById('mttl').innerHTML='Interacción <span id="msub">'+esc(it.contact_name||it.from_phone||'')+'</span>';
+  document.getElementById('mttl').innerHTML='InteracciÃ³n <span id="msub">'+esc(it.contact_name||it.from_phone||'')+'</span>';
   document.getElementById('tc-ov').innerHTML=
-    '<div class="msgbox"><div class="msgl">💬 Mensaje recibido</div><div class="msgt">'+(esc(it.message_text)||'<em style="color:#64748b">Sin texto</em>')+'</div></div>'+
+    '<div class="msgbox"><div class="msgl">ðŸ’¬ Mensaje recibido</div><div class="msgt">'+(esc(it.message_text)||'<em style="color:#64748b">Sin texto</em>')+'</div></div>'+
     '<div class="dg">'+
       '<div class="dc"><div class="dct">Contacto</div>'+
-        '<div class="dr"><span class="dk">Nombre</span><span class="dv">'+esc(it.contact_name||'—')+'</span></div>'+
-        '<div class="dr"><span class="dk">Teléfono</span><span class="dv">'+esc(it.from_phone||'—')+'</span></div>'+
-        '<div class="dr"><span class="dk">Tipo msg</span><span class="dv">'+esc(it.message_type||'—')+'</span></div>'+
-        '<div class="dr"><span class="dk">Message ID</span><span class="dv" style="font-size:9px;font-family:monospace">'+esc(it.message_id||'—')+'</span></div>'+
+        '<div class="dr"><span class="dk">Nombre</span><span class="dv">'+esc(it.contact_name||'â€”')+'</span></div>'+
+        '<div class="dr"><span class="dk">TelÃ©fono</span><span class="dv">'+esc(it.from_phone||'â€”')+'</span></div>'+
+        '<div class="dr"><span class="dk">Tipo msg</span><span class="dv">'+esc(it.message_type||'â€”')+'</span></div>'+
+        '<div class="dr"><span class="dk">Message ID</span><span class="dv" style="font-size:9px;font-family:monospace">'+esc(it.message_id||'â€”')+'</span></div>'+
       '</div>'+
       '<div class="dc"><div class="dct">Agente</div>'+
-        '<div class="dr"><span class="dk">Nombre</span><span class="dv">'+esc(it.agent_name||'—')+'</span></div>'+
-        '<div class="dr"><span class="dk">ID</span><span class="dv">#'+(it.agent_id||'—')+'</span></div>'+
-        '<div class="dr"><span class="dk">Modelo</span><span class="dv">'+esc(it.model_used||'—')+'</span></div>'+
-        '<div class="dr"><span class="dk">MCP servers</span><span class="dv">'+((it.mcp_servers||[]).length?it.mcp_servers.map(u=>u.split('/').pop()).join(', '):'—')+'</span></div>'+
-        '<div class="dr"><span class="dk">Memory session</span><span class="dv" style="font-size:9px">'+esc(it.memory_session_id||'—')+'</span></div>'+
+        '<div class="dr"><span class="dk">Nombre</span><span class="dv">'+esc(it.agent_name||'â€”')+'</span></div>'+
+        '<div class="dr"><span class="dk">ID</span><span class="dv">#'+(it.agent_id||'â€”')+'</span></div>'+
+        '<div class="dr"><span class="dk">Modelo</span><span class="dv">'+esc(it.model_used||'â€”')+'</span></div>'+
+        '<div class="dr"><span class="dk">MCP servers</span><span class="dv">'+((it.mcp_servers||[]).length?it.mcp_servers.map(u=>u.split('/').pop()).join(', '):'â€”')+'</span></div>'+
+        '<div class="dr"><span class="dk">Memory session</span><span class="dv" style="font-size:9px">'+esc(it.memory_session_id||'â€”')+'</span></div>'+
       '</div>'+
     '</div>'+
     '<div class="dg">'+
       '<div class="dc"><div class="dct">Resultado</div>'+
         '<div class="dr"><span class="dk">Status</span><span class="dv">'+sBadge(it.status)+'</span></div>'+
-        '<div class="dr"><span class="dk">Duración</span><span class="dv tp '+tcls(it.duration_ms)+'">'+fms(it.duration_ms)+'</span></div>'+
+        '<div class="dr"><span class="dk">DuraciÃ³n</span><span class="dv tp '+tcls(it.duration_ms)+'">'+fms(it.duration_ms)+'</span></div>'+
         '<div class="dr"><span class="dk">Tipo respuesta</span><span class="dv">'+esc(it.reply_type||'text')+'</span></div>'+
-        '<div class="dr"><span class="dk">Chars respuesta</span><span class="dv">'+(it.response_chars??'—')+'</span></div>'+
-        '<div class="dr"><span class="dk">Reacción emoji</span><span class="dv" style="font-size:16px">'+(it.reaction_emoji||'—')+'</span></div>'+
+        '<div class="dr"><span class="dk">Chars respuesta</span><span class="dv">'+(it.response_chars??'â€”')+'</span></div>'+
+        '<div class="dr"><span class="dk">ReacciÃ³n emoji</span><span class="dv" style="font-size:16px">'+(it.reaction_emoji||'â€”')+'</span></div>'+
         (it.error?'<div class="dr"><span class="dk">Error</span><span class="dv" style="color:#f87171">'+esc(it.error)+'</span></div>':'')+
       '</div>'+
       '<div class="dc"><div class="dct">Timestamps</div>'+
-        '<div class="dr"><span class="dk">Inicio</span><span class="dv">'+(it.started_at?new Date(it.started_at).toLocaleTimeString():'—')+'</span></div>'+
-        '<div class="dr"><span class="dk">Fin</span><span class="dv">'+(it.finished_at?new Date(it.finished_at).toLocaleTimeString():'—')+'</span></div>'+
-        '<div class="dr"><span class="dk">Fecha</span><span class="dv">'+(it.started_at?new Date(it.started_at).toLocaleDateString():'—')+'</span></div>'+
+        '<div class="dr"><span class="dk">Inicio</span><span class="dv">'+(it.started_at?new Date(it.started_at).toLocaleTimeString():'â€”')+'</span></div>'+
+        '<div class="dr"><span class="dk">Fin</span><span class="dv">'+(it.finished_at?new Date(it.finished_at).toLocaleTimeString():'â€”')+'</span></div>'+
+        '<div class="dr"><span class="dk">Fecha</span><span class="dv">'+(it.started_at?new Date(it.started_at).toLocaleDateString():'â€”')+'</span></div>'+
         '<div class="dr"><span class="dk">Tools usadas</span><span class="dv">'+tools.length+'</span></div>'+
       '</div>'+
     '</div>';
@@ -1663,11 +1701,11 @@ function openM(idx){
     '</div>';
   document.getElementById('tc-tl').innerHTML=tools.length
     ?tools.map(t=>(
-      '<div class="tl"><div class="tln">⚙️ '+esc(t.tool_name)+'</div>'+
+      '<div class="tl"><div class="tln">âš™ï¸ '+esc(t.tool_name)+'</div>'+
       '<div class="tllbl">Input</div><pre class="cd">'+esc(JSON.stringify(t.tool_input,null,2))+'</pre>'+
-      '<div class="tllbl">Output</div><pre class="cd">'+esc(t.tool_output||'—')+'</pre></div>'
+      '<div class="tllbl">Output</div><pre class="cd">'+esc(t.tool_output||'â€”')+'</pre></div>'
     )).join('')
-    :'<div class="nd">No se usaron herramientas externas en esta interacción.</div>';
+    :'<div class="nd">No se usaron herramientas externas en esta interacciÃ³n.</div>';
   document.getElementById('tc-rp').innerHTML=it.response_preview
     ?('<div class="resp"><div class="msgl">Respuesta enviada <span class="muted">('+
       (it.response_chars||0)+' chars)</span></div><div class="msgt">'+esc(it.response_preview)+
@@ -1698,7 +1736,7 @@ async function loadAll(){
 
 function toggleAR(){
   ar=!ar;
-  document.getElementById('ar-btn').textContent=ar?'⏸ Pausar':'▶ Reanudar';
+  document.getElementById('ar-btn').textContent=ar?'â¸ Pausar':'â–¶ Reanudar';
   if(ar){arT=setInterval(loadAll,4000);}else{clearInterval(arT);}
 }
 
@@ -1872,7 +1910,7 @@ function normalizeWhatsAppText(input) {
   return String(input)
     .replace(/\r\n/g, '\n')
     .replace(/\u00A0/g, ' ')
-    .replace(/^\s*[•*]\s+/gm, '- ')
+    .replace(/^\s*[â€¢*]\s+/gm, '- ')
     .replace(/\n{3,}/g, '\n\n')
     .replace(/[ \t]{2,}/g, ' ')
     .trim();
@@ -1926,7 +1964,7 @@ const TYPING_KEEPALIVE_INTERVAL_MS = 20_000;
 
 /**
  * Start a periodic typing indicator that re-fires every 20s.
- * Returns an abort controller — call .abort() to stop the loop.
+ * Returns an abort controller â€” call .abort() to stop the loop.
  */
 function startTypingKeepalive(phoneNumberId, messageId) {
   const ac = new AbortController();
@@ -1974,7 +2012,7 @@ async function callInternalAgent(sqlPayload) {
 
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(`Backend FastAPI respondió ${response.status}: ${body}`);
+    throw new Error(`Backend FastAPI respondiÃ³ ${response.status}: ${body}`);
   }
 
   const reply = await response.json();
@@ -2111,7 +2149,7 @@ async function dispatchKapsoResponse(reply) {
     );
   }
 
-  // Texto: si también hay reacción, enviarla primero y luego el texto (dual-dispatch)
+  // Texto: si tambiÃ©n hay reacciÃ³n, enviarla primero y luego el texto (dual-dispatch)
   if (reply.reaction?.message_id && reply.reaction?.emoji) {
     addBridgeDebugEvent('kapso_send_reaction_with_text', {
       to: recipientPhone,
@@ -2134,8 +2172,8 @@ async function dispatchKapsoResponse(reply) {
         `sendReaction(${recipientPhone})`,
       );
     } catch (reactionError) {
-      // No bloqueamos el envío del texto si la reacción falla
-      console.warn('[KapsoBridge] Reacción falló (no bloquea texto):', reactionError?.message || reactionError);
+      // No bloqueamos el envÃ­o del texto si la reacciÃ³n falla
+      console.warn('[KapsoBridge] ReacciÃ³n fallÃ³ (no bloquea texto):', reactionError?.message || reactionError);
     }
   }
 
@@ -2174,6 +2212,25 @@ app.get('/health', (_req, res) => {
   res.status(200).json({ status: 'ok', bridge: 'kapso', timestamp: new Date().toISOString() });
 });
 
+app.get('/openapi.json', async (req, res) => {
+  await proxyFastApiRequest(req, res, '/openapi.json');
+});
+
+app.post('/api/v1/scheduling/disponibilidad', async (req, res) => {
+  await proxyFastApiRequest(req, res, '/api/v1/scheduling/disponibilidad');
+});
+
+app.post('/api/v1/scheduling/crear-evento', async (req, res) => {
+  await proxyFastApiRequest(req, res, '/api/v1/scheduling/crear-evento');
+});
+
+app.post('/api/v1/scheduling/reagendar-evento', async (req, res) => {
+  await proxyFastApiRequest(req, res, '/api/v1/scheduling/reagendar-evento');
+});
+
+app.post('/api/v1/scheduling/eliminar-evento', async (req, res) => {
+  await proxyFastApiRequest(req, res, '/api/v1/scheduling/eliminar-evento');
+});
 app.get('/debug/kapso', async (_req, res) => {
   try {
     const debugData = await collectKapsoDebugPayload();
