@@ -4260,9 +4260,13 @@ async function dispatchKapsoResponse(reply) {
 
         to: recipientPhone,
 
-        link: reply.image_url,
+        image: {
 
-        caption: reply.image_caption ? normalizeWhatsAppText(reply.image_caption) : undefined,
+          link: reply.image_url,
+
+          caption: reply.image_caption ? normalizeWhatsAppText(reply.image_caption) : undefined,
+
+        },
 
       }),
 
@@ -4284,7 +4288,11 @@ async function dispatchKapsoResponse(reply) {
 
         to: recipientPhone,
 
-        link: reply.audio_url,
+        audio: {
+
+          link: reply.audio_url,
+
+        },
 
       }),
 
@@ -4306,9 +4314,13 @@ async function dispatchKapsoResponse(reply) {
 
         to: recipientPhone,
 
-        link: reply.video_url,
+        video: {
 
-        caption: reply.video_caption ? normalizeWhatsAppText(reply.video_caption) : undefined,
+          link: reply.video_url,
+
+          caption: reply.video_caption ? normalizeWhatsAppText(reply.video_caption) : undefined,
+
+        },
 
       }),
 
@@ -4330,11 +4342,15 @@ async function dispatchKapsoResponse(reply) {
 
         to: recipientPhone,
 
-        link: reply.document.url,
+        document: {
 
-        filename: reply.document.filename,
+          link: reply.document.url,
 
-        caption: reply.document.caption ? normalizeWhatsAppText(reply.document.caption) : undefined,
+          filename: reply.document.filename,
+
+          caption: reply.document.caption ? normalizeWhatsAppText(reply.document.caption) : undefined,
+
+        },
 
       }),
 
