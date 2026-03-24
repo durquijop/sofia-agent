@@ -1621,6 +1621,19 @@ async def kapso_inbound(
             # "monica" keeps reply_type="text" — the agent response IS the analysis
             logger.info("Comando detectado: cmd=%s reply_type=%s url=%s", cmd, reply_type, cmd_url[:80] if cmd_url else "")
 
+            # Append multimedia note to contact's notas in wp_contactos
+            if contacto_id and cmd in ("image", "audio", "video"):
+                try:
+                    contacto_actual = await db.get_contacto(contacto_id)
+                    notas_prev = (contacto_actual or {}).get("notas") or ""
+                    nota_multimedia = f"Multimedia enviada: {cmd} de {cmd_extra}" if cmd_extra else f"Multimedia enviada: {cmd}"
+                    nuevas_notas = f"{notas_prev}; {nota_multimedia}" if notas_prev else nota_multimedia
+                    sb = await get_supabase()
+                    await sb.update("wp_contactos", {"id": contacto_id}, {"notas": nuevas_notas})
+                    logger.info("Notas multimedia actualizadas contacto_id=%s", contacto_id)
+                except Exception:
+                    logger.exception("Error actualizando notas multimedia contacto_id=%s", contacto_id)
+
         return KapsoInboundResponse(
             reply_type=reply_type,
             reply_text=final_reply_text or f"[closing_followup:{reaction_emoji or '👍'}]",
