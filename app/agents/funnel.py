@@ -867,8 +867,8 @@ async def run_funnel_agent(request: FunnelAgentRequest) -> FunnelAgentResponse:
     """Ejecuta el agente de embudo."""
     t_start = time.perf_counter()
     
-    # Usar x-ai/grok-4.1-fast para este agente (optimizado para embudo)
-    model = "x-ai/grok-4.1-fast"
+    # Usar google/gemini-2.5-flash-lite para este agente (optimizado para embudo)
+    model = "google/gemini-2.5-flash-lite"
     max_tokens = request.max_tokens or 512
     temperature = request.temperature if request.temperature is not None else 0.5
     

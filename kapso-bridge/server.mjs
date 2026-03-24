@@ -1996,9 +1996,9 @@ canvas{display:block;position:absolute;top:0;left:0}
 
   <span>Velocidad</span>
 
-  <button class="active" data-speed="1">x1</button>
+  <button data-speed="1">x1</button>
 
-  <button data-speed="2">x2</button>
+  <button class="active" data-speed="2">x2</button>
 
   <button data-speed="4">x4</button>
 
@@ -2028,7 +2028,7 @@ let NODES=[], EDGES=[];
 
 /* ── Speed control ── */
 
-let SPEED_MULT=1;
+let SPEED_MULT=2;
 
 document.querySelectorAll('#speed-ctrl button').forEach(function(btn){
 
