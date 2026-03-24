@@ -13,6 +13,7 @@ from app.agents.contact_update import run_contact_update_agent
 from app.agents.conversational import run_agent, CLOSING_FOLLOWUP_MARKER
 from app.agents.funnel import run_funnel_agent
 from app.core.config import get_settings
+from app.core.error_webhook import send_error_to_webhook
 from app.core.kapso_debug import (
     add_kapso_debug_event,
     get_kapso_debug_events,
@@ -77,6 +78,10 @@ SUPABASE_STORAGE_BUCKET = "multimedia"
 SUPABASE_EDGE_CREAR_MULTIMEDIA = "crear-multimedia-inicial-v1"
 SUPABASE_EDGE_GUARDAR_MULTIMEDIA = "guardar-multimedia-v4"
 VISION_MODEL = "google/gemini-2.5-flash"
+VISION_MAX_CONCURRENT = 3  # Max parallel vision calls to avoid rate limits
+VISION_MAX_RETRIES = 3
+VISION_BASE_BACKOFF = 2  # seconds
+_vision_semaphore = asyncio.Semaphore(VISION_MAX_CONCURRENT)
 _IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
 _DOCUMENT_EXTENSIONS = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv"}
 
@@ -153,6 +158,7 @@ async def _describe_image_with_vision(image_url: str, instructions: str | None =
     """Call OpenRouter vision model to describe an image.
 
     Uses Gemini Flash via OpenRouter.  Returns the description text or None.
+    Includes: semaphore (max concurrent), retry with exponential backoff, fallback.
     """
     settings = get_settings()
     prompt = instructions or "Describe la imagen de forma detallada y útil."
@@ -173,21 +179,45 @@ async def _describe_image_with_vision(image_url: str, instructions: str | None =
         "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
     }
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as http:
-            resp = await http.post(
-                f"{settings.OPENROUTER_BASE_URL}/chat/completions",
-                json=payload,
-                headers=headers,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            description = data["choices"][0]["message"]["content"]
-            logger.info("Vision description obtained: %d chars", len(description))
-            return description
-    except Exception as exc:
-        logger.error("Vision description failed: %s", exc, exc_info=True)
-        return None
+
+    last_exc: Exception | None = None
+    async with _vision_semaphore:
+        for attempt in range(1, VISION_MAX_RETRIES + 1):
+            try:
+                async with httpx.AsyncClient(timeout=60.0) as http:
+                    resp = await http.post(
+                        f"{settings.OPENROUTER_BASE_URL}/chat/completions",
+                        json=payload,
+                        headers=headers,
+                    )
+                    if resp.status_code == 429:
+                        retry_after = float(resp.headers.get("retry-after", VISION_BASE_BACKOFF * attempt))
+                        logger.warning("Vision rate limited (429), retry %d/%d in %.1fs", attempt, VISION_MAX_RETRIES, retry_after)
+                        await asyncio.sleep(retry_after)
+                        continue
+                    resp.raise_for_status()
+                    data = resp.json()
+                    description = data["choices"][0]["message"]["content"]
+                    logger.info("Vision description obtained: %d chars (attempt %d)", len(description), attempt)
+                    return description
+            except Exception as exc:
+                last_exc = exc
+                if attempt < VISION_MAX_RETRIES:
+                    wait = VISION_BASE_BACKOFF * attempt
+                    logger.warning("Vision attempt %d/%d failed: %s — retrying in %ds", attempt, VISION_MAX_RETRIES, exc, wait)
+                    await asyncio.sleep(wait)
+                else:
+                    logger.error("Vision description failed after %d attempts: %s", VISION_MAX_RETRIES, exc, exc_info=True)
+
+    # All retries exhausted — notify webhook and return fallback
+    if last_exc:
+        await send_error_to_webhook(
+            last_exc,
+            context="vision_rate_limit",
+            severity="warning",
+            fallback=f"La descripción de imagen falló tras {VISION_MAX_RETRIES} reintentos (probablemente rate limit de OpenRouter/Gemini). Se usó fallback: el agente recibe 'El contacto envió una imagen' en lugar de la descripción. El mensaje se procesó normalmente.",
+        )
+    return None
 
 
 async def _upload_audio_to_storage(audio_url: str, filename: str) -> str | None:
@@ -395,6 +425,13 @@ async def _process_image_message(
     # Use the public storage URL if available, otherwise the original Kapso URL
     image_for_vision = storage_url or media_url
     description = await _describe_image_with_vision(image_for_vision, vision_prompt)
+
+    # Fallback: if vision failed (rate limit, timeout), give the agent something useful
+    if description is None:
+        fallback_desc = "El contacto envió una imagen."
+        if storage_url:
+            fallback_desc += f" URL: {storage_url}"
+        description = fallback_desc
 
     # Multimedia pipeline (async, non-blocking)
     if storage_url and contacto_id:
