@@ -222,6 +222,15 @@ async def _build_graph_schema(empresa_id: int | None = None) -> dict:
     edges.append({"from": "conv", "to": "t_comandos", "label": ""})
     edges.append({"from": "t_comandos", "to": "whatsapp", "label": "multimedia"})
 
+    # Built-in: desactivar_contacto_spam
+    nodes.append({
+        "id": "t_spam", "label": "desactivar_spam", "kind": "tool",
+        "desc": "Herramienta: desactivar_contacto_spam",
+        "detail": "Marca contacto como spam y lo desactiva\nLlama Edge Function: apagar-contacto-spam-v1\nActualiza wp_contactos vía Supabase\nEvita seguimiento y mensajes futuros",
+    })
+    edges.append({"from": "conv", "to": "t_spam", "label": ""})
+    edges.append({"from": "t_spam", "to": "supabase", "label": "desactivar spam"})
+
     # ── Funnel Agent ──
     nodes.append({
         "id": "funnel", "label": "Embudo", "kind": "agent",
@@ -291,6 +300,7 @@ _DEFAULT_POSITIONS: dict[str, tuple[float, float]] = {
     "t_nota":     (0.50, 0.72),
     "t_calificado":(0.78, 0.60),
     "t_comandos":  (0.42, 0.82),
+    "t_spam":      (0.58, 0.82),
     "t_metadata": (0.12, 0.60),
     "t_update":   (0.88, 0.40),
     "mcp_srv":    (0.22, 0.80),

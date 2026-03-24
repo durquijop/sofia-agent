@@ -2096,6 +2096,8 @@ const TOOL_NODE_MAP={
 
   'update_contact_info':        't_update',
 
+  'desactivar_contacto_spam':   't_spam',
+
 };
 
 /* Tools that come from MCP (not in TOOL_NODE_MAP) route to t_mcp */
@@ -2143,6 +2145,10 @@ function buildDynamicFlows(stage, payload){
       // If guardar_nota or marcar_calificado, animate to supabase
 
       if(nodeId === 't_nota' || nodeId === 't_calificado') flows.push([nodeId,'supabase','#f472b6']);
+
+      // If desactivar_spam, animate to supabase
+
+      if(nodeId === 't_spam') flows.push(['t_spam','supabase','#f472b6']);
 
     });
 
