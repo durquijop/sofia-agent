@@ -213,6 +213,15 @@ async def _build_graph_schema(empresa_id: int | None = None) -> dict:
     edges.append({"from": "conv", "to": "t_calificado", "label": ""})
     edges.append({"from": "t_calificado", "to": "supabase", "label": "PATCH calificado"})
 
+    # Built-in: ejecutar_comando (multimedia sending)
+    nodes.append({
+        "id": "t_comandos", "label": "ejecutar_comando", "kind": "tool",
+        "desc": "Herramienta: ejecutar_comando",
+        "detail": "Envía multimedia al contacto vía Kapso\nComandos: image, audio, video\nParámetros: comando, solicitud (URL), extra (caption)\nLee URLs de manejo_herramientas e instrucciones",
+    })
+    edges.append({"from": "conv", "to": "t_comandos", "label": ""})
+    edges.append({"from": "t_comandos", "to": "whatsapp", "label": "multimedia"})
+
     # ── Funnel Agent ──
     nodes.append({
         "id": "funnel", "label": "Embudo", "kind": "agent",
