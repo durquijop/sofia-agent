@@ -240,6 +240,45 @@ Args:
     return ejecutar_comando
 
 
+DESACTIVAR_SPAM_URL = "https://vecspltvmyopwbjzerow.supabase.co/functions/v1/apagar-contacto-spam-v1"
+
+
+def _create_desactivar_contacto_spam_tool(contacto_id: int, empresa_id: int):
+    """Crea un tool para desactivar contacto spam via Edge Function."""
+
+    @tool
+    async def desactivar_contacto_spam() -> str:
+        """🚫 Desactivar contacto por comportamiento inadecuado (spam/abuso).
+
+USA ESTA HERRAMIENTA cuando el usuario muestre comportamiento inadecuado:
+- Mensajes de spam repetitivos
+- Contenido ofensivo, acoso o amenazas
+- Intentos de phishing o estafa
+- Abuso persistente del canal de comunicación
+
+EFECTO: Desactiva permanentemente el contacto y bloquea futuras conversaciones.
+
+⚠️ IMPORTANTE: Solo usar en casos claros de abuso. Esta acción es irreversible.
+No requiere parámetros, se ejecuta automáticamente con los datos del contacto actual.
+"""
+        try:
+            client = _get_http_client()
+            resp = await client.post(
+                DESACTIVAR_SPAM_URL,
+                json={"contacto_id": contacto_id, "empresa_id": empresa_id},
+                headers={"Content-Type": "application/json"},
+            )
+            data = resp.json()
+            if resp.status_code == 200 and data.get("success"):
+                return f"✅ Contacto {contacto_id} desactivado correctamente. {data.get('message', '')}"
+            return f"❌ Error al desactivar contacto: {data.get('error', resp.text)}"
+        except Exception as exc:
+            logger.error("Error desactivando contacto spam %s: %s", contacto_id, exc)
+            return f"❌ Error al desactivar contacto: {exc}"
+
+    return desactivar_contacto_spam
+
+
 def _get_http_client() -> httpx.AsyncClient:
     """Retorna un cliente HTTP compartido con connection pooling."""
     global _shared_http_client
@@ -601,14 +640,21 @@ def _build_graph(llm_with_tools, tools: list) -> StateGraph:
                 reaction_emoji = str(tool_input["emoji"])
 
         original_user_message = state.get("original_user_message") or ""
-        if (
+        only_reaction_tools = (
             tool_names
             and all(name == SEND_REACTION_TOOL_NAME for name in tool_names)
             and all_tools_ok
-            and _is_reaction_only_request(original_user_message)
-        ):
+        )
+        if only_reaction_tools and _is_reaction_only_request(original_user_message):
             short_circuit_after_tools = True
             short_circuit_response = _build_reaction_ack(original_user_message, reaction_emoji)
+
+        # When only reaction was called but the message needs more processing
+        # (e.g. user provided email + expects availability check), give back
+        # the iteration so the agent keeps full budget for real tool work.
+        current_iterations = int(state.get("llm_iterations", 0))
+        if only_reaction_tools and not short_circuit_after_tools:
+            current_iterations = max(0, current_iterations - 1)
 
         return {
             "messages": tool_messages,
@@ -617,6 +663,7 @@ def _build_graph(llm_with_tools, tools: list) -> StateGraph:
             "tool_execution_ms": round(tool_execution_ms, 1),
             "short_circuit_after_tools": short_circuit_after_tools,
             "short_circuit_response": short_circuit_response,
+            "llm_iterations": current_iterations,
         }
 
     graph = StateGraph(AgentState)
@@ -849,7 +896,10 @@ async def run_agent(request: ChatRequest) -> ChatResponse:
         tools.append(nota_tool)
         tools.append(calificado_tool)
         tools.append(comandos_tool)
-        logger.info("Tools guardar_nota + marcar_prospecto_calificado + ejecutar_comando agregadas para contacto_id=%s", request.contacto_id)
+        if request.empresa_id:
+            spam_tool = _create_desactivar_contacto_spam_tool(request.contacto_id, request.empresa_id)
+            tools.append(spam_tool)
+        logger.info("Tools built-in agregadas para contacto_id=%s", request.contacto_id)
 
     mcp_discovery_ms = (time.perf_counter() - t_mcp) * 1000
     available_tools = _describe_available_tools(tools)

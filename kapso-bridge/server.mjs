@@ -2028,21 +2028,7 @@ let NODES=[], EDGES=[];
 
 /* ── Speed control ── */
 
-let SPEED_MULT=2;
-
-document.querySelectorAll('#speed-ctrl button').forEach(function(btn){
-
-  btn.addEventListener('click',function(){
-
-    SPEED_MULT=parseFloat(btn.dataset.speed);
-
-    document.querySelectorAll('#speed-ctrl button').forEach(function(b){b.classList.remove('active');});
-
-    btn.classList.add('active');
-
-  });
-
-});
+const SPEED_MULT=2;
 
 
 
@@ -2322,26 +2308,6 @@ function processNewEvents(events){
   });
 
 }
-
-
-
-/* On speed change, emit a demo burst with sample tools */
-
-const _demoPayload={tools_used:[{tool_name:'Disponibilidad_Agenda1'},{tool_name:'guardar_nota'}]};
-
-document.querySelectorAll('#speed-ctrl button').forEach(function(btn){
-
-  btn.addEventListener('click',function(){
-
-    triggerFlows('inbound_received');
-
-    setTimeout(function(){triggerFlows('run_agent_start');},300/SPEED_MULT);
-
-    setTimeout(function(){triggerFlows('run_agent_done',_demoPayload);},700/SPEED_MULT);
-
-  });
-
-});
 
 
 

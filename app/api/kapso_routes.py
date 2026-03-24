@@ -821,6 +821,7 @@ async def _run_both_agents(
             memory_session_id=memory_session_id,
             memory_window=8,
             contacto_id=contacto_id,
+            empresa_id=empresa_id,
         )
     )
 

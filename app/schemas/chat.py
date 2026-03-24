@@ -18,6 +18,7 @@ class ChatRequest(BaseModel):
     memory_session_id: Optional[str] = None
     memory_window: Optional[int] = 8
     contacto_id: Optional[int] = None
+    empresa_id: Optional[int] = None
 
 
 class ToolCall(BaseModel):
