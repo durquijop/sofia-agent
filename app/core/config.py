@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     KAPSO_BRIDGE_PORT: int | None = None
     KAPSO_BASE_URL: str | None = None
     INTERNAL_AGENT_API_URL: str | None = None
+    # Nylas API
+    NYLAS_API_KEY: str | None = None
+    NYLAS_API_KEY_2: str | None = None
+    NYLAS_API_URL: str = "https://api.us.nylas.com"
     APP_NAME: str = "URPE AI Lab - Multi-Agent System"
     DEBUG: bool = False
 

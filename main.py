@@ -12,6 +12,7 @@ from app.api.db_routes import router as db_router
 from app.api.debug_dashboard import router as debug_dashboard_router
 from app.api.funnel_routes import router as funnel_router
 from app.api.graph_routes import router as graph_router
+from app.api.scheduling_routes import router as scheduling_router
 from app.core.config import get_settings
 
 logging.basicConfig(
@@ -56,6 +57,7 @@ app.include_router(db_router)
 app.include_router(debug_dashboard_router)
 app.include_router(funnel_router)
 app.include_router(graph_router)
+app.include_router(scheduling_router)
 
 
 @app.get("/")
@@ -68,6 +70,10 @@ async def root():
             "chat": "/api/v1/chat",
             "funnel_analyze": "/api/v1/funnel/analyze",
             "kapso_inbound": "/api/v1/kapso/inbound",
+            "scheduling_disponibilidad": "/api/v1/scheduling/disponibilidad",
+            "scheduling_crear_evento": "/api/v1/scheduling/crear-evento",
+            "scheduling_reagendar_evento": "/api/v1/scheduling/reagendar-evento",
+            "scheduling_eliminar_evento": "/api/v1/scheduling/eliminar-evento",
             "health": "/api/v1/health",
             "db_health": "/api/v1/db/health",
             "db_docs": "/docs#/database",
