@@ -4292,6 +4292,8 @@ async function dispatchKapsoResponse(reply) {
 
           link: reply.audio_url,
 
+          voice: true,
+
         },
 
       }),
