@@ -403,6 +403,94 @@ def _build_reaction_ack(_message: str | None, _emoji: str | None = None) -> str:
     return "Ya reaccioné."
 
 
+# ── Closing followup: reaction-only for conversation-ending messages ──
+
+# Emoji-only messages (user just sent an emoji, no text)
+_EMOJI_ONLY_RE = re.compile(
+    r"^[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF"
+    r"\U0001F900-\U0001F9FF\U0001FA00-\U0001FA6F\U0001FA70-\U0001FAFF"
+    r"\U00002702-\U000027B0\U0000FE00-\U0000FE0F\U0000200D\U00002600-\U000026FF"
+    r"\U0000231A-\U0000231B\U00002934-\U00002935\U000025AA-\U000025AB"
+    r"\U000023E9-\U000023F3\U000023F8-\U000023FA\s]+$"
+)
+
+_CLOSING_PHRASES = {
+    "ok", "okey", "okay", "oki", "okis", "va", "vale",
+    "dale", "listo", "sale", "va pues", "arre",
+    "gracias", "muchas gracias", "mil gracias", "thank you", "thanks",
+    "bye", "chao", "adios", "nos vemos", "hasta luego", "cuídate", "cuidate",
+    "perfecto", "excelente", "genial", "bueno",
+    "si", "sip", "sep", "claro", "simon", "aja", "ajá",
+    "entendido", "enterado", "de acuerdo", "esta bien", "esta bueno",
+    "buenas noches", "que descanses", "descansa",
+    "un abrazo", "saludos", "bendiciones",
+}
+
+_CLOSING_BUSINESS_BLOCKERS = {
+    "visa", "cita", "agendar", "agenda", "oferta", "puesto", "trabajo",
+    "empleo", "precio", "costo", "cuanto", "cuánto", "asesor", "vacante",
+    "asilo", "pregunta", "duda", "consulta", "como", "cómo", "cuando",
+    "cuándo", "donde", "dónde", "porque", "por que", "necesito", "quiero",
+    "ayuda", "problema", "urgente", "llamar", "llama", "informacion",
+    "información", "detalles", "explica", "pero", "pago", "cobro",
+}
+
+CLOSING_FOLLOWUP_MARKER = "__closing_followup__"
+
+
+def _is_closing_followup(message: str | None) -> bool:
+    """Detect short closing/farewell messages that don't need a text reply."""
+    if not message:
+        return False
+
+    raw = str(message).strip()
+
+    # Pure emoji messages (thumbs up, heart, etc.)
+    if _EMOJI_ONLY_RE.match(raw):
+        return True
+
+    normalized = _normalize_text(raw)
+    if not normalized:
+        return False
+
+    # Too long = probably a real question
+    words = normalized.split()
+    if len(words) > 5:
+        return False
+
+    # Contains business/question markers = real request
+    if any(blocker in normalized for blocker in _CLOSING_BUSINESS_BLOCKERS):
+        return False
+
+    # Contains a question mark = probably needs a response
+    if "?" in raw:
+        return False
+
+    # Exact match or starts with a closing phrase
+    if normalized in _CLOSING_PHRASES:
+        return True
+    if any(normalized.startswith(phrase) for phrase in _CLOSING_PHRASES if len(phrase.split()) <= 2):
+        if len(words) <= 3:
+            return True
+
+    return False
+
+
+def _infer_closing_emoji(message: str | None) -> str:
+    """Pick the most appropriate emoji for a closing reaction."""
+    normalized = _normalize_text(message)
+
+    if any(w in normalized for w in ("gracias", "thanks", "bendicion", "bendiciones")):
+        return "🙏"
+    if any(w in normalized for w in ("abrazo", "carino", "cariño", "love", "te quiero")):
+        return "❤️"
+    if any(w in normalized for w in ("bye", "chao", "adios", "nos vemos", "hasta luego", "cuídate", "cuidate", "noches", "descanses")):
+        return "👋"
+    if any(w in normalized for w in ("perfecto", "excelente", "genial")):
+        return "🔥"
+    return "👍"
+
+
 def _infer_reaction_emoji(message: str | None) -> str:
     normalized = _normalize_text(message)
 
@@ -661,6 +749,64 @@ async def run_agent(request: ChatRequest) -> ChatResponse:
             )
         ]
         logger.info("Fast-path de reacción aplicado conversation_id=%s emoji=%s total_ms=%.1f", conversation_id, emoji, timing.total_ms)
+        return ChatResponse(
+            response=response_text,
+            conversation_id=conversation_id,
+            model_used=model,
+            tools_used=[tool_call],
+            timing=timing,
+            agent_runs=agent_runs,
+        )
+
+    # ── Fast-path: closing followup (reaction-only, no text) ──
+    closing_followup = _is_closing_followup(request.message)
+    if closing_followup:
+        emoji = _infer_closing_emoji(request.message)
+        available_tools = _describe_available_tools([send_reaction])
+        tool_start = time.perf_counter()
+        tool_output = await send_reaction.ainvoke({"emoji": emoji})
+        tool_execution_ms = (time.perf_counter() - tool_start) * 1000
+        total_ms = (time.perf_counter() - t_start) * 1000
+        # Marker response — kapso_routes detects this to send reaction-only
+        response_text = CLOSING_FOLLOWUP_MARKER
+
+        if memory_session_id:
+            await _persist_memory_turn(memory_session_id, request.message, f"[reacción de cierre: {emoji}]", conversation_id, model)
+
+        tool_call = ToolCall(
+            tool_name=SEND_REACTION_TOOL_NAME,
+            tool_input={"emoji": emoji},
+            tool_output=str(tool_output),
+            duration_ms=round(tool_execution_ms, 1),
+            status="ok",
+            error=None,
+            source="closing_followup",
+            description="Reacción de cierre — mensaje no requiere respuesta de texto",
+        )
+        timing = TimingInfo(
+            total_ms=round(total_ms, 1),
+            llm_ms=0,
+            mcp_discovery_ms=0,
+            graph_build_ms=0,
+            tool_execution_ms=round(tool_execution_ms, 1),
+        )
+        agent_runs = [
+            AgentRunTrace(
+                agent_key="conversational_agent",
+                agent_name="Agente Conversacional",
+                agent_kind="closing_followup",
+                conversation_id=conversation_id,
+                memory_session_id=memory_session_id,
+                model_used=model,
+                system_prompt="",
+                user_prompt=request.message,
+                available_tools=available_tools,
+                tools_used=[tool_call],
+                timing=timing,
+                llm_iterations=0,
+            )
+        ]
+        logger.info("Fast-path closing_followup conversation_id=%s emoji=%s message='%s' total_ms=%.1f", conversation_id, emoji, request.message[:50], timing.total_ms)
         return ChatResponse(
             response=response_text,
             conversation_id=conversation_id,

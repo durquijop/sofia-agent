@@ -10,7 +10,7 @@ import httpx
 from fastapi import APIRouter, Header, HTTPException
 
 from app.agents.contact_update import run_contact_update_agent
-from app.agents.conversational import run_agent
+from app.agents.conversational import run_agent, CLOSING_FOLLOWUP_MARKER
 from app.agents.funnel import run_funnel_agent
 from app.core.config import get_settings
 from app.core.kapso_debug import (
@@ -1514,33 +1514,68 @@ async def kapso_inbound(
             bool(funnel_result and funnel_result.success),
         )
 
-        final_reply_text = _ensure_reply_text(conversational_result.response)
-        if final_reply_text != str(conversational_result.response or "").strip():
+        # ── Detect closing followup (reaction-only, no text) ──
+        is_closing_followup = (conversational_result.response or "").strip() == CLOSING_FOLLOWUP_MARKER
+
+        if is_closing_followup:
+            final_reply_text = ""
             add_kapso_debug_event(
                 "fastapi",
-                "empty_reply_fallback",
+                "closing_followup_detected",
                 {
                     "message_id": request.message_id,
                     "conversation_id": conversational_result.conversation_id,
-                    "fallback_text": final_reply_text,
+                    "user_message": (request.text or "")[:200],
+                    "reaction_emoji": reaction_emoji,
                 },
             )
+            # Save in Supabase for review (tipo="closing_followup")
+            if conversacion_db_id:
+                await db.insertar_mensaje(
+                    conversacion_id=int(conversacion_db_id),
+                    contenido=f"[closing_followup] reacción: {reaction_emoji or '👍'}",
+                    remitente="agente",
+                    tipo="texto",
+                    status="closing_followup",
+                    modelo_llm=conversational_result.model_used,
+                    metadata={
+                        "source": "kapso_outbound",
+                        "message_id": request.message_id,
+                        "agent_id": int(agente_id),
+                        "closing_followup": True,
+                        "user_message": (request.text or "")[:500],
+                        "reaction_emoji": reaction_emoji,
+                    },
+                    empresa_id=empresa_id,
+                )
+        else:
+            final_reply_text = _ensure_reply_text(conversational_result.response)
+            if final_reply_text != str(conversational_result.response or "").strip():
+                add_kapso_debug_event(
+                    "fastapi",
+                    "empty_reply_fallback",
+                    {
+                        "message_id": request.message_id,
+                        "conversation_id": conversational_result.conversation_id,
+                        "fallback_text": final_reply_text,
+                    },
+                )
 
-        if conversacion_db_id and final_reply_text:
-            await db.insertar_mensaje(
-                conversacion_id=int(conversacion_db_id),
-                contenido=final_reply_text,
-                remitente="agente",
-                tipo="texto",
-                status="sent",
-                modelo_llm=conversational_result.model_used,
-                metadata={
-                    "source": "kapso_outbound",
-                    "message_id": request.message_id,
-                    "agent_id": int(agente_id),
-                },
-                empresa_id=empresa_id,
-            )
+            if conversacion_db_id and final_reply_text:
+                await db.insertar_mensaje(
+                    conversacion_id=int(conversacion_db_id),
+                    contenido=final_reply_text,
+                    remitente="agente",
+                    tipo="texto",
+                    status="sent",
+                    modelo_llm=conversational_result.model_used,
+                    metadata={
+                        "source": "kapso_outbound",
+                        "message_id": request.message_id,
+                        "agent_id": int(agente_id),
+                    },
+                    empresa_id=empresa_id,
+                )
 
         for inbound_message_id in inbound_message_ids:
             try:
@@ -1558,8 +1593,8 @@ async def kapso_inbound(
                 emoji=reaction_emoji,
             )
 
-        # Resolve reply type and media fields from comando_data (if agent used ejecutar_comando)
-        reply_type = "text"
+        # Resolve reply type and media fields
+        reply_type = "reaction" if is_closing_followup and reaction_emoji else "text"
         image_url: str | None = None
         image_caption: str | None = None
         audio_url: str | None = None
@@ -1588,7 +1623,7 @@ async def kapso_inbound(
 
         return KapsoInboundResponse(
             reply_type=reply_type,
-            reply_text=final_reply_text,
+            reply_text=final_reply_text or f"[closing_followup:{reaction_emoji or '👍'}]",
             reaction=reaction_payload,
             image_url=image_url,
             image_caption=image_caption,
