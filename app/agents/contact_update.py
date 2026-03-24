@@ -12,6 +12,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 
 from app.agents.funnel import _create_llm
+from app.core.error_webhook import send_error_to_webhook
 from app.db import queries as db
 from app.schemas.chat import AgentRunTrace, TimingInfo, ToolCall, ToolDefinition
 from app.schemas.contact_update import ContactUpdateAgentRequest, ContactUpdateAgentResponse
@@ -420,6 +421,12 @@ async def run_contact_update_agent(request: ContactUpdateAgentRequest) -> Contac
         )
     except Exception as exc:
         logger.error("Error en run_contact_update_agent: %s", exc, exc_info=True)
+        await send_error_to_webhook(
+            exc,
+            context="contact_update_agent",
+            severity="error",
+            fallback="El agente de actualización de contacto falló pero devolvió success=False con detalle del error. Ningún campo del contacto fue modificado — se puede reintentar. El sistema sigue operativo.",
+        )
         timing = TimingInfo(total_ms=round((time.perf_counter() - t_start) * 1000, 1))
         error_tool = ToolCall(
             tool_name="contact_update_error",

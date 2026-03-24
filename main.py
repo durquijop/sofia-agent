@@ -3,8 +3,9 @@ import os
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.api.kapso_routes import router as kapso_router
 from app.api.routes import router
@@ -14,6 +15,7 @@ from app.api.funnel_routes import router as funnel_router
 from app.api.graph_routes import router as graph_router
 from app.api.scheduling_routes import router as scheduling_router
 from app.core.config import get_settings
+from app.core.error_webhook import send_error_to_webhook
 
 logging.basicConfig(
     level=logging.INFO,
@@ -51,6 +53,35 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def error_webhook_middleware(request: Request, call_next):
+    """Intercept any response with status >= 500 and notify the webhook."""
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        # Unhandled exception that escaped everything
+        logger.error("Middleware caught unhandled error on %s %s: %s", request.method, request.url.path, exc, exc_info=True)
+        await send_error_to_webhook(
+            exc, request=request,
+            context="middleware_unhandled",
+            severity="critical",
+            fallback="Se devolvió HTTP 500 genérico al cliente. La petición falló pero el servidor sigue activo.",
+        )
+        return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
+    if response.status_code >= 500:
+        # The route handler already returned a 500 (e.g. via HTTPException)
+        await send_error_to_webhook(
+            RuntimeError(f"HTTP {response.status_code} on {request.method} {request.url.path}"),
+            request=request,
+            context="http_500_response",
+            severity="error",
+            fallback="El endpoint devolvió error 500 al cliente. El error fue capturado internamente por el handler del endpoint — el servidor sigue funcionando normal.",
+        )
+
+    return response
+
 app.include_router(router)
 app.include_router(kapso_router)
 app.include_router(db_router)
@@ -58,6 +89,18 @@ app.include_router(debug_dashboard_router)
 app.include_router(funnel_router)
 app.include_router(graph_router)
 app.include_router(scheduling_router)
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error("Unhandled error on %s %s: %s", request.method, request.url.path, exc, exc_info=True)
+    await send_error_to_webhook(
+        exc, request=request,
+        context="global_exception_handler",
+        severity="critical",
+        fallback="Excepción no capturada por ningún handler. Se devolvió HTTP 500. El servidor sigue activo, solo esta petición falló.",
+    )
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
 @app.get("/")

@@ -1942,7 +1942,7 @@ canvas{display:block;position:absolute;top:0;left:0}
 
 #loader{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:25;color:rgba(167,139,250,.6);font-size:14px;letter-spacing:2px;text-transform:uppercase;pointer-events:none}
 
-#speed-ctrl{position:fixed;top:20px;right:20px;z-index:20;display:flex;align-items:center;gap:6px;background:rgba(8,4,28,.7);border:1px solid rgba(255,255,255,.08);border-radius:10px;padding:6px 10px;backdrop-filter:blur(12px)}
+#speed-ctrl{position:fixed;top:20px;right:20px;z-index:20;display:none;align-items:center;gap:6px;background:rgba(8,4,28,.7);border:1px solid rgba(255,255,255,.08);border-radius:10px;padding:6px 10px;backdrop-filter:blur(12px)}
 
 #speed-ctrl span{font-size:11px;color:rgba(255,255,255,.35);letter-spacing:1px;text-transform:uppercase;margin-right:4px}
 
@@ -2424,6 +2424,23 @@ function nodePos(n){return{x:n.x*W,y:n.y*H}}
 
 
 function physics(){
+
+  // Node-to-node collision: repel overlapping nodes
+  for(let i=0;i<NODES.length;i++){
+    for(let j=i+1;j<NODES.length;j++){
+      const a=NODES[i],b=NODES[j];
+      const ax=a.x*W,ay=a.y*H,bx=b.x*W,by=b.y*H;
+      const dx=bx-ax,dy=by-ay;
+      const dist=Math.sqrt(dx*dx+dy*dy)||1;
+      const minDist=(a.r+b.r)*1.6;
+      if(dist<minDist){
+        const overlap=(minDist-dist)/dist*0.02;
+        const ox=dx*overlap/W,oy=dy*overlap/H;
+        if(a!==dragging){a.x-=ox;a.y-=oy;a.vx-=ox*.3;a.vy-=oy*.3;}
+        if(b!==dragging){b.x+=ox;b.y+=oy;b.vx+=ox*.3;b.vy+=oy*.3;}
+      }
+    }
+  }
 
   for(const n of NODES){
 

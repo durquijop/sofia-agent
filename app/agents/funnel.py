@@ -8,6 +8,8 @@ import time
 from typing import Annotated, TypedDict
 
 import httpx
+
+from app.core.error_webhook import send_error_to_webhook
 from langchain_core.callbacks.base import Callbacks
 from langchain_core.caches import BaseCache
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
@@ -1067,6 +1069,12 @@ async def run_funnel_agent(request: FunnelAgentRequest) -> FunnelAgentResponse:
     
     except Exception as e:
         logger.error(f"Error en run_funnel_agent: {e}", exc_info=True)
+        await send_error_to_webhook(
+            e,
+            context="funnel_agent",
+            severity="error",
+            fallback="El agente de embudo falló pero devolvió success=False con detalle del error. El contacto no fue modificado — se puede reintentar. El sistema sigue operativo.",
+        )
         total_ms = (time.perf_counter() - t_start) * 1000
         timing = TimingInfo(total_ms=round(total_ms, 1))
         error_tool = ToolCall(

@@ -8,6 +8,8 @@ from typing import Annotated, TypedDict
 
 import httpx
 from langchain_core.callbacks.base import Callbacks
+
+from app.core.error_webhook import send_error_to_webhook
 from langchain_core.caches import BaseCache
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
@@ -963,8 +965,14 @@ async def run_agent(request: ChatRequest) -> ChatResponse:
             compiled.ainvoke(initial_state),
             timeout=AGENT_GRAPH_TIMEOUT_SECONDS,
         )
-    except asyncio.TimeoutError:
+    except asyncio.TimeoutError as timeout_exc:
         logger.warning("run_agent timeout after %ss — returning partial response", AGENT_GRAPH_TIMEOUT_SECONDS)
+        await send_error_to_webhook(
+            timeout_exc,
+            context="conversational_agent_timeout",
+            severity="warning",
+            fallback="El agente conversacional excedió el timeout. Se devolvió respuesta parcial con el estado inicial. El usuario puede reintentar y el sistema sigue operativo.",
+        )
         timed_out = True
         final_state = initial_state  # fallback to initial state
 
