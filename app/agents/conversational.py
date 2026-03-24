@@ -189,21 +189,34 @@ def _create_comandos_tool(contacto_id: int):
     async def ejecutar_comando(comando: str, solicitud: str, extra: str = "") -> str:
         """Ejecuta un comando especial del sistema para enviar multimedia o ejecutar análisis.
 
-Comandos disponibles:
-- "image": Envía una imagen al contacto. solicitud = URL pública de la imagen, extra = caption opcional.
-- "audio": Envía un audio al contacto. solicitud = URL pública del audio, extra = caption opcional.
-- "video": Envía un video al contacto. solicitud = URL pública del video, extra = caption opcional.
-- "monica": Solicita un análisis avanzado. solicitud = descripción del análisis requerido, extra = contexto adicional.
+## Campos Requeridos
+
+### 1. `comando`
+Especifica el tipo de multimedia a enviar. **Selecciona solo una opción:**
+- `image` - Para imágenes
+- `audio` - Para archivos de audio
+- `video` - Para videos
+
+### 2. `solicitud`
+Proporciona la URL del archivo multimedia.
+- **Formato:** URL limpia, sin caracteres o elementos adicionales.
+- **Ejemplo:** `https://ejemplo.com/imagen.jpg`
+
+### 3. `extra`
+Información sintetizada y concreta que se envía en el caption según el tipo de contenido:
+- **Para imágenes:** Texto del caption (descripción)
+- **Para audios:** Texto del caption (descripción)
+- **Para videos:** Texto del caption (descripción concreta, que complementa el video pero no repite palabras del contenido)
 
 IMPORTANTE:
 • Para multimedia (image/audio/video), solicitud DEBE ser una URL pública válida.
-• Para monica, solicitud es la descripción en lenguaje natural de lo que se necesita analizar.
-• usa las instrucciones de multimedia del sistema para saber cuándo y cómo enviar multimedia.
+• Revisa la sección de "Manejo de herramientas" y "Multimedia" en tus instrucciones del sistema para saber cuándo y cómo enviar multimedia, qué URLs usar y qué contenido asignar.
+• No inventes URLs. Usa exclusivamente las URLs proporcionadas en tus instrucciones.
 
 Args:
-    comando: Tipo de comando a ejecutar ("image", "audio", "video", "monica")
-    solicitud: URL del multimedia o descripción del análisis requerido
-    extra: Información adicional — caption para multimedia o contexto para análisis
+    comando: Tipo de comando a ejecutar ("image", "audio", "video")
+    solicitud: URL pública del archivo multimedia
+    extra: Texto del caption que acompaña al multimedia
 """
         import json as _json
 
