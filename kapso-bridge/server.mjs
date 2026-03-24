@@ -2058,6 +2058,8 @@ const PARTICLE_BASE_DURATION=2200; // ms at x1 to travel full edge
 
 /* Map of stage name → list of edges to animate (each edge: [fromId, toId, color]) */
 
+/* Static stages — always animate the same edges */
+
 const STAGE_FLOWS={
 
   'inbound_received':      [['whatsapp','orch','#60a5fa']],
@@ -2076,12 +2078,6 @@ const STAGE_FLOWS={
 
   'run_agent_start':       [['orch','conv','#a78bfa'],['orch','funnel','#fb923c'],['orch','contact','#fb923c']],
 
-  'run_funnel_done':       [['funnel','openrouter','#60a5fa'],['funnel','t_metadata','#34d399'],['t_metadata','supabase','#f472b6'],['funnel','orch','#fb923c']],
-
-  'run_contact_update_done':[['contact','openrouter','#60a5fa'],['contact','t_update','#34d399'],['t_update','supabase','#f472b6']],
-
-  'run_agent_done':        [['conv','openrouter','#60a5fa'],['conv','t_reaction','#34d399'],['conv','t_mcp','#34d399'],['conv','whatsapp','#a78bfa']],
-
   'slash_command_done':    [['orch','whatsapp','#34d399']],
 
   'audio_processing':      [['orch','storage','#f472b6'],['orch','edge_fn','#60a5fa']],
@@ -2098,15 +2094,136 @@ const STAGE_FLOWS={
 
 
 
+/* Map tool_name → graph node id for dynamic flow building */
+
+const TOOL_NODE_MAP={
+
+  'send_reaction':              't_reaction',
+
+  'guardar_nota':               't_nota',
+
+  'marcar_prospecto_calificado':'t_calificado',
+
+  'ejecutar_comando':           't_comandos',
+
+  'update_metadata':            't_metadata',
+
+  'update_contact_info':        't_update',
+
+};
+
+/* Tools that come from MCP (not in TOOL_NODE_MAP) route to t_mcp */
+
+function toolToNodeId(toolName){ return TOOL_NODE_MAP[toolName] || 't_mcp'; }
+
+
+
+/* Build dynamic flows for stages that depend on tools_used */
+
+function buildDynamicFlows(stage, payload){
+
+  const tools = (payload && Array.isArray(payload.tools_used)) ? payload.tools_used : [];
+
+  const toolNames = tools.map(function(t){ return t.tool_name || t.name || ''; });
+
+
+
+  if(stage === 'run_agent_done'){
+
+    const flows = [['conv','openrouter','#60a5fa']]; // LLM always runs
+
+    const seen = new Set();
+
+    toolNames.forEach(function(name){
+
+      if(!name) return;
+
+      const nodeId = toolToNodeId(name);
+
+      if(seen.has(nodeId)) return;
+
+      seen.add(nodeId);
+
+      flows.push(['conv', nodeId, '#34d399']);
+
+      // If MCP tool, also animate mcp_srv
+
+      if(nodeId === 't_mcp') flows.push(['t_mcp','mcp_srv','#60a5fa']);
+
+      // If ejecutar_comando, also animate to whatsapp
+
+      if(nodeId === 't_comandos') flows.push(['t_comandos','whatsapp','#fb923c']);
+
+      // If guardar_nota or marcar_calificado, animate to supabase
+
+      if(nodeId === 't_nota' || nodeId === 't_calificado') flows.push([nodeId,'supabase','#f472b6']);
+
+    });
+
+    // Always end with response to whatsapp
+
+    flows.push(['conv','whatsapp','#a78bfa']);
+
+    return flows;
+
+  }
+
+
+
+  if(stage === 'run_funnel_done'){
+
+    const flows = [['funnel','openrouter','#60a5fa']];
+
+    if(toolNames.includes('update_metadata')){
+
+      flows.push(['funnel','t_metadata','#34d399']);
+
+      flows.push(['t_metadata','supabase','#f472b6']);
+
+    }
+
+    flows.push(['funnel','orch','#fb923c']);
+
+    return flows;
+
+  }
+
+
+
+  if(stage === 'run_contact_update_done'){
+
+    const flows = [['contact','openrouter','#60a5fa']];
+
+    if(toolNames.includes('update_contact_info') || toolNames.length > 0){
+
+      flows.push(['contact','t_update','#34d399']);
+
+      flows.push(['t_update','supabase','#f472b6']);
+
+    }
+
+    return flows;
+
+  }
+
+
+
+  return null; // not a dynamic stage, use STAGE_FLOWS
+
+}
+
+
+
+
 /* Node pulse: when a stage hits, briefly light up nodes */
 
 const nodePulse={}; // nodeId -> { until: timestamp, color }
 
 
 
-function triggerFlows(stage){
+function triggerFlows(stage, payload){
 
-  const flows=STAGE_FLOWS[stage];
+  const flows = buildDynamicFlows(stage, payload) || STAGE_FLOWS[stage];
 
   if(!flows)return;
 
@@ -2166,6 +2283,8 @@ function processNewEvents(events){
 
   if(!Array.isArray(events))return;
 
+  const DYNAMIC_STAGES=['run_agent_done','run_funnel_done','run_contact_update_done'];
+
   const fresh=[];
 
   for(let i=0;i<events.length;i++){
@@ -2182,7 +2301,7 @@ function processNewEvents(events){
 
     seenEventKeys.add(key);
 
-    if(STAGE_FLOWS[e.stage])fresh.push(e);
+    if(STAGE_FLOWS[e.stage] || DYNAMIC_STAGES.includes(e.stage))fresh.push(e);
 
   }
 
@@ -2196,7 +2315,7 @@ function processNewEvents(events){
 
   fresh.forEach(function(ev){
 
-    setTimeout(function(){triggerFlows(ev.stage);},acc);
+    setTimeout(function(){triggerFlows(ev.stage, ev.payload);},acc);
 
     acc+=Math.max(180,450/SPEED_MULT);
 
@@ -2206,7 +2325,9 @@ function processNewEvents(events){
 
 
 
-/* On speed change, emit a demo burst */
+/* On speed change, emit a demo burst with sample tools */
+
+const _demoPayload={tools_used:[{tool_name:'Disponibilidad_Agenda1'},{tool_name:'guardar_nota'}]};
 
 document.querySelectorAll('#speed-ctrl button').forEach(function(btn){
 
@@ -2216,7 +2337,7 @@ document.querySelectorAll('#speed-ctrl button').forEach(function(btn){
 
     setTimeout(function(){triggerFlows('run_agent_start');},300/SPEED_MULT);
 
-    setTimeout(function(){triggerFlows('run_agent_done');},700/SPEED_MULT);
+    setTimeout(function(){triggerFlows('run_agent_done',_demoPayload);},700/SPEED_MULT);
 
   });
 
@@ -2280,13 +2401,13 @@ if(_injected && _injected.nodes){
 
 
 
-  // Initial demo burst after 800ms
+  // Initial demo burst after 800ms (shows MCP + nota flow)
 
   setTimeout(function(){triggerFlows('inbound_received');},800);
 
   setTimeout(function(){triggerFlows('run_agent_start');},1600);
 
-  setTimeout(function(){triggerFlows('run_agent_done');},2600);
+  setTimeout(function(){triggerFlows('run_agent_done',_demoPayload);},2600);
 
 }else{
 

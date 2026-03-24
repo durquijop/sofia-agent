@@ -290,6 +290,7 @@ _DEFAULT_POSITIONS: dict[str, tuple[float, float]] = {
     "t_mcp":      (0.36, 0.67),
     "t_nota":     (0.50, 0.72),
     "t_calificado":(0.78, 0.60),
+    "t_comandos":  (0.42, 0.82),
     "t_metadata": (0.12, 0.60),
     "t_update":   (0.88, 0.40),
     "mcp_srv":    (0.22, 0.80),
