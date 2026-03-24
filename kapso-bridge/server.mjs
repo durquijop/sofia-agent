@@ -1348,7 +1348,7 @@ function renderKapsoBasicHtml(debugData) {
 
       <a href="/debug/kapso/data" target="_blank" rel="noreferrer">Ver JSON</a>
 
-      <a href="/debug/kapso/visual" style="background:#6366f1;color:#fff;padding:4px 10px;border-radius:6px;text-decoration:none;font-size:12px">ðŸ” Ver visual</a>
+      <a href="/debug/kapso/visual" style="background:#6366f1;color:#fff;padding:4px 10px;border-radius:6px;text-decoration:none;font-size:12px">Ver visual</a>
 
     </div>
 
@@ -1962,7 +1962,7 @@ canvas{display:block;position:absolute;top:0;left:0}
 
 <body>
 
-<a href="/debug/kapso" id="back">← Panel</a>
+<a href="/debug/kapso" id="back">Panel</a>
 
 <div id="header">
 
@@ -3086,7 +3086,7 @@ function renderKapsoDebugHtml() {
 
       <button class="btn" id="refresh-btn">↻ Refrescar</button>
 
-      <button class="btn" id="visual-btn" style="background:#6366f1;color:#fff;">ðŸ” Ver visual</button>
+      <button class="btn" id="visual-btn" style="background:#6366f1;color:#fff;">Ver visual</button>
 
     </div>
 
@@ -3314,7 +3314,7 @@ function openM(idx){
 
   document.getElementById('tc-ov').innerHTML=
 
-    '<div class="msgbox"><div class="msgl">ðŸ’¬ Mensaje recibido</div><div class="msgt">'+(esc(it.message_text)||'<em style="color:#64748b">Sin texto</em>')+'</div></div>'+
+    '<div class="msgbox"><div class="msgl">Mensaje recibido</div><div class="msgt">'+(esc(it.message_text)||'<em style="color:#64748b">Sin texto</em>')+'</div></div>'+
 
     '<div class="dg">'+
 
@@ -3404,7 +3404,7 @@ function openM(idx){
 
     ?tools.map(t=>(
 
-      '<div class="tl"><div class="tln">⚙ï¸ '+esc(t.tool_name)+'</div>'+
+      '<div class="tl"><div class="tln">'+esc(t.tool_name)+'</div>'+
 
       '<div class="tllbl">Input</div><pre class="cd">'+esc(JSON.stringify(t.tool_input,null,2))+'</pre>'+
 
@@ -4267,6 +4267,52 @@ async function dispatchKapsoResponse(reply) {
       }),
 
       `sendImage(${recipientPhone})`,
+
+    );
+
+  }
+
+
+
+  if (replyType === 'audio' && reply.audio_url) {
+
+    return withKapsoRetry(
+
+      () => client.messages.audioSender.send({
+
+        phoneNumberId,
+
+        to: recipientPhone,
+
+        link: reply.audio_url,
+
+      }),
+
+      `sendAudio(${recipientPhone})`,
+
+    );
+
+  }
+
+
+
+  if (replyType === 'video' && reply.video_url) {
+
+    return withKapsoRetry(
+
+      () => client.messages.videoSender.send({
+
+        phoneNumberId,
+
+        to: recipientPhone,
+
+        link: reply.video_url,
+
+        caption: reply.video_caption ? normalizeWhatsAppText(reply.video_caption) : undefined,
+
+      }),
+
+      `sendVideo(${recipientPhone})`,
 
     );
 

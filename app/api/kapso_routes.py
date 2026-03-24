@@ -1440,10 +1440,17 @@ async def kapso_inbound(
         )
 
         reaction_emoji: str | None = None
+        comando_data: dict | None = None
         for tool_call in merged_tools:
             if tool_call.tool_name == "send_reaction" and tool_call.tool_input.get("emoji"):
                 reaction_emoji = tool_call.tool_input["emoji"]
-                break
+            if tool_call.tool_name == "ejecutar_comando" and tool_call.tool_output:
+                try:
+                    _parsed = json.loads(tool_call.tool_output)
+                    if isinstance(_parsed, dict) and _parsed.get("__comando__"):
+                        comando_data = _parsed
+                except (json.JSONDecodeError, TypeError):
+                    pass
 
         add_kapso_debug_event(
             "fastapi",
@@ -1551,11 +1558,44 @@ async def kapso_inbound(
                 emoji=reaction_emoji,
             )
 
+        # Resolve reply type and media fields from comando_data (if agent used ejecutar_comando)
+        reply_type = "text"
+        image_url: str | None = None
+        image_caption: str | None = None
+        audio_url: str | None = None
+        audio_caption: str | None = None
+        video_url: str | None = None
+        video_caption: str | None = None
+
+        if comando_data:
+            cmd = comando_data.get("comando", "")
+            cmd_url = comando_data.get("solicitud", "")
+            cmd_extra = comando_data.get("extra", "")
+            if cmd == "image" and cmd_url:
+                reply_type = "image"
+                image_url = cmd_url
+                image_caption = cmd_extra or final_reply_text
+            elif cmd == "audio" and cmd_url:
+                reply_type = "audio"
+                audio_url = cmd_url
+                audio_caption = cmd_extra or None
+            elif cmd == "video" and cmd_url:
+                reply_type = "video"
+                video_url = cmd_url
+                video_caption = cmd_extra or final_reply_text
+            # "monica" keeps reply_type="text" — the agent response IS the analysis
+            logger.info("Comando detectado: cmd=%s reply_type=%s url=%s", cmd, reply_type, cmd_url[:80] if cmd_url else "")
 
         return KapsoInboundResponse(
-            reply_type="text",
+            reply_type=reply_type,
             reply_text=final_reply_text,
             reaction=reaction_payload,
+            image_url=image_url,
+            image_caption=image_caption,
+            audio_url=audio_url,
+            audio_caption=audio_caption,
+            video_url=video_url,
+            video_caption=video_caption,
             recipient_phone=request.from_phone,
             phone_number_id=request.phone_number_id,
             message_id=request.message_id,

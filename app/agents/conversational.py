@@ -177,6 +177,56 @@ Args:
     return marcar_prospecto_calificado
 
 
+EJECUTAR_COMANDO_TOOL_NAME = "ejecutar_comando"
+
+_VALID_COMMANDS = {"image", "audio", "video", "monica"}
+
+
+def _create_comandos_tool(contacto_id: int):
+    """Crea un tool ejecutar_comando con el contacto_id capturado por closure."""
+
+    @tool
+    async def ejecutar_comando(comando: str, solicitud: str, extra: str = "") -> str:
+        """Ejecuta un comando especial del sistema para enviar multimedia o ejecutar análisis.
+
+Comandos disponibles:
+- "image": Envía una imagen al contacto. solicitud = URL pública de la imagen, extra = caption opcional.
+- "audio": Envía un audio al contacto. solicitud = URL pública del audio, extra = caption opcional.
+- "video": Envía un video al contacto. solicitud = URL pública del video, extra = caption opcional.
+- "monica": Solicita un análisis avanzado. solicitud = descripción del análisis requerido, extra = contexto adicional.
+
+IMPORTANTE:
+• Para multimedia (image/audio/video), solicitud DEBE ser una URL pública válida.
+• Para monica, solicitud es la descripción en lenguaje natural de lo que se necesita analizar.
+• usa las instrucciones de multimedia del sistema para saber cuándo y cómo enviar multimedia.
+
+Args:
+    comando: Tipo de comando a ejecutar ("image", "audio", "video", "monica")
+    solicitud: URL del multimedia o descripción del análisis requerido
+    extra: Información adicional — caption para multimedia o contexto para análisis
+"""
+        import json as _json
+
+        cmd = comando.strip().lower()
+        if cmd not in _VALID_COMMANDS:
+            return f"❌ Comando inválido: '{comando}'. Comandos válidos: {', '.join(sorted(_VALID_COMMANDS))}"
+
+        result = {
+            "__comando__": True,
+            "comando": cmd,
+            "solicitud": solicitud.strip(),
+            "extra": extra.strip() if extra else "",
+            "contacto_id": contacto_id,
+        }
+        logger.info(
+            "ejecutar_comando: cmd=%s contacto_id=%s solicitud=%s",
+            cmd, contacto_id, solicitud[:80],
+        )
+        return _json.dumps(result, ensure_ascii=False)
+
+    return ejecutar_comando
+
+
 def _get_http_client() -> httpx.AsyncClient:
     """Retorna un cliente HTTP compartido con connection pooling."""
     global _shared_http_client
@@ -636,9 +686,11 @@ async def run_agent(request: ChatRequest) -> ChatResponse:
     if request.contacto_id and not reaction_only_request:
         nota_tool = _create_guardar_nota_tool(request.contacto_id)
         calificado_tool = _create_marcar_calificado_tool(request.contacto_id)
+        comandos_tool = _create_comandos_tool(request.contacto_id)
         tools.append(nota_tool)
         tools.append(calificado_tool)
-        logger.info("Tools guardar_nota + marcar_prospecto_calificado agregadas para contacto_id=%s", request.contacto_id)
+        tools.append(comandos_tool)
+        logger.info("Tools guardar_nota + marcar_prospecto_calificado + ejecutar_comando agregadas para contacto_id=%s", request.contacto_id)
 
     mcp_discovery_ms = (time.perf_counter() - t_mcp) * 1000
     available_tools = _describe_available_tools(tools)
