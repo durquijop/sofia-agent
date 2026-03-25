@@ -1,8 +1,6 @@
 # URPE AI Lab - Documentación de Endpoints
 
-**Base URL FastAPI directa:** `http://localhost:8080`
-**Base URL bridge local:** `http://localhost:3001`
-**Base URL pública Railway:** `https://<tu-servicio>.up.railway.app`
+**Base URL:** `http://localhost:8080`
 **Versión:** 1.0.0
 **Swagger UI:** `http://localhost:8080/docs`
 **ReDoc:** `http://localhost:8080/redoc`
@@ -30,12 +28,6 @@
     "docs": "/docs",
     "endpoints": {
         "chat": "/api/v1/chat",
-        "funnel_analyze": "/api/v1/funnel/analyze",
-        "kapso_inbound": "/api/v1/kapso/inbound",
-        "scheduling_disponibilidad": "/api/v1/scheduling/disponibilidad",
-        "scheduling_crear_evento": "/api/v1/scheduling/crear-evento",
-        "scheduling_reagendar_evento": "/api/v1/scheduling/reagendar-evento",
-        "scheduling_eliminar_evento": "/api/v1/scheduling/eliminar-evento",
         "health": "/api/v1/health",
         "db_health": "/api/v1/db/health",
         "db_docs": "/docs#/database"
@@ -285,103 +277,7 @@ Estos endpoints exponen consultas auxiliares de lectura sobre Supabase.
 
 ---
 
-## 7. GET `/api/v1/graph/schema`
-
-**Descripción:** Devuelve un esquema dinámico del grafo, dependencias externas y herramientas principales. Puede enriquecer el resultado con datos reales de agente cuando recibe `empresa_id`.
-
-**Autenticación:** No requerida
-
-### Query Params
-
-| Campo | Tipo | Requerido | Descripción |
-| ----- | ---- | --------- | ----------- |
-| `empresa_id` | `integer` | No | Si se envía, la introspección usa datos reales de la empresa y sus agentes |
-
-### Response `200 OK`
-
-```json
-{
-    "nodes": [],
-    "edges": [],
-    "meta": {
-        "empresa_id": 109
-    }
-}
-```
-
----
-
-## 8. POST `/api/v1/funnel/analyze`
-
-**Descripción:** Ejecuta el agente de embudo para analizar el estado de un contacto, detectar cambios de etapa y capturar metadata de negocio.
-
-**Autenticación:** No requerida
-**Content-Type:** `application/json`
-
-### Request Body
-
-| Campo | Tipo | Requerido | Descripción |
-| ----- | ---- | --------- | ----------- |
-| `contacto_id` | `integer` | Si | ID del contacto a analizar |
-| `empresa_id` | `integer` | Si | Empresa del contacto |
-| `agente_id` | `integer` | Si | Agente comercial asociado |
-| `conversacion_id` | `integer` | No | Conversación a usar como contexto |
-| `model` | `string` | No | Modelo LLM opcional |
-| `max_tokens` | `integer` | No | Máximo de tokens |
-| `temperature` | `float` | No | Temperatura del modelo |
-
-### Respuesta
-
-El response incluye `success`, análisis textual, etapa anterior/nueva, metadata actualizada, `tools_used` y `timing`.
-
----
-
-## 9. Kapso y debug operativo
-
-### Público vía bridge
-
-- `POST /webhook/kapso`
-- `GET /debug/kapso`
-- `GET /openapi.json`
-
-### Interno en FastAPI
-
-- `POST /api/v1/kapso/inbound`
-- `GET /api/v1/kapso/debug/events`
-- `GET /api/v1/kapso/debug/config`
-- `GET /api/v1/kapso/debug/empresas`
-- `GET /api/v1/kapso/debug/stream`
-
-**Nota:** el webhook público de Kapso debe apuntar al bridge, no al endpoint interno `/api/v1/kapso/inbound`.
-
----
-
-## 10. Scheduling
-
-Las siguientes rutas existen en FastAPI y también están expuestas públicamente por el bridge de Railway:
-
-- `POST /api/v1/scheduling/disponibilidad`
-- `POST /api/v1/scheduling/crear-evento`
-- `POST /api/v1/scheduling/reagendar-evento`
-- `POST /api/v1/scheduling/eliminar-evento`
-
-### Request mínimo de disponibilidad
-
-```json
-{
-    "contacto_id": 170658,
-    "empresa_id": 109,
-    "time_zone_contacto": "America/Bogota"
-}
-```
-
-### Nota operativa
-
-El módulo de scheduling incorpora una cuarentena local en memoria de **1 hora** para `grant_id` inválidos de Nylas (`401`, `403`, `404`).
-
----
-
-## 11. Modelos disponibles (OpenRouter)
+## 7. Modelos disponibles (OpenRouter)
 
 El campo `model` acepta cualquier modelo disponible en [OpenRouter](https://openrouter.ai/models). Ejemplos:
 
@@ -396,7 +292,7 @@ El campo `model` acepta cualquier modelo disponible en [OpenRouter](https://open
 
 ---
 
-## 12. Variables de Entorno
+## 8. Variables de Entorno
 
 | Variable | Requerida | Descripción |
 | -------- | --------- | ----------- |
@@ -405,26 +301,15 @@ El campo `model` acepta cualquier modelo disponible en [OpenRouter](https://open
 | `DEFAULT_MODEL` | No | Modelo por defecto. Default: `x-ai/grok-4.1-fast` |
 | `SUPABASE_URL` | Si | URL base del proyecto Supabase |
 | `SUPABASE_SERVICE_KEY` | Si | Service role key usada por endpoints y benchmarks que consumen contexto |
-| `SUPABASE_ANON_KEY` | No | Usada por dashboards Realtime en navegador |
 | `APP_NAME` | No | Nombre visible del servicio FastAPI |
 | `DEBUG` | No | Activa comportamiento de depuración |
-| `KAPSO_API_KEY` | Si en runtime con bridge | API key del canal Kapso |
-| `KAPSO_WEBHOOK_SECRET` | Recomendado | Firma del webhook de Kapso |
-| `KAPSO_INTERNAL_TOKEN` | Recomendado | Token entre bridge y FastAPI |
-| `KAPSO_BASE_URL` | No | URL base de Kapso |
-| `INTERNAL_AGENT_API_URL` | Si en bridge | URL interna del endpoint Kapso inbound |
-| `PYTHON_SERVICE_PORT` | No | Puerto interno de FastAPI cuando corre con bridge |
-| `NYLAS_API_KEY` | Si para scheduling | API key principal de Nylas |
-| `NYLAS_API_KEY_2` | No | API key secundaria de Nylas |
-| `NYLAS_API_URL` | No | Base URL de Nylas |
 
 ---
 
-## 13. Códigos de Estado HTTP
+## 9. Códigos de Estado HTTP
 
 | Código | Descripción |
 | ------ | ----------- |
 | `200` | Solicitud exitosa |
-| `404` | Recurso no encontrado o grant/calendario inexistente en algunos flujos |
 | `422` | Error de validación (campos requeridos faltantes o formato inválido) |
 | `500` | Error interno del servidor |

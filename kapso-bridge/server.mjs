@@ -1917,17 +1917,15 @@ function renderConstellationHtml(graphData, empresasList = []) {
 
 *{margin:0;padding:0;box-sizing:border-box}
 
-:root{--safe-top:max(18px, env(safe-area-inset-top));--safe-right:max(14px, env(safe-area-inset-right));--safe-bottom:max(14px, env(safe-area-inset-bottom));--safe-left:max(14px, env(safe-area-inset-left));}
-
 html,body{width:100%;height:100%;overflow:hidden;background:#020010;font-family:'Outfit',system-ui,sans-serif;color:#e2e8f0}
 
 canvas{display:block;position:absolute;top:0;left:0}
 
-#back{position:fixed;top:var(--safe-top);left:var(--safe-left);z-index:20;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);color:rgba(167,139,250,.8);padding:8px 18px;border-radius:10px;font-size:13px;cursor:pointer;text-decoration:none;backdrop-filter:blur(12px);transition:all .2s}
+#back{position:fixed;top:20px;left:20px;z-index:20;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);color:rgba(167,139,250,.8);padding:8px 18px;border-radius:10px;font-size:13px;cursor:pointer;text-decoration:none;backdrop-filter:blur(12px);transition:all .2s}
 
 #back:hover{background:rgba(167,139,250,.12);border-color:rgba(167,139,250,.3);color:#c4b5fd}
 
-#header{position:fixed;top:calc(var(--safe-top) - 2px);left:50%;transform:translateX(-50%);z-index:20;text-align:center;pointer-events:none;width:min(360px,calc(100vw - 240px))}
+#header{position:fixed;top:18px;left:50%;transform:translateX(-50%);z-index:20;text-align:center;pointer-events:none}
 
 #header h1{font-size:20px;font-weight:600;letter-spacing:6px;text-transform:uppercase;background:linear-gradient(135deg,#a78bfa 0%,#6366f1 40%,#818cf8 70%,#c4b5fd 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
 
@@ -1943,15 +1941,15 @@ canvas{display:block;position:absolute;top:0;left:0}
 
 #tooltip .detail b{color:#e2e8f0}
 
-#legend{position:fixed;bottom:var(--safe-bottom);left:50%;transform:translateX(-50%);z-index:20;display:flex;gap:20px;font-size:12px;color:rgba(255,255,255,.35);background:rgba(8,4,28,.6);border:1px solid rgba(255,255,255,.06);border-radius:12px;padding:10px 24px;backdrop-filter:blur(12px);max-width:calc(100vw - var(--safe-left) - var(--safe-right) - 24px);flex-wrap:wrap;justify-content:center}
+#legend{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);z-index:20;display:flex;gap:20px;font-size:12px;color:rgba(255,255,255,.35);background:rgba(8,4,28,.6);border:1px solid rgba(255,255,255,.06);border-radius:12px;padding:10px 24px;backdrop-filter:blur(12px)}
 
 #legend span{display:flex;align-items:center;gap:6px}
 
 #legend i{display:inline-block;width:10px;height:10px;border-radius:50%;box-shadow:0 0 6px currentColor}
 
-#loader{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:25;color:rgba(167,139,250,.6);font-size:14px;letter-spacing:2px;text-transform:uppercase;pointer-events:none;max-width:calc(100vw - 40px);text-align:center}
+#loader{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:25;color:rgba(167,139,250,.6);font-size:14px;letter-spacing:2px;text-transform:uppercase;pointer-events:none}
 
-#speed-ctrl{position:fixed;top:var(--safe-top);right:var(--safe-right);z-index:20;display:none;align-items:center;gap:6px;background:rgba(8,4,28,.7);border:1px solid rgba(255,255,255,.08);border-radius:10px;padding:6px 10px;backdrop-filter:blur(12px)}
+#speed-ctrl{position:fixed;top:20px;right:20px;z-index:20;display:none;align-items:center;gap:6px;background:rgba(8,4,28,.7);border:1px solid rgba(255,255,255,.08);border-radius:10px;padding:6px 10px;backdrop-filter:blur(12px)}
 
 #speed-ctrl span{font-size:11px;color:rgba(255,255,255,.35);letter-spacing:1px;text-transform:uppercase;margin-right:4px}
 
@@ -1959,40 +1957,16 @@ canvas{display:block;position:absolute;top:0;left:0}
 
 #speed-ctrl button.active{background:rgba(167,139,250,.25);border-color:rgba(167,139,250,.5);color:#c4b5fd}
 
-#realtime-badge{position:fixed;top:calc(var(--safe-top) + 36px);right:var(--safe-right);z-index:20;font-size:10px;color:rgba(52,211,153,.7);letter-spacing:1px;text-transform:uppercase;display:flex;align-items:center;gap:5px}
-#empresa-filter{position:fixed;top:var(--safe-top);left:calc(var(--safe-left) + 100px);z-index:20;display:flex;align-items:center;gap:8px;background:rgba(8,4,28,.7);border:1px solid rgba(255,255,255,.08);border-radius:10px;padding:6px 12px;backdrop-filter:blur(12px);max-width:calc(100vw - var(--safe-left) - var(--safe-right) - 180px)}
+#realtime-badge{position:fixed;top:56px;right:20px;z-index:20;font-size:10px;color:rgba(52,211,153,.7);letter-spacing:1px;text-transform:uppercase;display:flex;align-items:center;gap:5px}
+#empresa-filter{position:fixed;top:20px;left:120px;z-index:20;display:flex;align-items:center;gap:8px;background:rgba(8,4,28,.7);border:1px solid rgba(255,255,255,.08);border-radius:10px;padding:6px 12px;backdrop-filter:blur(12px)}
 #empresa-filter label{font-size:11px;color:rgba(255,255,255,.35);letter-spacing:1px;text-transform:uppercase}
-#empresa-filter select{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);color:#c4b5fd;font-size:12px;padding:4px 8px;border-radius:6px;cursor:pointer;font-family:inherit;outline:none;min-width:0;max-width:170px}
+#empresa-filter select{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);color:#c4b5fd;font-size:12px;padding:4px 8px;border-radius:6px;cursor:pointer;font-family:inherit;outline:none}
 #empresa-filter select:focus{border-color:rgba(167,139,250,.5)}
 #empresa-filter select option{background:#1e1b3a;color:#e2e8f0}
 
 #realtime-badge i{width:6px;height:6px;border-radius:50%;background:#34d399;box-shadow:0 0 8px #34d399;animation:pulse-rt 1.5s infinite}
 
 @keyframes pulse-rt{0%,100%{opacity:1}50%{opacity:.3}}
-
-@media (max-width: 820px){
-  #back{top:calc(var(--safe-top) + 2px);padding:8px 12px;font-size:12px;border-radius:12px}
-  #empresa-filter{top:calc(var(--safe-top) + 2px);left:calc(var(--safe-left) + 84px);right:var(--safe-right);max-width:none;padding:6px 10px;gap:6px}
-  #empresa-filter label{font-size:10px}
-  #empresa-filter select{font-size:11px;max-width:none;width:100%}
-  #header{top:calc(var(--safe-top) + 54px);width:calc(100vw - 28px)}
-  #header h1{font-size:18px;letter-spacing:4px}
-  #header p{font-size:10px;letter-spacing:2px}
-  #realtime-badge{top:calc(var(--safe-top) + 90px);font-size:9px}
-  #legend{left:12px;right:12px;transform:none;justify-content:flex-start;flex-wrap:nowrap;gap:10px 14px;padding:10px 12px;font-size:11px;overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;scrollbar-width:none;bottom:calc(var(--safe-bottom) + 8px)}
-  #legend::-webkit-scrollbar{display:none}
-  #legend span{flex:0 0 auto}
-  #tooltip{left:12px !important;right:12px;top:auto !important;bottom:calc(var(--safe-bottom) + 74px) !important;max-width:none;padding:14px 16px}
-  #tooltip h3{font-size:14px}
-  #tooltip .detail{font-size:11px;max-height:36vh;overflow:auto}
-  #speed-ctrl{display:none !important}
-}
-
-@media (max-width: 480px){
-  #header h1{font-size:16px;letter-spacing:3px}
-  #header p{font-size:9px;letter-spacing:1.8px}
-  #legend{font-size:10px;padding:9px 10px}
-}
 
 </style>
 
@@ -2059,7 +2033,7 @@ const C=document.getElementById('c'),X=C.getContext('2d'),TT=document.getElement
 
 const LOADER=document.getElementById('loader');
 
-let W,H,mx=-1,my=-1,hovered=null,dragging=null,dragOff={x:0,y:0},t=0,dpr=1,isCompactLayout=false,plotBox={left:0,top:0,width:0,height:0};
+let W,H,mx=-1,my=-1,hovered=null,dragging=null,dragOff={x:0,y:0},t=0,dpr=1;
 
 /* ── Empresa filter ── */
 const _empresas = ${injectedEmpresas};
@@ -2586,22 +2560,6 @@ const nebulae=[
 
 
 
-function updatePlotBox(){
-
-  isCompactLayout=W<=820||(window.matchMedia&&window.matchMedia('(pointer: coarse)').matches);
-
-  const sidePad=isCompactLayout?26:32;
-
-  const topPad=isCompactLayout?150:96;
-
-  const bottomPad=isCompactLayout?130:84;
-
-  plotBox={left:sidePad,top:topPad,width:Math.max(160,W-(sidePad*2)),height:Math.max(220,H-topPad-bottomPad)};
-
-}
-
-
-
 function resize(){
 
   dpr=window.devicePixelRatio||1;
@@ -2614,121 +2572,13 @@ function resize(){
 
   X.setTransform(dpr,0,0,dpr,0,0);
 
-  updatePlotBox();
-
 }
 
 window.addEventListener('resize',resize);resize();
 
 
 
-function nodePos(n){return{x:plotBox.left+n.x*plotBox.width,y:plotBox.top+n.y*plotBox.height}}
-
-
-
-function formatNodeLabel(label){
-
-  return String(label||'').replace(/_/g,' ');
-
-}
-
-
-
-function getLabelLines(label,maxChars,maxLines){
-
-  const words=formatNodeLabel(label).split(/\s+/).filter(Boolean);
-
-  if(!words.length)return [''];
-
-  const lines=[];
-
-  let current='';
-
-  for(const word of words){
-
-    if(!current){current=word;continue;}
-
-    if((current+' '+word).length<=maxChars){current+=' '+word;continue;}
-
-    lines.push(current);
-
-    current=word;
-
-    if(lines.length===maxLines-1)break;
-
-  }
-
-  if(current&&lines.length<maxLines)lines.push(current);
-
-  const remaining=words.slice(lines.join(' ').split(/\s+/).filter(Boolean).length).join(' ');
-
-  if(remaining&&lines.length){
-
-    const lastIndex=lines.length-1;
-
-    const base=lines[lastIndex].slice(0,Math.max(0,maxChars-1)).trim();
-
-    lines[lastIndex]=(base||lines[lastIndex])+'…';
-
-  }
-
-  return lines.slice(0,maxLines);
-
-}
-
-
-
-function hideTooltip(){
-
-  TT.style.display='none';
-
-}
-
-
-
-function showTooltip(node,clientX,clientY){
-
-  if(!node)return;
-
-  const colors={orchestrator:'#a78bfa',agent:'#fb923c',tool:'#34d399',external:'#60a5fa',database:'#f472b6'};
-
-  const labels={orchestrator:'ORQUESTADOR',agent:'AGENTE',tool:'HERRAMIENTA',external:'SERVICIO EXTERNO',database:'BASE DE DATOS'};
-
-  TT.innerHTML='<h3>'+node.desc+'</h3>'
-
-    +'<span class="tag" style="background:'+colors[node.kind]+'18;color:'+colors[node.kind]+';border:1px solid '+colors[node.kind]+'44">'+labels[node.kind]+'</span>'
-
-    +'<div class="detail">'+node.detail.replace(/\n/g,'<br>')+'</div>';
-
-  TT.style.display='block';
-
-  if(isCompactLayout){
-
-    TT.style.left='12px';
-
-    TT.style.right='12px';
-
-    TT.style.top='auto';
-
-    TT.style.bottom='calc(var(--safe-bottom) + 74px)';
-
-    return;
-
-  }
-
-  TT.style.right='auto';
-
-  TT.style.bottom='auto';
-
-  let tx=clientX+18,ty=clientY+18;
-
-  if(tx+370>W)tx=clientX-380;
-
-  if(ty+220>H)ty=clientY-230;
-
-  TT.style.left=tx+'px';TT.style.top=ty+'px';
-
-}
+function nodePos(n){return{x:n.x*W,y:n.y*H}}
 
 
 
@@ -3007,7 +2857,7 @@ function draw(){
 
 
 
-    if(e.label&&isHov&&!isCompactLayout){
+    if(e.label&&isHov){
 
       const mx2=(p1.x+p2.x)/2,my2=(p1.y+p2.y)/2;
 
@@ -3051,9 +2901,7 @@ function draw(){
 
     const pulseExtra=isPulsing?1+.25*Math.sin((nowTs-np.until+800)/800*Math.PI):0;
 
-    const radiusScale=isCompactLayout?.84:1;
-
-    const R=n.r*radiusScale*pulse*(isHov?1.2:1)*(isPulsing?1+pulseExtra*.15:1);
+    const R=n.r*pulse*(isHov?1.2:1)*(isPulsing?1+pulseExtra*.15:1);
 
 
 
@@ -3109,9 +2957,7 @@ function draw(){
 
 
 
-    const baseFontSize=n.kind==='orchestrator'?15:n.kind==='agent'?14:12;
-
-    const fontSize=Math.max(isCompactLayout?10:12,Math.round(baseFontSize*(isCompactLayout?.86:1)));
+    const fontSize=n.kind==='orchestrator'?15:n.kind==='agent'?14:12;
 
     X.font=(n.kind==='orchestrator'||n.kind==='agent'?'600 ':'400 ')+fontSize+'px Outfit,system-ui,sans-serif';
 
@@ -3119,17 +2965,7 @@ function draw(){
 
     X.textAlign='center';X.textBaseline='middle';
 
-    const labelLines=getLabelLines(n.label,isCompactLayout?12:18,isCompactLayout?2:2);
-
-    const lineHeight=fontSize+2;
-
-    const startY=p.y+R+(isCompactLayout?14:18);
-
-    labelLines.forEach(function(line,index){
-
-      X.fillText(line,p.x,startY+(index*lineHeight));
-
-    });
+    X.fillText(n.label,p.x,p.y+R+18);
 
   }
 
@@ -3183,7 +3019,7 @@ C.addEventListener('mousedown',e=>{
 
     dragVx=0;dragVy=0;
 
-    hideTooltip();
+    TT.style.display='none';
 
   }
 
@@ -3209,7 +3045,7 @@ C.addEventListener('mousemove',e=>{
 
     C.style.cursor='grabbing';
 
-    hideTooltip();
+    TT.style.display='none';
 
     return;
 
@@ -3221,13 +3057,33 @@ C.addEventListener('mousemove',e=>{
 
     C.style.cursor='grab';
 
-    showTooltip(hovered,mx,my);
+    const n=hovered;
+
+    const colors={orchestrator:'#a78bfa',agent:'#fb923c',tool:'#34d399',external:'#60a5fa',database:'#f472b6'};
+
+    const labels={orchestrator:'ORQUESTADOR',agent:'AGENTE',tool:'HERRAMIENTA',external:'SERVICIO EXTERNO',database:'BASE DE DATOS'};
+
+    TT.innerHTML='<h3>'+n.desc+'</h3>'
+
+      +'<span class="tag" style="background:'+colors[n.kind]+'18;color:'+colors[n.kind]+';border:1px solid '+colors[n.kind]+'44">'+labels[n.kind]+'</span>'
+
+      +'<div class="detail">'+n.detail.replace(/\\n/g,'<br>')+'</div>';
+
+    TT.style.display='block';
+
+    let tx=mx+18,ty=my+18;
+
+    if(tx+370>W)tx=mx-380;
+
+    if(ty+220>H)ty=my-230;
+
+    TT.style.left=tx+'px';TT.style.top=ty+'px';
 
   }else{
 
     C.style.cursor='default';
 
-    hideTooltip();
+    TT.style.display='none';
 
   }
 
@@ -3255,27 +3111,7 @@ C.addEventListener('mouseleave',()=>{
 
   dragging=null;
 
-  hideTooltip();
-
-});
-
-C.addEventListener('click',e=>{
-
-  if(!isCompactLayout)return;
-
-  const hit=hitTest(e.clientX,e.clientY);
-
-  hovered=hit;
-
-  if(hit){
-
-    showTooltip(hit,e.clientX,e.clientY);
-
-  }else{
-
-    hideTooltip();
-
-  }
+  TT.style.display='none';
 
 });
 
