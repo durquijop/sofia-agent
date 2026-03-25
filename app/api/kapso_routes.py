@@ -1749,6 +1749,13 @@ async def kapso_inbound(
             "http_error",
             {"status_code": exc.status_code, "detail": str(exc.detail), "message_id": request.message_id},
         )
+        await send_error_to_webhook(
+            exc,
+            context=f"kapso_inbound_http_{exc.status_code}",
+            severity="error",
+            fallback=f"El mensaje de {request.from_phone} (phone_number_id={request.phone_number_id}) "
+                     f"no fue procesado. Error HTTP {exc.status_code}: {exc.detail}",
+        )
         raise
     except Exception as exc:
         mensajes_guardados_local = locals().get("mensajes_guardados", [])
@@ -1773,4 +1780,11 @@ async def kapso_inbound(
             {"error": str(exc), "message_id": request.message_id, "phone_number_id": request.phone_number_id},
         )
         logger.error("Kapso inbound error: %s", exc, exc_info=True)
+        await send_error_to_webhook(
+            exc,
+            context="kapso_inbound_exception",
+            severity="critical",
+            fallback=f"El mensaje de {request.from_phone} (phone_number_id={request.phone_number_id}) "
+                     f"no fue procesado. Excepción: {type(exc).__name__}: {exc}",
+        )
         raise
