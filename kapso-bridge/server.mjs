@@ -4814,6 +4814,32 @@ app.get('/health', (_req, res) => {
 });
 
 
+// Dispatch endpoint: Python retry task sends processed responses here for WhatsApp delivery
+app.post('/api/v1/dispatch', async (req, res) => {
+  try {
+    const token = req.headers['x-kapso-internal-token'];
+    if (KAPSO_INTERNAL_TOKEN && token !== KAPSO_INTERNAL_TOKEN) {
+      return res.status(401).json({ error: 'unauthorized' });
+    }
+    const reply = req.body;
+    if (!reply || !reply.recipient_phone || !reply.phone_number_id) {
+      return res.status(400).json({ error: 'missing recipient_phone or phone_number_id' });
+    }
+    addBridgeDebugEvent('dispatch_retry', {
+      to: reply.recipient_phone,
+      phone_number_id: reply.phone_number_id,
+      reply_type: reply.reply_type || 'text',
+      message_id: reply.message_id,
+    });
+    console.log(`[KapsoBridge] dispatch retry to=${reply.recipient_phone} type=${reply.reply_type || 'text'}`);
+    const sendResult = await dispatchKapsoResponse(reply);
+    res.json({ ok: true, result: sendResult ?? null });
+  } catch (error) {
+    console.error('[KapsoBridge] dispatch error:', error?.message || error);
+    res.status(500).json({ error: String(error?.message || error) });
+  }
+});
+
 
 app.get('/openapi.json', async (req, res) => {
 

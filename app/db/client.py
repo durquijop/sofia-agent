@@ -38,8 +38,13 @@ class SupabaseClient:
         limit: int | None = None,
         single: bool = False,
         count: bool = False,
+        raw_filters: dict[str, str] | None = None,
     ) -> dict | list[dict] | None:
-        """Ejecuta un SELECT contra PostgREST."""
+        """Ejecuta un SELECT contra PostgREST.
+
+        raw_filters allows PostgREST operators directly, e.g.
+        {"status": "in.(buffer,procesando)", "timestamp": "lt.2024-01-01T00:00:00"}
+        """
         params: dict[str, str] = {"select": select}
         if filters:
             for key, val in filters.items():
@@ -47,6 +52,9 @@ class SupabaseClient:
                     params[key] = f"eq.{str(val).lower()}"
                 else:
                     params[key] = f"eq.{val}"
+        if raw_filters:
+            for key, val in raw_filters.items():
+                params[key] = val
         if order:
             params["order"] = f"{order}.{'desc' if order_desc else 'asc'}"
         if limit:

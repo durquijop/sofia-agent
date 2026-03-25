@@ -1867,3 +1867,273 @@ async def kapso_inbound(
                      f"no fue procesado. Excepción: {type(exc).__name__}: {exc}",
         )
         raise
+
+
+# ════════════════════════════════════════════════════════════
+# Retry stuck messages
+# ════════════════════════════════════════════════════════════
+
+STUCK_MESSAGE_MINUTES = 5  # Consider messages stuck after 5 minutes
+
+
+async def _dispatch_to_bridge(reply_payload: dict) -> dict | None:
+    """Send a processed reply to the Kapso bridge for WhatsApp delivery."""
+    settings = get_settings()
+    bridge_url = settings.KAPSO_BRIDGE_URL
+    if not bridge_url:
+        logger.warning("retry_stuck: KAPSO_BRIDGE_URL not configured, cannot dispatch")
+        return None
+    headers = {}
+    if settings.KAPSO_INTERNAL_TOKEN:
+        headers["x-kapso-internal-token"] = settings.KAPSO_INTERNAL_TOKEN
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.post(f"{bridge_url}/api/v1/dispatch", json=reply_payload, headers=headers)
+            r.raise_for_status()
+            return r.json()
+    except Exception as exc:
+        logger.error("retry_stuck: dispatch to bridge failed: %s", exc)
+        return None
+
+
+async def _retry_single_stuck_message(msg: dict) -> bool:
+    """Re-process a single stuck inbound message and send the response via the bridge."""
+    msg_id = msg.get("id")
+    conversacion_id = msg.get("conversacion_id")
+    contenido = msg.get("contenido") or ""
+    metadata = msg.get("metadata") or {}
+    timestamp = msg.get("timestamp") or ""
+
+    if not conversacion_id:
+        logger.warning("retry_stuck: msg %s has no conversacion_id, skipping", msg_id)
+        await db.actualizar_mensaje(int(msg_id), {"status": "error", "metadata": {**metadata, "retry_error": "no conversacion_id"}})
+        return False
+
+    # Check if there's already an agent response after this message (avoid duplicates)
+    if timestamp and await db.has_agent_response_after(int(conversacion_id), timestamp):
+        logger.info("retry_stuck: msg %s already has agent response, marking processed", msg_id)
+        await db.actualizar_mensaje(int(msg_id), {"status": "processed"})
+        return True
+
+    # Get conversation context
+    conversacion = await db.get_conversacion(int(conversacion_id))
+    if not conversacion:
+        logger.warning("retry_stuck: conversacion %s not found for msg %s", conversacion_id, msg_id)
+        await db.actualizar_mensaje(int(msg_id), {"status": "error", "metadata": {**metadata, "retry_error": "conversacion not found"}})
+        return False
+
+    contacto_id = conversacion.get("contacto_id")
+    agente_id = conversacion.get("agente_id")
+    empresa_id = conversacion.get("empresa_id")
+    numero_id = conversacion.get("numero_id")
+
+    if not agente_id:
+        logger.warning("retry_stuck: no agente_id in conversacion %s", conversacion_id)
+        await db.actualizar_mensaje(int(msg_id), {"status": "error", "metadata": {**metadata, "retry_error": "no agente_id"}})
+        return False
+
+    agent = await db.get_agente(int(agente_id))
+    if not agent:
+        logger.warning("retry_stuck: agent %s not found", agente_id)
+        await db.actualizar_mensaje(int(msg_id), {"status": "error", "metadata": {**metadata, "retry_error": "agent not found"}})
+        return False
+
+    # Get contact
+    contacto = await db.get_contacto(int(contacto_id)) if contacto_id else None
+    phone_number_id = metadata.get("phone_number_id", "")
+
+    # Get numero for phone resolution
+    numero = await db.get_numero(int(numero_id)) if numero_id else None
+
+    # Resolve phone
+    from_phone = ""
+    if contacto and contacto.get("telefono"):
+        from_phone = contacto["telefono"]
+    elif metadata.get("contact_name"):
+        from_phone = metadata.get("contact_name", "")
+
+    if not from_phone and not phone_number_id:
+        logger.warning("retry_stuck: cannot resolve phone for msg %s", msg_id)
+        await db.actualizar_mensaje(int(msg_id), {"status": "error", "metadata": {**metadata, "retry_error": "cannot resolve phone"}})
+        return False
+
+    # Build memory session ID
+    memory_session_id = str(contacto_id) if contacto_id else from_phone
+    conversation_id_str = f"kapso:{metadata.get('kapso_conversation_id', conversacion_id)}"
+
+    # Build system prompt
+    model = agent.get("llm") or None
+    mcp_servers = _build_mcp_servers(agent)
+
+    try:
+        prompt_context_data = await db.load_kapso_prompt_context(
+            contacto_id=int(contacto_id) if contacto_id else None,
+            empresa_id=int(empresa_id) if empresa_id else None,
+            conversacion_id=int(conversacion_id),
+            team_id=int(contacto["team_humano_id"]) if contacto and contacto.get("team_humano_id") is not None else None,
+            agente_id=int(agent["id"]) if agent.get("id") is not None else None,
+            agente_rol_id=int(agent["id_rol"]) if agent.get("id_rol") is not None else None,
+            limite_mensajes=8,
+        )
+
+        # Build a minimal KapsoInboundRequest for prompt construction
+        retry_inbound = KapsoInboundRequest(
+            **{"from": from_phone},
+            contact_name=metadata.get("contact_name"),
+            phone_number_id=phone_number_id,
+            kapso_conversation_id=str(metadata.get("kapso_conversation_id", conversacion_id)),
+            message_id=metadata.get("kapso_message_id", f"retry_{msg_id}"),
+            message_type=metadata.get("message_type", "text"),
+            text=contenido,
+            timestamp=timestamp,
+            has_media=metadata.get("has_media", False),
+        )
+
+        context_payload, prompt_extras = build_kapso_context_payload(
+            contacto=contacto,
+            agent=agent,
+            empresa=prompt_context_data.get("empresa"),
+            rol_agente=prompt_context_data.get("rol_agente"),
+            team_humano=prompt_context_data.get("team_humano"),
+            contextos=prompt_context_data.get("contextos") or [],
+            citas=prompt_context_data.get("citas") or [],
+            notificaciones=prompt_context_data.get("notificaciones") or [],
+            mensajes_recientes=prompt_context_data.get("mensajes_recientes") or [],
+            etapas_embudo=prompt_context_data.get("etapas_embudo") or [],
+            notas=prompt_context_data.get("notas") or [],
+            contexto_embudo_snapshot=prompt_context_data.get("contexto_embudo_snapshot"),
+            etapas_embudo_snapshot=prompt_context_data.get("etapas_embudo_snapshot"),
+            conversacion_memoria_snapshot=prompt_context_data.get("conversacion_memoria_snapshot"),
+            inbound=retry_inbound,
+        )
+
+        system_prompt = build_kapso_system_prompt(
+            agent=agent,
+            inbound=retry_inbound,
+            contacto=contacto,
+            context_payload=context_payload,
+            extras=prompt_extras,
+            rol_agente=prompt_context_data.get("rol_agente"),
+        )
+
+        user_message = contenido.strip() or "El usuario envió un mensaje sin contenido legible."
+        started_at = time.perf_counter()
+
+        conversational_result, funnel_result, contact_update_result, merged_timing, merged_tools, merged_agent_runs = await _run_both_agents(
+            started_at=started_at,
+            system_prompt=system_prompt,
+            user_message=user_message,
+            raw_user_text=contenido,
+            model=model,
+            mcp_servers=mcp_servers,
+            conversation_id=conversation_id_str,
+            memory_session_id=memory_session_id,
+            contacto_id=int(contacto_id) if contacto_id else None,
+            empresa_id=int(empresa_id) if empresa_id else None,
+            agente_id=int(agente_id),
+            conversacion_db_id=int(conversacion_id),
+        )
+
+        final_reply_text = _ensure_reply_text(conversational_result.response)
+        suppress_send = _should_suppress_kapso_send(final_reply_text)
+
+        # Save agent response in DB (no duplicate: we only save if no response exists yet)
+        await db.insertar_mensaje(
+            conversacion_id=int(conversacion_id),
+            contenido=final_reply_text,
+            remitente="agente",
+            tipo="texto",
+            status="suppressed" if suppress_send else "sent",
+            modelo_llm=conversational_result.model_used,
+            metadata={
+                "source": "retry_stuck",
+                "original_message_id": msg_id,
+                "agent_id": int(agente_id),
+                "kapso_send_suppressed": suppress_send,
+            },
+            empresa_id=int(empresa_id) if empresa_id else None,
+        )
+
+        # Mark original inbound message as processed
+        await db.actualizar_mensaje(int(msg_id), {"status": "processed"})
+
+        # Dispatch to bridge for WhatsApp delivery
+        if not suppress_send:
+            reply_payload = {
+                "reply_type": "text",
+                "reply_text": final_reply_text,
+                "suppress_send": False,
+                "recipient_phone": from_phone,
+                "phone_number_id": phone_number_id,
+                "message_id": metadata.get("kapso_message_id", f"retry_{msg_id}"),
+            }
+            dispatch_result = await _dispatch_to_bridge(reply_payload)
+            logger.info("retry_stuck: msg %s dispatched, result=%s", msg_id, dispatch_result)
+
+        add_kapso_debug_event(
+            "fastapi",
+            "retry_stuck_success",
+            {
+                "original_message_id": msg_id,
+                "conversacion_id": conversacion_id,
+                "contacto_id": contacto_id,
+                "response_chars": len(final_reply_text),
+                "response_preview": final_reply_text[:200],
+                "suppressed": suppress_send,
+            },
+        )
+        logger.info("retry_stuck: msg %s processed successfully, response_chars=%s", msg_id, len(final_reply_text))
+        return True
+
+    except Exception as exc:
+        logger.error("retry_stuck: failed to process msg %s: %s", msg_id, exc, exc_info=True)
+        await db.actualizar_mensaje(int(msg_id), {
+            "status": "error",
+            "metadata": {**metadata, "retry_error": str(exc), "retry_error_type": type(exc).__name__},
+        })
+        add_kapso_debug_event(
+            "fastapi",
+            "retry_stuck_error",
+            {"original_message_id": msg_id, "error": str(exc)},
+        )
+        return False
+
+
+async def retry_stuck_messages() -> dict:
+    """Find and re-process stuck messages. Called by the background task."""
+    try:
+        stuck = await db.get_stuck_messages(minutes_old=STUCK_MESSAGE_MINUTES, limit=10)
+        if not stuck:
+            return {"checked": True, "stuck_found": 0, "retried": 0, "success": 0}
+
+        logger.info("retry_stuck: found %d stuck messages", len(stuck))
+        add_kapso_debug_event(
+            "fastapi",
+            "retry_stuck_scan",
+            {"stuck_count": len(stuck), "message_ids": [m.get("id") for m in stuck]},
+        )
+
+        success_count = 0
+        for msg in stuck:
+            try:
+                ok = await _retry_single_stuck_message(msg)
+                if ok:
+                    success_count += 1
+            except Exception as exc:
+                logger.error("retry_stuck: unexpected error for msg %s: %s", msg.get("id"), exc)
+
+        logger.info("retry_stuck: processed %d/%d stuck messages", success_count, len(stuck))
+        return {"checked": True, "stuck_found": len(stuck), "retried": len(stuck), "success": success_count}
+    except Exception as exc:
+        logger.error("retry_stuck: scan failed: %s", exc, exc_info=True)
+        return {"checked": True, "error": str(exc)}
+
+
+@router.post("/retry-stuck")
+async def kapso_retry_stuck(x_kapso_internal_token: str | None = Header(default=None)):
+    """Manual trigger to retry stuck messages."""
+    settings = get_settings()
+    if settings.KAPSO_INTERNAL_TOKEN and x_kapso_internal_token != settings.KAPSO_INTERNAL_TOKEN:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    result = await retry_stuck_messages()
+    return result

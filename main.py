@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -7,7 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.kapso_routes import router as kapso_router
+from app.api.kapso_routes import router as kapso_router, retry_stuck_messages
 from app.api.routes import router
 from app.api.db_routes import router as db_router
 from app.api.debug_dashboard import router as debug_dashboard_router
@@ -26,13 +27,35 @@ logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
+RETRY_STUCK_INTERVAL_SECONDS = 10 * 60  # 10 minutes
+
+
+async def _retry_stuck_loop():
+    """Background loop that checks for stuck messages every 10 minutes."""
+    await asyncio.sleep(60)  # Initial delay: wait 1 min after startup
+    while True:
+        try:
+            result = await retry_stuck_messages()
+            if result.get("stuck_found", 0) > 0:
+                logger.info("retry_stuck_loop: %s", result)
+        except Exception as exc:
+            logger.error("retry_stuck_loop error: %s", exc, exc_info=True)
+        await asyncio.sleep(RETRY_STUCK_INTERVAL_SECONDS)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
     logger.info("Iniciando %s", settings.APP_NAME)
+    task = asyncio.create_task(_retry_stuck_loop())
+    logger.info("Background task: retry_stuck_loop iniciado (cada %ds)", RETRY_STUCK_INTERVAL_SECONDS)
     yield
     # Shutdown
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
     logger.info("Servidor apagado limpiamente")
 
 

@@ -531,6 +531,37 @@ async def actualizar_mensaje(mensaje_id: int, data: dict[str, Any]) -> dict | No
     return await sb.query("wp_mensajes", filters={"id": mensaje_id}, single=True)
 
 
+async def get_stuck_messages(minutes_old: int = 5, limit: int = 20) -> list[dict]:
+    """Obtiene mensajes de usuario atascados en status buffer/procesando por más de N minutos."""
+    from datetime import timedelta
+    sb = await get_supabase()
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=minutes_old)).isoformat()
+    return await sb.query(
+        "wp_mensajes",
+        select="id,conversacion_id,contenido,tipo,remitente,status,metadata,timestamp,empresa_id",
+        raw_filters={
+            "status": "in.(buffer,procesando)",
+            "remitente": "eq.usuario",
+            "timestamp": f"lt.{cutoff}",
+        },
+        order="timestamp",
+        limit=limit,
+    ) or []
+
+
+async def has_agent_response_after(conversacion_id: int, after_timestamp: str) -> bool:
+    """Verifica si ya existe una respuesta del agente después de cierto timestamp."""
+    sb = await get_supabase()
+    rows = await sb.query(
+        "wp_mensajes",
+        select="id",
+        filters={"conversacion_id": conversacion_id, "remitente": "agente"},
+        raw_filters={"timestamp": f"gt.{after_timestamp}"},
+        limit=1,
+    )
+    return bool(rows)
+
+
 async def get_agent_memory(session_id: str, limit: int = 16) -> list[dict]:
     sb = await get_supabase()
     data = await sb.query(

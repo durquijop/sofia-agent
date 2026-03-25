@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     KAPSO_WEBHOOK_SECRET: str | None = None
     KAPSO_BRIDGE_PORT: int | None = None
     KAPSO_BASE_URL: str | None = None
+    KAPSO_BRIDGE_URL: str | None = None
     INTERNAL_AGENT_API_URL: str | None = None
     # Nylas API
     NYLAS_API_KEY: str | None = None
