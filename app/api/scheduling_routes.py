@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
+import httpx
 from fastapi import APIRouter, HTTPException
 
 from app.db.client import get_supabase
@@ -49,7 +50,7 @@ async def _get_asesores_by_empresa(empresa_id: int) -> list[dict[str, Any]]:
     )
     if not asesores or not isinstance(asesores, list):
         return []
-    return [a for a in asesores if a.get("grant_id") and a["grant_id"] != "Solicitud enviada"]
+    return [a for a in asesores if _asesor_grant_habilitado(a)]
 
 
 async def _get_asesor_by_id(asesor_id: int) -> dict[str, Any] | None:
@@ -97,7 +98,7 @@ async def _get_asesor_fijo_de_contacto(contacto_id: int) -> dict[str, Any] | Non
         return None
 
     asesor = await _get_asesor_by_id(cita_realizada["team_humano_id"])
-    if not asesor or not asesor.get("grant_id") or asesor["grant_id"] == "Solicitud enviada":
+    if not _asesor_grant_habilitado(asesor):
         return None
 
     logger.info("🔒 Contacto %s tiene asesor fijo: %s %s", contacto_id, asesor["nombre"], asesor.get("apellido", ""))
@@ -329,6 +330,9 @@ async def _asesor_ocupado(nylas, asesor: dict, start_unix: int, end_unix: int,
     Si exclude_event_id se proporciona (reagendar), se omite free/busy y se usa
     solo list_events filtrando ese evento, para evitar que la cita propia bloquee.
     """
+    if not _asesor_grant_habilitado(asesor):
+        return True
+
     grant_id = asesor["grant_id"]
     email = asesor["email"]
 
@@ -347,6 +351,9 @@ async def _asesor_ocupado(nylas, asesor: dict, start_unix: int, end_unix: int,
                                             asesor["id"], start_unix, end_unix, bp_start, bp_end)
                                 return True
         except Exception as e:
+            if _should_disable_nylas_grant(e):
+                _disable_nylas_grant(asesor, e)
+                return True
             logger.warning("Error free/busy asesor %s: %s — fallback a list_events", asesor["id"], e)
 
     # 2) List events (filtra exclude_event_id para reagendar)
@@ -366,7 +373,10 @@ async def _asesor_ocupado(nylas, asesor: dict, start_unix: int, end_unix: int,
                                     asesor["id"], ev.get("title", "?"), ev_start, ev_end)
                         return True
     except Exception as e:
+        if _should_disable_nylas_grant(e):
+            _disable_nylas_grant(asesor, e)
         logger.warning("Error list_events asesor %s: %s", asesor["id"], e)
+        return True
 
     return False
 
@@ -498,10 +508,14 @@ async def disponibilidad_agenda(req: DisponibilidadRequest):
 
     # Free/Busy en paralelo
     async def _fb(asesor: dict):
+        if not _asesor_grant_habilitado(asesor):
+            return {"asesor": asesor, "freeBusy": None, "ok": False}
         try:
             data = await nylas.get_free_busy(asesor["grant_id"], asesor["email"], ahora_unix, fin_unix)
             return {"asesor": asesor, "freeBusy": data, "ok": True}
         except Exception as e:
+            if _should_disable_nylas_grant(e):
+                _disable_nylas_grant(asesor, e)
             logger.warning("Error free/busy asesor %s: %s", asesor["id"], e)
             return {"asesor": asesor, "freeBusy": None, "ok": False}
 
@@ -659,6 +673,8 @@ async def crear_evento_calendario(req: CrearEventoRequest):
         return CrearEventoResponse(error=seleccion["error"])
 
     asesor = seleccion["asesor"]
+    if not _asesor_grant_habilitado(asesor):
+        return CrearEventoResponse(error=_nylas_grant_disabled_message())
     calendar_id = asesor["email"]
 
     # Parsear timestamps
@@ -705,7 +721,13 @@ async def crear_evento_calendario(req: CrearEventoRequest):
         event_data["location"] = "Presencial"
 
     logger.info("📤 Creando evento en Nylas...")
-    evento = await nylas.create_event(asesor["grant_id"], calendar_id, event_data)
+    try:
+        evento = await nylas.create_event(asesor["grant_id"], calendar_id, event_data)
+    except Exception as e:
+        if _should_disable_nylas_grant(e):
+            _disable_nylas_grant(asesor, e)
+            return CrearEventoResponse(error=_nylas_grant_disabled_message())
+        raise
     logger.info("✅ Evento creado: %s", evento.get("id"))
 
     meet_link = (evento.get("conferencing") or {}).get("details", {}).get("url")
@@ -778,6 +800,8 @@ async def reagendar_evento(req: ReagendarEventoRequest):
         return ReagendarEventoResponse(error=seleccion["error"])
 
     asesor_nuevo = seleccion["asesor"]
+    if not _asesor_grant_habilitado(asesor_nuevo):
+        return ReagendarEventoResponse(error=_nylas_grant_disabled_message())
     cambio_asesor = not seleccion.get("es_asesor_fijo") and (asesor_actual is None or asesor_actual["id"] != asesor_nuevo["id"])
 
     # Parsear timestamps
@@ -800,10 +824,12 @@ async def reagendar_evento(req: ReagendarEventoRequest):
         await _actualizar_estado_cita(req.event_id, "reagendada")
 
         # Eliminar evento del calendario anterior
-        if asesor_actual and asesor_actual.get("grant_id"):
+        if _asesor_grant_habilitado(asesor_actual):
             try:
                 await nylas.delete_event(asesor_actual["grant_id"], asesor_actual["email"], req.event_id)
             except Exception as e:
+                if _should_disable_nylas_grant(e):
+                    _disable_nylas_grant(asesor_actual, e)
                 logger.warning("No se pudo eliminar evento anterior: %s", e)
 
         # Crear nuevo evento
@@ -830,7 +856,13 @@ async def reagendar_evento(req: ReagendarEventoRequest):
         else:
             event_data["location"] = "Presencial"
 
-        evento = await nylas.create_event(asesor_nuevo["grant_id"], calendar_id, event_data)
+        try:
+            evento = await nylas.create_event(asesor_nuevo["grant_id"], calendar_id, event_data)
+        except Exception as e:
+            if _should_disable_nylas_grant(e):
+                _disable_nylas_grant(asesor_nuevo, e)
+                return ReagendarEventoResponse(error=_nylas_grant_disabled_message())
+            raise
     else:
         # Mismo asesor — solo actualizar
         update_data: dict[str, Any] = {
@@ -859,7 +891,13 @@ async def reagendar_evento(req: ReagendarEventoRequest):
         elif modalidad == "Presencial":
             update_data["location"] = "Presencial"
 
-        evento = await nylas.update_event(asesor_nuevo["grant_id"], calendar_id, req.event_id, update_data)
+        try:
+            evento = await nylas.update_event(asesor_nuevo["grant_id"], calendar_id, req.event_id, update_data)
+        except Exception as e:
+            if _should_disable_nylas_grant(e):
+                _disable_nylas_grant(asesor_nuevo, e)
+                return ReagendarEventoResponse(error=_nylas_grant_disabled_message())
+            raise
 
     meet_link = (evento.get("conferencing") or {}).get("details", {}).get("url")
 
@@ -931,8 +969,18 @@ async def eliminar_evento(req: EliminarEventoRequest):
     )
     if not asesor:
         return EliminarEventoResponse(error="No se encontró el asesor de la cita")
-    if not asesor.get("grant_id") or asesor["grant_id"] == "Solicitud enviada":
-        return EliminarEventoResponse(error="El asesor no tiene calendario configurado")
+    if not _asesor_grant_habilitado(asesor):
+        logger.warning("⚠️ Se omitió eliminación en Nylas para asesor %s por grant temporalmente inhabilitado", asesor.get("id"))
+        await _actualizar_estado_cita(req.event_id, "cancelada")
+        return EliminarEventoResponse(
+            success=True,
+            event_id=req.event_id,
+            contacto_id=req.contacto_id or cita.get("contacto_id"),
+            asesor=f"{asesor['nombre']} {asesor.get('apellido', '')}".strip(),
+            asesor_email=asesor["email"],
+            eliminado_en_nylas=False,
+            mensaje="Cita cancelada en Supabase (el evento ya no existía en el calendario)",
+        )
 
     calendar_id = asesor["email"]
     eliminado_en_nylas = False
@@ -942,6 +990,8 @@ async def eliminar_evento(req: EliminarEventoRequest):
         eliminado_en_nylas = True
         logger.info("✅ Evento eliminado de Nylas")
     except Exception as e:
+        if _should_disable_nylas_grant(e):
+            _disable_nylas_grant(asesor, e)
         logger.warning("⚠️ Error al eliminar en Nylas: %s — continuando con cancelación en Supabase", e)
 
     # Actualizar estado en Supabase
@@ -956,3 +1006,75 @@ async def eliminar_evento(req: EliminarEventoRequest):
         eliminado_en_nylas=eliminado_en_nylas,
         mensaje="Evento eliminado correctamente" if eliminado_en_nylas else "Cita cancelada en Supabase (el evento ya no existía en el calendario)",
     )
+
+
+NYLAS_GRANT_DISABLE_TTL = timedelta(hours=24)
+DISABLED_NYLAS_GRANTS: dict[str, dict[str, Any]] = {}
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _prune_disabled_nylas_grants() -> None:
+    now = _utc_now()
+    expired = [grant_id for grant_id, meta in DISABLED_NYLAS_GRANTS.items() if meta["until"] <= now]
+    for grant_id in expired:
+        DISABLED_NYLAS_GRANTS.pop(grant_id, None)
+
+
+def _get_disabled_nylas_grant(grant_id: str | None) -> dict[str, Any] | None:
+    if not grant_id:
+        return None
+    _prune_disabled_nylas_grants()
+    return DISABLED_NYLAS_GRANTS.get(grant_id)
+
+
+def _should_disable_nylas_grant(exc: Exception) -> bool:
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code in {401, 403, 404}
+    return False
+
+
+def _disable_nylas_grant(asesor: dict[str, Any], reason: Exception | str) -> None:
+    grant_id = asesor.get("grant_id")
+    if not grant_id:
+        return
+
+    until = _utc_now() + NYLAS_GRANT_DISABLE_TTL
+    DISABLED_NYLAS_GRANTS[grant_id] = {
+        "until": until,
+        "asesor_id": asesor.get("id"),
+        "reason": str(reason),
+    }
+    logger.warning(
+        "Grant Nylas inhabilitado temporalmente asesor_id=%s grant_id=%s until=%s reason=%s",
+        asesor.get("id"),
+        grant_id,
+        until.isoformat(),
+        str(reason),
+    )
+
+
+def _asesor_grant_habilitado(asesor: dict[str, Any] | None) -> bool:
+    if not asesor:
+        return False
+
+    grant_id = asesor.get("grant_id")
+    if not grant_id or grant_id == "Solicitud enviada":
+        return False
+
+    disabled = _get_disabled_nylas_grant(grant_id)
+    if disabled:
+        logger.info(
+            "Asesor %s omitido por grant Nylas inhabilitado hasta %s",
+            asesor.get("id"),
+            disabled["until"].isoformat(),
+        )
+        return False
+
+    return True
+
+
+def _nylas_grant_disabled_message() -> str:
+    return "El calendario del asesor está temporalmente inhabilitado. Intenta nuevamente más tarde."
