@@ -104,13 +104,26 @@ async def _get_asesor_fijo_de_contacto(contacto_id: int) -> dict[str, Any] | Non
     return asesor
 
 
-async def _get_conteo_citas_por_asesor(empresa_id: int) -> dict[int, int]:
+async def _get_conteo_citas_por_asesor(empresa_id: int, tz_name: str = "America/New_York") -> dict[int, int]:
+    """Cuenta citas confirmadas de HOY por asesor (día actual en hora de Georgia/EST)."""
     db = await get_supabase()
-    citas = await db.query(
-        "wp_citas",
-        select="team_humano_id",
-        filters={"empresa_id": empresa_id, "estado": "confirmada"},
-    )
+    tz = ZoneInfo(tz_name)
+    ahora = datetime.now(tz)
+    inicio_dia = ahora.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    fin_dia = (ahora.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)).isoformat()
+
+    # PostgREST range filters (duplicated key requires list of tuples)
+    params = [
+        ("select", "team_humano_id"),
+        ("empresa_id", f"eq.{empresa_id}"),
+        ("estado", "eq.confirmada"),
+        ("fecha_hora", f"gte.{inicio_dia}"),
+        ("fecha_hora", f"lt.{fin_dia}"),
+    ]
+    r = await db._http.get("/wp_citas", params=params)
+    r.raise_for_status()
+    citas = r.json()
+
     conteo: dict[int, int] = {}
     if isinstance(citas, list):
         for c in citas:
@@ -414,8 +427,8 @@ async def _seleccionar_mejor_asesor(
     if not disponibles:
         return None
 
-    # Ordenar por menos citas pendientes
-    conteo = await _get_conteo_citas_por_asesor(empresa_id)
+    # Ordenar por menos citas pendientes (solo cuenta citas de HOY)
+    conteo = await _get_conteo_citas_por_asesor(empresa_id, tz_name)
     disponibles.sort(key=lambda a: conteo.get(a["id"], 0))
 
     return {
