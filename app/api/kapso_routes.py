@@ -30,8 +30,6 @@ from app.schemas.kapso import KapsoInboundRequest, KapsoInboundResponse, KapsoRe
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/kapso", tags=["kapso"])
-DEFAULT_KAPSO_FALLBACK_PHONE = "14704047294"
-DEFAULT_KAPSO_FALLBACK_AGENT_ID = 4
 FUNNEL_TIMEOUT_SECONDS = 25
 CONTACT_UPDATE_TIMEOUT_SECONDS = 20
 DEFAULT_EMPTY_REPLY_TEXT = "Hola, te leo. ¿En qué puedo ayudarte?"
@@ -940,8 +938,8 @@ def _get_debug_config() -> dict:
         "internal_agent_api_url": os.getenv("INTERNAL_AGENT_API_URL", "http://127.0.0.1:8000/api/v1/kapso/inbound"),
         "kapso_internal_token": mask_secret(settings.KAPSO_INTERNAL_TOKEN),
         "supabase_url": mask_secret(settings.SUPABASE_URL),
-        "fallback_phone": DEFAULT_KAPSO_FALLBACK_PHONE,
-        "fallback_agent_id": DEFAULT_KAPSO_FALLBACK_AGENT_ID,
+        "fallback_phone": "(eliminado — error directo si no se resuelve)",
+        "fallback_agent_id": "(eliminado — error directo si no se resuelve)",
     }
 
 
@@ -1035,57 +1033,75 @@ async def kapso_inbound(
         )
         raise HTTPException(status_code=401, detail="Unauthorized Kapso bridge")
     try:
-        numero = await db.get_numero_por_id_kapso(request.phone_number_id)
-        resolved_via_fallback = False
-        if not numero:
-            # Fallback 1: buscar por phone_number_id como teléfono
-            numero = await db.get_numero_por_telefono(request.phone_number_id)
-            if numero:
-                resolved_via_fallback = True
-                add_kapso_debug_event(
-                    "fastapi",
-                    "fallback_numero_by_phone",
-                    {
-                        "lookup_phone": request.phone_number_id,
-                        "resolved_numero_id": numero.get("id"),
-                        "resolved_agente_id": numero.get("agente_id"),
-                        "resolved_empresa_id": numero.get("empresa_id"),
-                        "phone_number_id": request.phone_number_id,
-                        "message_id": request.message_id,
-                    },
-                )
-                logger.warning(
-                    "Kapso inbound resuelto por telefono=%s para phone_number_id=%s",
-                    request.phone_number_id,
-                    request.phone_number_id,
-                )
-        if not numero:
-            # Fallback 2 (último recurso): número hardcodeado
-            numero = await db.get_numero_por_telefono(DEFAULT_KAPSO_FALLBACK_PHONE)
-            if numero:
-                resolved_via_fallback = True
-                add_kapso_debug_event(
-                    "fastapi",
-                    "fallback_numero_hardcoded",
-                    {
-                        "fallback_phone": DEFAULT_KAPSO_FALLBACK_PHONE,
-                        "resolved_numero_id": numero.get("id"),
-                        "resolved_agente_id": numero.get("agente_id"),
-                        "phone_number_id": request.phone_number_id,
-                        "message_id": request.message_id,
-                    },
-                )
-                logger.warning(
-                    "Kapso inbound usando fallback hardcoded telefono=%s para phone_number_id=%s",
-                    DEFAULT_KAPSO_FALLBACK_PHONE,
-                    request.phone_number_id,
-                )
+        # 1. Buscar primero por teléfono (columna telefono) en wp_numeros
+        numero = await db.get_numero_por_telefono(request.phone_number_id)
+        resolved_via = "telefono" if numero else None
 
-        if numero and numero.get("agente_id"):
-            agente_id = numero.get("agente_id")
-        else:
-            agente_id = DEFAULT_KAPSO_FALLBACK_AGENT_ID
-            resolved_via_fallback = True
+        # 2. Si no coincide como teléfono, buscar por id_kapso
+        if not numero:
+            numero = await db.get_numero_por_id_kapso(request.phone_number_id)
+            resolved_via = "id_kapso" if numero else None
+
+        # 3. Si no se encontró por ningún método → error directo
+        if not numero:
+            add_kapso_debug_event(
+                "fastapi",
+                "numero_no_encontrado",
+                {
+                    "phone_number_id": request.phone_number_id,
+                    "message_id": request.message_id,
+                    "from_phone": request.from_phone,
+                    "error": "No se encontró ningún número en wp_numeros que coincida "
+                             "con telefono o id_kapso. Registrar el número en la BD.",
+                },
+            )
+            logger.error(
+                "Kapso inbound: phone_number_id=%s no coincide con ningún registro en wp_numeros "
+                "(ni por telefono ni por id_kapso). Mensaje descartado para evitar responder con agente incorrecto.",
+                request.phone_number_id,
+            )
+            raise HTTPException(
+                status_code=404,
+                detail=f"Número no configurado: phone_number_id={request.phone_number_id} "
+                       f"no existe en wp_numeros. Registrar el número antes de recibir mensajes.",
+            )
+
+        if resolved_via:
+            add_kapso_debug_event(
+                "fastapi",
+                f"numero_resuelto_por_{resolved_via}",
+                {
+                    "phone_number_id": request.phone_number_id,
+                    "resolved_numero_id": numero.get("id"),
+                    "resolved_agente_id": numero.get("agente_id"),
+                    "resolved_empresa_id": numero.get("empresa_id"),
+                    "message_id": request.message_id,
+                },
+            )
+
+        if not numero.get("agente_id"):
+            add_kapso_debug_event(
+                "fastapi",
+                "numero_sin_agente",
+                {
+                    "numero_id": numero.get("id"),
+                    "phone_number_id": request.phone_number_id,
+                    "message_id": request.message_id,
+                    "error": "El número existe en wp_numeros pero no tiene agente_id asignado.",
+                },
+            )
+            logger.error(
+                "Kapso inbound: número id=%s (tel=%s) no tiene agente_id asignado.",
+                numero.get("id"),
+                numero.get("telefono"),
+            )
+            raise HTTPException(
+                status_code=404,
+                detail=f"Número id={numero.get('id')} no tiene agente asignado. "
+                       f"Configurar agente_id en wp_numeros.",
+            )
+
+        agente_id = numero.get("agente_id")
 
         numero_id = int(numero["id"]) if numero and numero.get("id") is not None else None
         empresa_id = int(numero["empresa_id"]) if numero and numero.get("empresa_id") is not None else None
@@ -1103,26 +1119,21 @@ async def kapso_inbound(
                     agente_id = conversacion_db["agente_id"]
 
         agent = await db.get_agente(int(agente_id))
+        # Si la conversación sobreescribió agente_id pero no existe, volver al del número
         if not agent and numero and numero.get("agente_id") and int(numero.get("agente_id")) != int(agente_id):
             agente_id = int(numero.get("agente_id"))
             agent = await db.get_agente(int(agente_id))
-        if not agent and int(agente_id) != DEFAULT_KAPSO_FALLBACK_AGENT_ID:
-            agente_id = DEFAULT_KAPSO_FALLBACK_AGENT_ID
-            resolved_via_fallback = True
-            agent = await db.get_agente(int(agente_id))
-        if resolved_via_fallback:
-            add_kapso_debug_event(
-                "fastapi",
-                "fallback_agent",
-                {"agent_id": agente_id, "phone_number_id": request.phone_number_id, "message_id": request.message_id},
-            )
-            logger.warning(
-                "Kapso inbound usando fallback agent_id=%s para phone_number_id=%s",
+        if not agent:
+            logger.error(
+                "Kapso inbound: agente_id=%s no encontrado en wp_agentes para phone_number_id=%s",
                 agente_id,
                 request.phone_number_id,
             )
-        if not agent:
-            raise HTTPException(status_code=404, detail="No se encontró el agente configurado para este canal")
+            raise HTTPException(
+                status_code=404,
+                detail=f"Agente id={agente_id} no encontrado en wp_agentes. "
+                       f"Verificar configuración del número.",
+            )
 
         if empresa_id is None and agent.get("empresa_id") is not None:
             empresa_id = int(agent["empresa_id"])
