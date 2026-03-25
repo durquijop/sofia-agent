@@ -1,49 +1,11 @@
 import logging
 import os
-import sys
 from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-
-
-class _MaxLevelFilter(logging.Filter):
-    def __init__(self, exclusive_upper_bound: int):
-        super().__init__()
-        self.exclusive_upper_bound = exclusive_upper_bound
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        return record.levelno < self.exclusive_upper_bound
-
-
-def _configure_logging() -> None:
-    formatter = logging.Formatter(
-        fmt="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-
-    stdout_handler = logging.StreamHandler(sys.stdout)
-    stdout_handler.setLevel(logging.INFO)
-    stdout_handler.addFilter(_MaxLevelFilter(logging.ERROR))
-    stdout_handler.setFormatter(formatter)
-
-    stderr_handler = logging.StreamHandler(sys.stderr)
-    stderr_handler.setLevel(logging.ERROR)
-    stderr_handler.setFormatter(formatter)
-
-    root_logger = logging.getLogger()
-    root_logger.handlers.clear()
-    root_logger.setLevel(logging.INFO)
-    root_logger.addHandler(stdout_handler)
-    root_logger.addHandler(stderr_handler)
-
-    for logger_name in ("uvicorn", "uvicorn.error", "uvicorn.access", "httpx"):
-        logger_instance = logging.getLogger(logger_name)
-        logger_instance.handlers.clear()
-        logger_instance.propagate = True
-        logger_instance.setLevel(logging.INFO)
 
 from app.api.kapso_routes import router as kapso_router
 from app.api.routes import router
@@ -55,7 +17,11 @@ from app.api.scheduling_routes import router as scheduling_router
 from app.core.config import get_settings
 from app.core.error_webhook import send_error_to_webhook
 
-_configure_logging()
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 logger = logging.getLogger(__name__)
 
 settings = get_settings()
@@ -162,5 +128,4 @@ if __name__ == "__main__":
     logger.info(f"Iniciando {settings.APP_NAME}")
     logger.info(f"Modelo default: {settings.DEFAULT_MODEL}")
     python_service_port = int(os.getenv("PYTHON_SERVICE_PORT", "8080"))
-    uvicorn_target = "main:app" if settings.DEBUG else app
-    uvicorn.run(uvicorn_target, host="0.0.0.0", port=python_service_port, reload=settings.DEBUG, log_config=None)
+    uvicorn.run("main:app", host="0.0.0.0", port=python_service_port, reload=settings.DEBUG)

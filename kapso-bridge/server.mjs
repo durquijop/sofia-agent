@@ -1896,15 +1896,8 @@ function renderKapsoBasicHtml(debugData) {
 
 function renderConstellationHtml(graphData, empresasList = []) {
 
-  const safeInlineJson = (value) => JSON.stringify(value)
-    .replace(/</g, '\\u003c')
-    .replace(/>/g, '\\u003e')
-    .replace(/&/g, '\\u0026')
-    .replace(/\u2028/g, '\\u2028')
-    .replace(/\u2029/g, '\\u2029');
-
-  const injectedData = graphData ? safeInlineJson(graphData) : 'null';
-  const injectedEmpresas = safeInlineJson(empresasList);
+  const injectedData = graphData ? JSON.stringify(graphData) : 'null';
+  const injectedEmpresas = JSON.stringify(empresasList);
 
   return `<!doctype html>
 
