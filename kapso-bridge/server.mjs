@@ -2261,13 +2261,37 @@ function triggerFlows(stage, payload){
 
 
 
-/* ── Real-time event tracking ── */
+/* ── Real-time event tracking via SSE + polling fallback ── */
 
 const seenEventKeys=new Set();
 
 let lastPollAt=0;
 
-const POLL_INTERVAL=4000;
+const POLL_INTERVAL=10000; // Fallback polling (longer since SSE is primary)
+
+let sseConnected=false;
+
+
+
+function processSingleEvent(e){
+
+  if(!e||!e.stage)return;
+
+  const DYNAMIC_STAGES=['run_agent_done','run_funnel_done','run_contact_update_done'];
+
+  const key=(e.timestamp||'')+'|'+(e.stage||'')+'|'+(e.source||'');
+
+  if(seenEventKeys.has(key))return;
+
+  seenEventKeys.add(key);
+
+  if(STAGE_FLOWS[e.stage] || DYNAMIC_STAGES.includes(e.stage)){
+
+    triggerFlows(e.stage, e.payload);
+
+  }
+
+}
 
 
 
@@ -2285,8 +2309,6 @@ function processNewEvents(events){
 
     if(!e||!e.stage)continue;
 
-    // Unique key: timestamp+stage+source (avoids duplicates)
-
     const key=(e.timestamp||'')+'|'+(e.stage||'')+'|'+(e.source||'');
 
     if(seenEventKeys.has(key))continue;
@@ -2298,8 +2320,6 @@ function processNewEvents(events){
   }
 
   if(!fresh.length)return;
-
-  // Sort by timestamp and fire sequentially with stagger
 
   fresh.sort(function(a,b){return new Date(a.timestamp)-new Date(b.timestamp);});
 
@@ -2319,6 +2339,8 @@ function processNewEvents(events){
 
 function pollDebugData(){
 
+  if(sseConnected)return; // SSE is handling real-time, skip polling
+
   const now=Date.now();
 
   if(now-lastPollAt<POLL_INTERVAL)return;
@@ -2332,6 +2354,92 @@ function pollDebugData(){
   }).catch(function(){});
 
 }
+
+
+
+/* ── SSE connection ── */
+
+function connectSSE(){
+
+  const badge=document.getElementById('realtime-badge');
+
+  const badgeIcon=badge?badge.querySelector('i'):null;
+
+  const badgeText=badge;
+
+  
+
+  function setBadge(text,color,glowColor){
+
+    if(badgeIcon){badgeIcon.style.background=color;badgeIcon.style.boxShadow='0 0 8px '+glowColor;}
+
+    if(badgeText)badgeText.lastChild.textContent=text;
+
+  }
+
+  
+
+  const es=new EventSource('/debug/kapso/stream');
+
+  
+
+  es.onopen=function(){
+
+    sseConnected=true;
+
+    setBadge(' Real-time','#34d399','#34d399');
+
+    console.log('[Visual] SSE connected — real-time mode');
+
+  };
+
+  
+
+  es.onmessage=function(msg){
+
+    try{
+
+      const ev=JSON.parse(msg.data);
+
+      if(ev.error){console.warn('[Visual] SSE error:',ev.error);return;}
+
+      processSingleEvent(ev);
+
+    }catch(e){console.warn('[Visual] SSE parse error:',e);}
+
+  };
+
+  
+
+  es.onerror=function(){
+
+    sseConnected=false;
+
+    setBadge(' Polling','#f59e0b','#f59e0b');
+
+    console.warn('[Visual] SSE disconnected — falling back to polling');
+
+    es.close();
+
+    // Reconnect after 5s
+
+    setTimeout(connectSSE,5000);
+
+  };
+
+}
+
+
+
+// Start SSE + initial load of existing events
+
+connectSSE();
+
+fetch('/debug/kapso/data').then(function(r){return r.json();}).then(function(data){
+
+  processNewEvents(data.fastapi_events);
+
+}).catch(function(){});
 
 
 
@@ -4656,6 +4764,46 @@ app.get('/debug/kapso', async (_req, res) => {
 
 });
 
+
+/* ── SSE proxy: streams FastAPI debug events in real time ── */
+app.get('/debug/kapso/stream', async (req, res) => {
+  res.set({
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no',
+    'Access-Control-Allow-Origin': '*',
+  });
+  res.flushHeaders();
+
+  const baseUrl = getFastApiBaseUrl();
+  let aborted = false;
+  req.on('close', () => { aborted = true; });
+
+  try {
+    const upstream = await fetch(`${baseUrl}/api/v1/kapso/debug/stream`, {
+      signal: AbortSignal.timeout(3600_000), // 1h max
+    });
+    if (!upstream.ok || !upstream.body) {
+      res.write(`data: {"error":"upstream ${upstream.status}"}\n\n`);
+      res.end();
+      return;
+    }
+    const reader = upstream.body.getReader();
+    const decoder = new TextDecoder();
+    while (!aborted) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      res.write(decoder.decode(value, { stream: true }));
+    }
+    reader.cancel().catch(() => {});
+  } catch (err) {
+    if (!aborted) {
+      res.write(`data: {"error":"${String(err.message).slice(0, 200)}"}\n\n`);
+    }
+  }
+  res.end();
+});
 
 
 app.get('/debug/kapso/visual', async (req, res) => {

@@ -8,6 +8,7 @@ import uuid
 
 import httpx
 from fastapi import APIRouter, Header, HTTPException
+from fastapi.responses import StreamingResponse
 
 from app.agents.contact_update import run_contact_update_agent
 from app.agents.conversational import run_agent, CLOSING_FOLLOWUP_MARKER
@@ -18,6 +19,8 @@ from app.core.kapso_debug import (
     add_kapso_debug_event,
     get_kapso_debug_events,
     mask_secret,
+    subscribe_sse,
+    unsubscribe_sse,
 )
 from app.core.kapso_prompt import build_kapso_context_payload, build_kapso_system_prompt
 from app.db import queries as db
@@ -991,6 +994,34 @@ async def kapso_debug_events(limit: int = 100):
 @router.get("/debug/config")
 async def kapso_debug_config():
     return _get_debug_config()
+
+
+@router.get("/debug/stream")
+async def kapso_debug_stream():
+    """SSE endpoint — streams debug events in real time."""
+    q = subscribe_sse()
+
+    async def _generate():
+        try:
+            while True:
+                event = await q.get()
+                data = json.dumps(event, default=str)
+                yield f"data: {data}\n\n"
+        except asyncio.CancelledError:
+            pass
+        finally:
+            unsubscribe_sse(q)
+
+    return StreamingResponse(
+        _generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+            "Access-Control-Allow-Origin": "*",
+        },
+    )
 
 
 # Las interacciones ahora se calculan directamente en JavaScript desde los eventos

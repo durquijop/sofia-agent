@@ -202,6 +202,10 @@ def _render_dashboard_html(config: dict) -> str:
     .source-badge{display:inline-block;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600}
     .source-db{background:#1e3a5f;color:#7dd3fc}
     .source-mem{background:#3b1f5e;color:#c4b5fd}
+    .new-row{animation:highlightNew 2.5s ease-out}
+    @keyframes highlightNew{0%{background:#854d0e}40%{background:#713f12}100%{background:transparent}}
+    .new-badge{display:inline-block;background:#f59e0b;color:#000;font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px;margin-left:10px;animation:badgePop .4s ease-out}
+    @keyframes badgePop{0%{transform:scale(0)}60%{transform:scale(1.2)}100%{transform:scale(1)}}
   </style>
 </head>
 <body>
@@ -212,6 +216,7 @@ def _render_dashboard_html(config: dict) -> str:
       <a href="/debug/kapso/data" target="_blank">Ver JSON</a>
       <a href="/docs" target="_blank">API Docs</a>
       <span class="auto-refresh" id="autoLabel"></span>
+      <span id="newBadge" style="display:none"></span>
     </div>
   </div>
 
@@ -315,7 +320,8 @@ def _render_dashboard_html(config: dict) -> str:
     }).join('');
   }
 
-  function renderInteractions(interactions) {
+  function renderInteractions(interactions, newIds) {
+    if (!newIds) newIds = new Set();
     const tbody = document.getElementById('interactionRows');
     const detailsDiv = document.getElementById('interactionDetails');
 
@@ -336,7 +342,9 @@ def _render_dashboard_html(config: dict) -> str:
     document.getElementById('statAvg').textContent = avg != null ? avg + ' ms' : '—';
 
     // Table rows
-    tbody.innerHTML = interactions.map((item, idx) => `<tr>
+    tbody.innerHTML = interactions.map((item, idx) => {
+      const isNew = newIds.has(item.message_id);
+      return `<tr class="${isNew ? 'new-row' : ''}">
       <td>${E(item.started_at||'—')}</td>
       <td>${E(item.contact_name||'—')}</td>
       <td>${E(item.from_phone||'—')}</td>
@@ -349,7 +357,8 @@ def _render_dashboard_html(config: dict) -> str:
       <td>${E(item.duration_ms != null ? item.duration_ms + ' ms' : '—')}</td>
       <td>${E(item.status||'processing')}</td>
       <td><a href="#interaction-${idx}" style="color:#93c5fd" onclick="document.getElementById('interaction-${idx}').open=true">Ver detalle</a></td>
-    </tr>`).join('');
+    </tr>`;
+    }).join('');
 
     // Details
     detailsDiv.innerHTML = interactions.map((item, idx) => {
@@ -397,17 +406,39 @@ def _render_dashboard_html(config: dict) -> str:
     }).join('');
   }
 
-  let refreshInterval = 10;
+  let refreshInterval = 5;
   let countdown = refreshInterval;
   const label = document.getElementById('autoLabel');
+  const newBadge = document.getElementById('newBadge');
+  let knownMessageIds = new Set();
+  let isFirstLoad = true;
 
   async function loadData() {
     countdown = refreshInterval;
     try {
       const r = await fetch('/debug/kapso/data', {cache: 'no-store'});
       const data = await r.json();
-      renderInteractions(data.interactions || []);
+      const interactions = data.interactions || [];
+
+      // Detect new messages
+      const currentIds = new Set(interactions.map(i => i.message_id).filter(Boolean));
+      let newIds = new Set();
+      if (!isFirstLoad) {
+        currentIds.forEach(id => { if (!knownMessageIds.has(id)) newIds.add(id); });
+      }
+      knownMessageIds = currentIds;
+      isFirstLoad = false;
+
+      renderInteractions(interactions, newIds);
       renderEvents(data.fastapi_events || []);
+
+      // Show badge for new messages
+      if (newIds.size > 0) {
+        newBadge.textContent = '+' + newIds.size + ' nuevo' + (newIds.size > 1 ? 's' : '');
+        newBadge.className = 'new-badge';
+        newBadge.style.display = 'inline-block';
+        setTimeout(() => { newBadge.style.display = 'none'; }, 4000);
+      }
     } catch (err) {
       console.error('Debug data load error:', err);
       document.getElementById('interactionRows').innerHTML =
