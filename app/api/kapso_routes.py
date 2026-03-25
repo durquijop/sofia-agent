@@ -1116,7 +1116,20 @@ async def kapso_inbound(
             if contacto and contacto.get("id") is not None:
                 conversacion_db = await db.get_conversacion_activa(int(contacto["id"]), numero_id)
                 if conversacion_db and conversacion_db.get("agente_id"):
-                    agente_id = conversacion_db["agente_id"]
+                    conv_agente_id = conversacion_db["agente_id"]
+                    # Validar que el agente de la conversación pertenezca a la misma empresa
+                    conv_agent = await db.get_agente(int(conv_agente_id))
+                    if conv_agent and conv_agent.get("empresa_id") == empresa_id:
+                        agente_id = conv_agente_id
+                    else:
+                        logger.warning(
+                            "Conversación %s tiene agente_id=%s de empresa_id=%s, "
+                            "pero el número pertenece a empresa_id=%s. Ignorando agente de conversación.",
+                            conversacion_db.get("id"),
+                            conv_agente_id,
+                            conv_agent.get("empresa_id") if conv_agent else "N/A",
+                            empresa_id,
+                        )
 
         agent = await db.get_agente(int(agente_id))
         # Si la conversación sobreescribió agente_id pero no existe, volver al del número
