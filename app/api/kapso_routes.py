@@ -1478,7 +1478,7 @@ async def kapso_inbound(
             "run_agent_start",
             {
                 "agent_id": int(agente_id),
-                "fallback": resolved_via_fallback,
+                "resolved_via": resolved_via,
                 "phone_number_id": request.phone_number_id,
                 "message_id": request.message_id,
                 "conversation_id": conversation_id,
@@ -1488,9 +1488,9 @@ async def kapso_inbound(
             },
         )
         logger.info(
-            "Kapso inbound procesando agent_id=%s fallback=%s phone_number_id=%s from=%s message_type=%s",
+            "Kapso inbound procesando agent_id=%s resolved_via=%s phone_number_id=%s from=%s message_type=%s",
             agente_id,
-            resolved_via_fallback,
+            resolved_via,
             request.phone_number_id,
             request.from_phone,
             request.message_type,
