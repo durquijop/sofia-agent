@@ -456,14 +456,10 @@ _EMOJI_ONLY_RE = re.compile(
 )
 
 _CLOSING_PHRASES = {
-    "ok", "okey", "okay", "oki", "okis", "va", "vale",
-    "dale", "listo", "sale", "va pues", "arre",
-    "gracias", "muchas gracias", "mil gracias", "thank you", "thanks",
-    "bye", "chao", "adios", "nos vemos", "hasta luego", "cuídate", "cuidate",
-    "perfecto", "excelente", "genial", "bueno",
-    "si", "sip", "sep", "claro", "simon", "aja", "ajá",
-    "entendido", "enterado", "de acuerdo", "esta bien", "esta bueno",
-    "buenas noches", "que descanses", "descansa",
+    # Solo despedidas reales — NO confirmaciones como "si", "ok", "dale", "listo"
+    # que pueden ser respuestas a preguntas del agente y requieren seguimiento.
+    "bye", "chao", "adios", "nos vemos", "hasta luego", "hasta pronto",
+    "cuídate", "cuidate", "buenas noches", "que descanses", "descansa",
     "un abrazo", "saludos", "bendiciones",
 }
 
@@ -474,21 +470,23 @@ _CLOSING_BUSINESS_BLOCKERS = {
     "cuándo", "donde", "dónde", "porque", "por que", "necesito", "quiero",
     "ayuda", "problema", "urgente", "llamar", "llama", "informacion",
     "información", "detalles", "explica", "pero", "pago", "cobro",
+    "proceso", "proseso",
 }
 
 CLOSING_FOLLOWUP_MARKER = "__closing_followup__"
 
 
 def _is_closing_followup(message: str | None) -> bool:
-    """Detect short closing/farewell messages that don't need a text reply."""
+    """Detect short farewell/goodbye messages that don't need a text reply.
+    
+    ONLY true despedidas (bye, chao, adios, buenas noches, etc.).
+    Confirmaciones (si, ok, dale, listo, gracias) NO son closing — el usuario
+    puede estar respondiendo a una pregunta del agente.
+    """
     if not message:
         return False
 
     raw = str(message).strip()
-
-    # Pure emoji messages (thumbs up, heart, etc.)
-    if _EMOJI_ONLY_RE.match(raw):
-        return True
 
     normalized = _normalize_text(raw)
     if not normalized:
@@ -496,7 +494,7 @@ def _is_closing_followup(message: str | None) -> bool:
 
     # Too long = probably a real question
     words = normalized.split()
-    if len(words) > 5:
+    if len(words) > 4:
         return False
 
     # Contains business/question markers = real request
@@ -507,7 +505,7 @@ def _is_closing_followup(message: str | None) -> bool:
     if "?" in raw:
         return False
 
-    # Exact match or starts with a closing phrase
+    # Exact match with a farewell phrase only
     if normalized in _CLOSING_PHRASES:
         return True
     if any(normalized.startswith(phrase) for phrase in _CLOSING_PHRASES if len(phrase.split()) <= 2):
