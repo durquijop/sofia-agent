@@ -1001,7 +1001,7 @@ async def kapso_debug_empresas():
     """Return list of empresas for dashboard filtering."""
     try:
         db = await get_supabase()
-        rows = await db.query("wp_empresa_perfil", select="id,nombre")
+        rows = await db.query("wp_empresa_perfil", select="id,nombre", filters={"activo": True})
         if isinstance(rows, list):
             return {"empresas": [{"id": r["id"], "nombre": r.get("nombre") or f"Empresa {r['id']}"} for r in rows]}
     except Exception as exc:
