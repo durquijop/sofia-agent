@@ -575,9 +575,11 @@ def _build_command_response(
     started_at: float,
 ) -> KapsoInboundResponse:
     total_ms = (time.perf_counter() - started_at) * 1000
+    suppress_send = _should_suppress_kapso_send(reply_text)
     return KapsoInboundResponse(
         reply_type="text",
         reply_text=reply_text,
+        suppress_send=suppress_send,
         reaction=None,
         recipient_phone=request.from_phone,
         phone_number_id=request.phone_number_id,
@@ -618,9 +620,13 @@ def _ensure_reply_text(reply_text: str | None) -> str:
     return normalized or DEFAULT_EMPTY_REPLY_TEXT
 
 
+def _should_suppress_kapso_send(reply_text: str | None) -> bool:
+    return str(reply_text or "").lstrip().startswith("❌")
+
+
 def _merge_timings(started_at: float, conversational_timing: TimingInfo, funnel_timing: TimingInfo | None = None) -> TimingInfo:
-    funnel_timing = funnel_timing or TimingInfo(total_ms=0)
     total_ms = (time.perf_counter() - started_at) * 1000
+    funnel = funnel_timing or TimingInfo(total_ms=0, llm_ms=0, mcp_discovery_ms=0, graph_build_ms=0, tool_execution_ms=0)
     return TimingInfo(
         total_ms=round(total_ms, 1),
         llm_ms=round(float(conversational_timing.llm_ms) + float(funnel_timing.llm_ms), 1),
@@ -1680,6 +1686,7 @@ async def kapso_inbound(
                 )
         else:
             final_reply_text = _ensure_reply_text(conversational_result.response)
+            suppress_send = _should_suppress_kapso_send(final_reply_text)
             if final_reply_text != str(conversational_result.response or "").strip():
                 add_kapso_debug_event(
                     "fastapi",
@@ -1697,15 +1704,28 @@ async def kapso_inbound(
                     contenido=final_reply_text,
                     remitente="agente",
                     tipo="texto",
-                    status="sent",
+                    status="suppressed" if suppress_send else "sent",
                     modelo_llm=conversational_result.model_used,
                     metadata={
                         "source": "kapso_outbound",
                         "message_id": request.message_id,
                         "agent_id": int(agente_id),
+                        "kapso_send_suppressed": suppress_send,
                     },
                     empresa_id=empresa_id,
                 )
+            if suppress_send:
+                add_kapso_debug_event(
+                    "fastapi",
+                    "kapso_send_suppressed",
+                    {
+                        "message_id": request.message_id,
+                        "conversation_id": conversational_result.conversation_id,
+                        "reply_preview": final_reply_text[:300],
+                    },
+                )
+        if is_closing_followup:
+            suppress_send = False
 
         for inbound_message_id in inbound_message_ids:
             try:
@@ -1767,6 +1787,7 @@ async def kapso_inbound(
         return KapsoInboundResponse(
             reply_type=reply_type,
             reply_text=final_reply_text or f"[closing_followup:{reaction_emoji or '👍'}]",
+            suppress_send=suppress_send,
             reaction=reaction_payload,
             image_url=image_url,
             image_caption=image_caption,

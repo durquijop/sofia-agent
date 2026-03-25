@@ -53,6 +53,7 @@ class KapsoInboundRequest(BaseModel):
 class KapsoInboundResponse(BaseModel):
     reply_type: str = Field(default="text", description="Tipo de respuesta a enviar por Kapso")
     reply_text: str = Field(..., description="Texto final que debe enviarse al usuario por Kapso")
+    suppress_send: bool = Field(default=False, description="Si es true, la respuesta se persiste pero no debe enviarse por Kapso")
     buttons: list[KapsoButton] = Field(default_factory=list, description="Botones interactivos si aplica")
     list_payload: KapsoListPayload | None = Field(default=None, description="Payload de lista interactiva si aplica")
     reaction: KapsoReactionPayload | None = Field(default=None, description="Reacción de emoji si aplica")

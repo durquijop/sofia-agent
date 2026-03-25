@@ -4407,6 +4407,16 @@ async function sendKapsoText(recipientPhone, phoneNumberId, text) {
 
 
 
+function shouldSuppressKapsoSend(reply) {
+
+  if (reply?.suppress_send === true) return true;
+
+  return String(reply?.reply_text || '').trimStart().startsWith('❌');
+
+}
+
+
+
 async function dispatchKapsoResponse(reply) {
 
   const recipientPhone = reply.recipient_phone;
@@ -4436,6 +4446,34 @@ async function dispatchKapsoResponse(reply) {
     `[KapsoBridge] -> KapsoSend to=${recipientPhone} phone_number_id=${phoneNumberId} reply_type=${replyType} reaction=${reply.reaction?.emoji || 'none'}`,
 
   );
+
+
+
+  if (shouldSuppressKapsoSend(reply)) {
+
+    addBridgeDebugEvent('kapso_send_suppressed', {
+
+      to: recipientPhone,
+
+      phone_number_id: phoneNumberId,
+
+      reply_type: replyType,
+
+      message_id: reply.message_id,
+
+      reply_preview: String(reply.reply_text || '').slice(0, 300),
+
+    });
+
+    console.log(
+
+      `[KapsoBridge] envío suprimido message_id=${reply.message_id} reply_type=${replyType}`,
+
+    );
+
+    return { suppressed: true, reason: 'kapso_send_suppressed' };
+
+  }
 
 
 
@@ -5112,7 +5150,7 @@ app.post('/webhook/kapso', async (req, res) => {
 
           console.log(
 
-            `[KapsoBridge] mensaje enviado message_id=${sqlPayload.message_id} kapso_response=${JSON.stringify(sendResult ?? null)}`,
+            `[KapsoBridge] mensaje procesado message_id=${sqlPayload.message_id} kapso_response=${JSON.stringify(sendResult ?? null)}`,
 
           );
 
