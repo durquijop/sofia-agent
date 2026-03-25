@@ -3051,7 +3051,7 @@ function draw(){
 
     const pulseExtra=isPulsing?1+.25*Math.sin((nowTs-np.until+800)/800*Math.PI):0;
 
-    const radiusScale=isCompactLayout?.84:1;
+    const radiusScale=isCompactLayout ? .84 : 1;
 
     const R=n.r*radiusScale*pulse*(isHov?1.2:1)*(isPulsing?1+pulseExtra*.15:1);
 
@@ -3065,7 +3065,7 @@ function draw(){
 
     g.addColorStop(0,isPulsing?(np.color+'88'):n.glow);g.addColorStop(1,'transparent');
 
-    X.globalAlpha=dimmed?.2:1;
+    X.globalAlpha=dimmed ? .2 : 1;
 
     X.fillStyle=g;X.beginPath();X.arc(p.x,p.y,R*(isHov?3:2.5),0,6.28);X.fill();
 
@@ -3077,7 +3077,7 @@ function draw(){
 
       X.lineWidth=isPulsing?2:1.5;
 
-      X.globalAlpha=isPulsing?.5:.3;
+      X.globalAlpha=isPulsing ? .5 : .3;
 
       X.beginPath();X.arc(p.x,p.y,R*1.6,0,6.28);X.stroke();
 
@@ -3093,7 +3093,7 @@ function draw(){
 
     X.fillStyle=cg;
 
-    X.globalAlpha=dimmed?.25:(isHov?1:.8);
+    X.globalAlpha=dimmed ? .25 : (isHov ? 1 : .8);
 
     X.beginPath();X.arc(p.x,p.y,R,0,6.28);X.fill();
 
@@ -3111,7 +3111,7 @@ function draw(){
 
     const baseFontSize=n.kind==='orchestrator'?15:n.kind==='agent'?14:12;
 
-    const fontSize=Math.max(isCompactLayout?10:12,Math.round(baseFontSize*(isCompactLayout?.86:1)));
+    const fontSize=Math.max(isCompactLayout ? 10 : 12,Math.round(baseFontSize*(isCompactLayout ? .86 : 1)));
 
     X.font=(n.kind==='orchestrator'||n.kind==='agent'?'600 ':'400 ')+fontSize+'px Outfit,system-ui,sans-serif';
 
