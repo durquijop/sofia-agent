@@ -301,10 +301,15 @@ function buildKapsoInteractions(bridgeEvents = [], fastapiEvents = []) {
         if (payload.text) interaction.message_text = payload.text;
 
         if (payload.phone_number_id) interaction.phone_number_id = payload.phone_number_id;
+        if (payload.empresa_id != null) interaction.empresa_id = payload.empresa_id;
 
       }
 
 
+
+      if (event.stage === 'inbound_entities_resolved') {
+        if (payload.empresa_id != null) interaction.empresa_id = payload.empresa_id;
+      }
 
       if (event.stage === 'run_agent_start') {
 
@@ -325,6 +330,7 @@ function buildKapsoInteractions(bridgeEvents = [], fastapiEvents = []) {
       if (event.stage === 'run_agent_done') {
 
         interaction.agent_id = payload.agent_id;
+        if (payload.empresa_id != null) interaction.empresa_id = payload.empresa_id;
 
         if (payload.conversation_id) interaction.conversation_id = payload.conversation_id;
 
@@ -1888,9 +1894,10 @@ function renderKapsoBasicHtml(debugData) {
 
 
 
-function renderConstellationHtml(graphData) {
+function renderConstellationHtml(graphData, empresasList = []) {
 
   const injectedData = graphData ? JSON.stringify(graphData) : 'null';
+  const injectedEmpresas = JSON.stringify(empresasList);
 
   return `<!doctype html>
 
@@ -1951,6 +1958,11 @@ canvas{display:block;position:absolute;top:0;left:0}
 #speed-ctrl button.active{background:rgba(167,139,250,.25);border-color:rgba(167,139,250,.5);color:#c4b5fd}
 
 #realtime-badge{position:fixed;top:56px;right:20px;z-index:20;font-size:10px;color:rgba(52,211,153,.7);letter-spacing:1px;text-transform:uppercase;display:flex;align-items:center;gap:5px}
+#empresa-filter{position:fixed;top:20px;left:120px;z-index:20;display:flex;align-items:center;gap:8px;background:rgba(8,4,28,.7);border:1px solid rgba(255,255,255,.08);border-radius:10px;padding:6px 12px;backdrop-filter:blur(12px)}
+#empresa-filter label{font-size:11px;color:rgba(255,255,255,.35);letter-spacing:1px;text-transform:uppercase}
+#empresa-filter select{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);color:#c4b5fd;font-size:12px;padding:4px 8px;border-radius:6px;cursor:pointer;font-family:inherit;outline:none}
+#empresa-filter select:focus{border-color:rgba(167,139,250,.5)}
+#empresa-filter select option{background:#1e1b3a;color:#e2e8f0}
 
 #realtime-badge i{width:6px;height:6px;border-radius:50%;background:#34d399;box-shadow:0 0 8px #34d399;animation:pulse-rt 1.5s infinite}
 
@@ -1963,6 +1975,13 @@ canvas{display:block;position:absolute;top:0;left:0}
 <body>
 
 <a href="/debug/kapso" id="back">Panel</a>
+
+<div id="empresa-filter">
+  <label>Empresa</label>
+  <select id="empresa-sel">
+    <option value="">Todas</option>
+  </select>
+</div>
 
 <div id="header">
 
@@ -2015,6 +2034,30 @@ const C=document.getElementById('c'),X=C.getContext('2d'),TT=document.getElement
 const LOADER=document.getElementById('loader');
 
 let W,H,mx=-1,my=-1,hovered=null,dragging=null,dragOff={x:0,y:0},t=0,dpr=1;
+
+/* ── Empresa filter ── */
+const _empresas = ${injectedEmpresas};
+let selectedEmpresaId = '';
+(function initEmpresaFilter(){
+  const sel=document.getElementById('empresa-sel');
+  if(!sel)return;
+  _empresas.forEach(function(e){
+    const opt=document.createElement('option');
+    opt.value=String(e.id);
+    opt.textContent=e.nombre;
+    sel.appendChild(opt);
+  });
+  sel.addEventListener('change',function(){
+    selectedEmpresaId=sel.value;
+  });
+})();
+function _matchesEmpresaFilter(e){
+  if(!selectedEmpresaId)return true;
+  var p=e&&e.payload;
+  if(!p)return true; // no payload = allow (bridge events etc.)
+  if(p.empresa_id!=null) return String(p.empresa_id)===selectedEmpresaId;
+  return true; // events without empresa_id pass through
+}
 
 let prevMx=0,prevMy=0,dragVx=0,dragVy=0;
 
@@ -2276,6 +2319,7 @@ let sseConnected=false;
 function processSingleEvent(e){
 
   if(!e||!e.stage)return;
+  if(!_matchesEmpresaFilter(e))return;
 
   const DYNAMIC_STAGES=['run_agent_done','run_funnel_done','run_contact_update_done'];
 
@@ -2308,6 +2352,7 @@ function processNewEvents(events){
     const e=events[i];
 
     if(!e||!e.stage)continue;
+    if(!_matchesEmpresaFilter(e))continue;
 
     const key=(e.timestamp||'')+'|'+(e.stage||'')+'|'+(e.source||'');
 
@@ -3341,6 +3386,9 @@ function renderKapsoDebugHtml() {
       <div class="tbar">
 
         <h2>Interacciones</h2>
+        <select class="fi" id="empresa-fi" style="width:auto;min-width:140px;margin-left:8px">
+          <option value="">Todas las empresas</option>
+        </select>
 
         <input class="fi" id="fi" placeholder="Filtrar por teléfono o nombre...">
 
@@ -3418,7 +3466,21 @@ function renderKapsoDebugHtml() {
 
 function renderKapsoDebugScript() {
 
-  return `let D={},sel=null,ar=true,arT=null,fq='';
+  return `let D={},sel=null,ar=true,arT=null,fq='',empresaFq='';
+
+// Load empresas list for filter
+(function loadEmpresas(){
+  fetch('/debug/kapso/empresas').then(r=>r.json()).then(data=>{
+    const s=document.getElementById('empresa-fi');
+    if(!s||!data.empresas)return;
+    data.empresas.forEach(e=>{
+      const o=document.createElement('option');
+      o.value=String(e.id);
+      o.textContent=e.nombre;
+      s.appendChild(o);
+    });
+  }).catch(()=>{});
+})();
 
 
 
@@ -3438,7 +3500,12 @@ function mshort(m){if(!m)return'—';const p=m.split('/');return p[p.length-1];}
 
 
 
-function filt(items){return fq?items.filter(i=>(i.from_phone||'').includes(fq)||(i.contact_name||'').toLowerCase().includes(fq.toLowerCase())):items;}
+function filt(items){
+  let r=items;
+  if(empresaFq) r=r.filter(i=>i.empresa_id!=null&&String(i.empresa_id)===empresaFq);
+  if(fq) r=r.filter(i=>(i.from_phone||'').includes(fq)||(i.contact_name||'').toLowerCase().includes(fq.toLowerCase()));
+  return r;
+}
 
 
 
@@ -3717,6 +3784,8 @@ function bindEvents(){
   if(arBtn) arBtn.addEventListener('click',toggleAR);
 
   if(fi) fi.addEventListener('input',onFilter);
+  var empresaFi=document.getElementById('empresa-fi');
+  if(empresaFi) empresaFi.addEventListener('change',function(){empresaFq=this.value;renderTable(D.interactions||[]);renderStats(filt(D.interactions||[]));});
 
   if(closeBtn) closeBtn.addEventListener('click',closeM);
 
@@ -4810,9 +4879,9 @@ app.get('/debug/kapso/visual', async (req, res) => {
 
   res.set('Cache-Control', 'no-store, max-age=0');
 
-  // Fetch graph schema from Python backend and inject it into the HTML
-
+  // Fetch graph schema + empresas from Python backend
   let graphData = null;
+  let empresasList = [];
 
   try {
 
@@ -4822,9 +4891,16 @@ app.get('/debug/kapso/visual', async (req, res) => {
 
     const empresaParam = eid ? `?empresa_id=${encodeURIComponent(eid)}` : '';
 
-    const r = await fetch(`${baseUrl}/api/v1/graph/schema${empresaParam}`);
+    const [graphRes, empRes] = await Promise.allSettled([
+      fetch(`${baseUrl}/api/v1/graph/schema${empresaParam}`),
+      fetch(`${baseUrl}/api/v1/kapso/debug/empresas`),
+    ]);
 
-    if (r.ok) graphData = await r.json();
+    if (graphRes.status === 'fulfilled' && graphRes.value.ok) graphData = await graphRes.value.json();
+    if (empRes.status === 'fulfilled' && empRes.value.ok) {
+      const empJson = await empRes.value.json();
+      empresasList = empJson.empresas || [];
+    }
 
   } catch (err) {
 
@@ -4832,7 +4908,7 @@ app.get('/debug/kapso/visual', async (req, res) => {
 
   }
 
-  res.status(200).type('html').send(renderConstellationHtml(graphData));
+  res.status(200).type('html').send(renderConstellationHtml(graphData, empresasList));
 
 });
 
@@ -4844,6 +4920,18 @@ app.get('/debug/kapso/app.js', (_req, res) => {
 
   res.status(200).type('application/javascript').send(renderKapsoDebugScript());
 
+});
+
+
+
+app.get('/debug/kapso/empresas', async (_req, res) => {
+  try {
+    const data = await fetchFastApiDebugJson('/api/v1/kapso/debug/empresas');
+    res.set('Cache-Control', 'no-store, max-age=0');
+    res.status(200).json(data);
+  } catch (error) {
+    res.status(200).json({ empresas: [] });
+  }
 });
 
 

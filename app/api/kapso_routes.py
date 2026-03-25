@@ -996,6 +996,19 @@ async def kapso_debug_config():
     return _get_debug_config()
 
 
+@router.get("/debug/empresas")
+async def kapso_debug_empresas():
+    """Return list of empresas for dashboard filtering."""
+    try:
+        db = await get_supabase()
+        rows = await db.query("wp_empresa_perfil", select="id,nombre")
+        if isinstance(rows, list):
+            return {"empresas": [{"id": r["id"], "nombre": r.get("nombre") or f"Empresa {r['id']}"} for r in rows]}
+    except Exception as exc:
+        logger.warning("debug/empresas error: %s", exc)
+    return {"empresas": []}
+
+
 @router.get("/debug/stream")
 async def kapso_debug_stream():
     """SSE endpoint — streams debug events in real time."""
@@ -1610,6 +1623,7 @@ async def kapso_inbound(
             {
                 "agent_id": int(agente_id),
                 "agent_name": agent.get("nombre_agente") or str(agente_id),
+                "empresa_id": empresa_id,
                 "conversation_id": conversational_result.conversation_id,
                 "model_used": conversational_result.model_used,
                 "response_chars": len(conversational_result.response or ""),
