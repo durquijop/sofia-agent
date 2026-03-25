@@ -1008,7 +1008,7 @@ async def eliminar_evento(req: EliminarEventoRequest):
     )
 
 
-NYLAS_GRANT_DISABLE_TTL = timedelta(hours=24)
+NYLAS_GRANT_DISABLE_TTL = timedelta(hours=1)
 DISABLED_NYLAS_GRANTS: dict[str, dict[str, Any]] = {}
 
 
