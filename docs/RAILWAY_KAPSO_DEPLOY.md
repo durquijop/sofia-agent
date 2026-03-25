@@ -13,6 +13,16 @@ Kapso debe apuntar su webhook a la URL pública de Railway terminando en:
 /webhook/kapso
 ```
 
+Adicionalmente, el bridge expone públicamente:
+
+```text
+/openapi.json
+/api/v1/scheduling/disponibilidad
+/api/v1/scheduling/crear-evento
+/api/v1/scheduling/reagendar-evento
+/api/v1/scheduling/eliminar-evento
+```
+
 ## Arquitectura desplegada
 
 ```text
@@ -23,6 +33,14 @@ Kapso Webhook
   -> LangGraph agent
   -> Node Kapso Bridge
   -> WhatsApp reply via Kapso SDK
+```
+
+```text
+n8n / Postman / clientes HTTP
+  -> Railway public URL
+  -> Node Kapso Bridge
+  -> Internal FastAPI scheduling routes
+  -> Nylas + Supabase
 ```
 
 ## Variables de entorno requeridas en Railway
@@ -65,6 +83,8 @@ PYTHON_SERVICE_PORT=8000
 - `railway-start.sh`
 - `kapso-bridge/server.mjs`
 - `main.py`
+- `app/api/kapso_routes.py`
+- `app/api/scheduling_routes.py`
 
 ## Webhook de Kapso
 
@@ -81,6 +101,16 @@ No debes usar:
 ```
 
 porque ese endpoint es interno entre el bridge y FastAPI.
+
+## Scheduling público
+
+Las integraciones externas como n8n deben llamar la URL pública del bridge, por ejemplo:
+
+```text
+https://TU-SERVICIO.up.railway.app/api/v1/scheduling/disponibilidad
+```
+
+No es necesario exponer FastAPI por separado mientras el bridge esté desplegado correctamente.
 
 ## Eventos recomendados para pruebas
 
@@ -100,5 +130,7 @@ Debe existir un registro en `wp_numeros` con:
 
 - Railway responde en `/health` del bridge
 - Railway responde en `/docs` del backend FastAPI
+- Railway responde en `/openapi.json` vía bridge
+- Railway responde en `/api/v1/scheduling/disponibilidad` vía bridge
 - Kapso webhook queda en estado activo
 - un mensaje desde WhatsApp dispara respuesta del agente

@@ -2,63 +2,99 @@
 
 ## Resumen
 
-El sistema actual está construido sobre `FastAPI + LangGraph + OpenRouter + MCP`.
+El sistema actual está construido sobre una arquitectura mixta de **FastAPI + LangGraph + OpenRouter + Supabase**, con un **bridge Node/Kapso** como capa pública en Railway.
 
 Objetivo principal:
 
-- recibir una instrucción de sistema y un mensaje
-- ejecutar un agente LangGraph
-- cargar herramientas MCP dinámicamente cuando aplique
-- devolver respuesta final, herramientas usadas y métricas de tiempo
+- recibir tráfico externo de Kapso, n8n y clientes HTTP
+- enrutar ese tráfico al backend FastAPI interno
+- ejecutar agentes LangGraph y rutas operativas
+- integrar MCP, Supabase y Nylas según el caso de uso
+- devolver respuestas y trazabilidad operativa
+
+## Vista de alto nivel
+
+```text
+Kapso / n8n / clientes HTTP
+  -> kapso-bridge/server.mjs
+  -> FastAPI (main.py)
+  -> agentes / DB / scheduling / debug
+  -> OpenRouter / Supabase / MCP / Nylas
+```
 
 ## Componentes principales
 
-### Capa HTTP
+### Capa pública
+
+- **`kapso-bridge/server.mjs`**
+  - expone el webhook público de Kapso
+  - envía respuestas por Kapso SDK
+  - mantiene eventos de debug del bridge
+  - proxyea `openapi.json` y rutas públicas de scheduling al FastAPI interno
+
+### Capa HTTP interna
 
 - **`main.py`**
   - inicializa FastAPI
   - registra routers
   - configura CORS
+  - centraliza manejo global de errores
 
 - **`app/api/routes.py`**
-  - expone el endpoint principal de chat
-  - health check del servicio
+  - chat principal
+  - health check
   - limpieza de cache
+
+- **`app/api/kapso_routes.py`**
+  - inbound interno de Kapso
+  - debug JSON y SSE
+  - coordinación del flujo conversacional y operativo
+
+- **`app/api/scheduling_routes.py`**
+  - disponibilidad
+  - crear, reagendar y eliminar eventos
+  - integración con Nylas y Supabase
+
+- **`app/api/funnel_routes.py`**
+  - análisis de embudo
+  - dashboards y eventos de debug
 
 - **`app/api/db_routes.py`**
   - endpoints utilitarios de lectura sobre Supabase
-  - soporte para inspección de empresa, agente, contacto, conversación y número
+
+- **`app/api/graph_routes.py`**
+  - introspección dinámica del grafo y sus dependencias
 
 ### Capa de orquestación
 
 - **`app/agents/conversational.py`**
-  - corazón del sistema
-  - resuelve modelo y parámetros del request
+  - agente principal del sistema
   - carga tools MCP en paralelo
-  - construye el grafo de LangGraph
-  - ejecuta el loop de tool calling
-  - rastrea herramientas utilizadas
-  - calcula timings
+  - construye y ejecuta el grafo LangGraph
+  - rastrea herramientas usadas y timings
 
-### Capa de tools
+- **`app/agents/funnel.py`**
+  - agente especializado de embudo
+  - soporte comercial y actualización contextual
+
+### Capa de integración
 
 - **`app/mcp_client/client.py`**
   - cliente MCP remoto
-  - descubre herramientas disponibles
-  - convierte definiciones MCP a tools compatibles con LangChain/LangGraph
+  - descubrimiento de herramientas disponibles
+  - adaptación a tools compatibles con LangGraph
 
-### Capa de configuración y soporte
+- **`app/nylas_client/client.py`**
+  - cliente asíncrono de calendario
+  - free/busy y CRUD de eventos
 
-- **`app/core/config.py`**
-  - centraliza variables de entorno
+- **`app/db/client.py`** y **`app/db/queries.py`**
+  - acceso a Supabase
+  - consultas de negocio y debug
 
-- **`app/core/cache.py`**
-  - cache en memoria para requests sin MCP
+## Flujos principales
 
-- **`app/schemas/chat.py`**
-  - contratos de entrada y salida del endpoint de chat
-
-## Flujo principal del chat
+### Flujo de chat directo
 
 ```text
 HTTP Request
@@ -68,32 +104,45 @@ HTTP Request
   -> MCP discovery (si aplica)
   -> LLM creation/reuse
   -> LangGraph compile
-  -> agent node
-  -> tools node (si hay tool_calls)
-  -> tool_tracker node
+  -> agent
+  -> tools
+  -> tool_tracker
   -> respuesta final
-  -> HTTP Response
 ```
 
-## Grafo actual del agente
+### Flujo Kapso productivo
 
 ```text
-agent
- ├─ si hay tool_calls -> tools -> tool_tracker -> agent
- └─ si no hay tool_calls -> END
+Kapso Webhook
+  -> kapso-bridge/server.mjs
+  -> /api/v1/kapso/inbound
+  -> funnel/contact update/conversacional
+  -> respuesta al bridge
+  -> Kapso SDK
+```
+
+### Flujo de scheduling público
+
+```text
+n8n / Postman / cliente HTTP
+  -> kapso-bridge/server.mjs
+  -> /api/v1/scheduling/*
+  -> app/api/scheduling_routes.py
+  -> Nylas + Supabase
 ```
 
 ## Decisiones arquitectónicas vigentes
 
 - `LangGraph` es el runtime principal de orquestación.
-- `Python` es la base del flujo productivo.
-- `Node` queda solo para benchmarks comparativos e investigación.
+- `FastAPI` concentra la lógica de negocio.
+- `Node` es parte del runtime productivo por el bridge Kapso.
 - `OpenRouter` es el proveedor principal de modelos.
 - `MCP` es el mecanismo elegido para descubrimiento y ejecución de herramientas.
+- `Nylas` soporta la capa de disponibilidad y citas.
 
 ## Trazabilidad disponible hoy
 
-El sistema ya devuelve:
+El sistema ya expone o genera:
 
 - `tools_used`
 - `conversation_id`
@@ -103,20 +152,23 @@ El sistema ya devuelve:
 - `timing.mcp_discovery_ms`
 - `timing.graph_build_ms`
 - `timing.tool_execution_ms`
+- eventos de debug Kapso en memoria y Supabase
+- dashboards HTML de debug para Kapso y funnel
 
 ## Limitaciones actuales
 
-- `tool_execution_ms` existe en el schema, pero el runtime principal aún no lo calcula explícitamente.
-- No hay tracing persistente por nodo del grafo.
-- El manejo de errores está concentrado en la ruta HTTP y no por nodo del flujo.
-- El benchmark real mostró que el contexto de embudo puede llegar inconsistente desde Supabase.
+- `tool_execution_ms` sigue siendo mejorable en precisión.
+- No hay tracing persistente fino por nodo del grafo.
+- La cuarentena de grants Nylas es local en memoria y se pierde al reiniciar.
+- Hay diferencias entre probar directo en FastAPI y usar el bridge público.
 
 ## Riesgos operativos
 
 - inconsistencias entre `etapa_actual` y metadata comercial
-- tool schemas dinámicos con variaciones de MCP remoto
-- fallas transitorias de red hacia OpenRouter o Supabase
-- necesidad futura de retries y fallbacks por tool y por nodo
+- variaciones de schemas MCP remotos
+- fallas transitorias de red hacia OpenRouter, Kapso, Supabase o Nylas
+- grants inválidos de Nylas en asesores específicos
+- necesidad futura de retries y fallbacks más finos por tool y por nodo
 
 ## Extensiones naturales del diseño
 
@@ -124,4 +176,4 @@ El sistema ya devuelve:
 - agregar timeouts por tool
 - persistir trazas del grafo
 - introducir validadores de output
-- construir flujos multi-agente explícitos sobre LangGraph
+- construir flujos multi-agente más explícitos

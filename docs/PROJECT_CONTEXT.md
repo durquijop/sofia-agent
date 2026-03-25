@@ -2,108 +2,139 @@
 
 ## Estado actual
 
-Este proyecto usa **LangGraph** como stack principal para producción.
+Este repositorio opera hoy como un sistema productivo basado en **FastAPI + LangGraph + OpenRouter + Supabase**, con una **capa pública Node/Kapso** para webhooks de WhatsApp y proxy de rutas operativas.
 
-La decisión se tomó después de comparar `LangGraph` contra `Vercel AI SDK` en benchmarks controlados y en un flujo real con contexto de Supabase. El resultado fue que la latencia quedó muy pareja, pero `LangGraph` ofreció mejor base para:
-
-- robustez
-- trazabilidad
-- control del loop agente -> tools -> respuesta
-- manejo de errores
-- crecimiento futuro del sistema multi-agente
-
-Los archivos de benchmark comparativo con `Vercel AI SDK` se conservan solo como **referencia histórica**.
+La base del producto sigue estando en Python, pero **Node ya no es solo benchmark**: `kapso-bridge/server.mjs` es parte del runtime real desplegado en Railway.
 
 ## Stack principal
 
-- **API**: FastAPI
+- **API interna de negocio**: FastAPI
+- **Bridge público**: Express + Kapso SDK
 - **Orquestación de agentes**: LangGraph
 - **LLM provider**: OpenRouter
+- **Base de datos y storage**: Supabase
 - **Tooling dinámico**: MCP servers
-- **Cliente HTTP**: `httpx.AsyncClient` compartido con pooling
+- **Scheduling**: Nylas + Supabase
+- **Cliente HTTP**: `httpx.AsyncClient`
 - **Configuración**: `pydantic-settings`
 
 ## Objetivo funcional del sistema
 
-Servir como base de un sistema multi-agente para operaciones comerciales, con estas capacidades:
+Servir como plataforma multi-agente para operación comercial y mensajería, con estas capacidades:
 
-- recibir `system_prompt` y `message`
-- usar `LangGraph` para ejecutar el ciclo del agente
-- descubrir y ejecutar herramientas MCP dinámicamente
-- devolver respuesta final, tools usadas y métricas de tiempo
-- permitir evolucionar a flujos más complejos con varios agentes y herramientas asíncronas
+- recibir tráfico de WhatsApp vía Kapso
+- enrutar mensajes al backend FastAPI interno
+- ejecutar agentes LangGraph con tools MCP
+- exponer rutas auxiliares de DB, funnel, introspección y debug
+- gestionar disponibilidad y citas con Nylas
+- responder por Kapso y mantener trazabilidad operativa
 
-## Punto de entrada
+## Runtime real
+
+### Capa pública
+
+- **`kapso-bridge/server.mjs`**
+  - recibe el webhook público de Kapso
+  - despacha respuestas vía Kapso SDK
+  - mantiene debug básico del bridge
+  - proxyea rutas de scheduling y `openapi.json` al FastAPI interno
+
+### Capa interna
 
 - **`main.py`**
   - crea la app FastAPI
-  - registra rutas de chat y base de datos
-  - expone documentación Swagger y ReDoc
+  - registra routers de chat, Kapso, DB, funnel, graph y scheduling
+  - expone Swagger / ReDoc
+  - centraliza manejo global de errores
 
-## Archivos principales
+## Rutas y módulos principales
 
-### API y entrada
-
-- **`main.py`**
-  - entrypoint del servicio
+### Conversacional
 
 - **`app/api/routes.py`**
-  - endpoint principal `POST /api/v1/chat`
-  - health check
-  - limpieza de cache
-
-- **`docs/API_ENDPOINTS.md`**
-  - referencia de endpoints HTTP
-
-### Core del agente
+  - `POST /api/v1/chat`
+  - `GET /api/v1/health`
+  - `DELETE /api/v1/cache`
 
 - **`app/agents/conversational.py`**
-  - implementación principal del agente con `LangGraph`
-  - carga de tools MCP
-  - construcción del grafo
-  - ejecución del loop agente -> tools -> agent
-  - tracking de tools usadas
-  - timing del flujo
+  - agente principal LangGraph
+  - carga MCP dinámica
+  - loop agente -> tools -> tracker -> agente
 
-- **`app/mcp_client/client.py`**
-  - cliente MCP
-  - descubrimiento de tools remotas
-  - adaptación de tools MCP a herramientas compatibles con LangChain/LangGraph
+### Kapso y operación WhatsApp
 
-- **`app/schemas/chat.py`**
-  - modelos de request/response
-  - estructura de tools usadas y métricas
+- **`app/api/kapso_routes.py`**
+  - `POST /api/v1/kapso/inbound`
+  - debug JSON y SSE de Kapso
+  - coordinación del flujo de inbound y respuesta
 
-- **`app/core/config.py`**
-  - variables de entorno y configuración central
+- **`app/api/debug_dashboard.py`**
+  - dashboard HTML en `/debug/kapso`
 
-- **`app/core/cache.py`**
-  - cache de respuestas para requests sin MCP
+### Scheduling
 
-## Flujo actual del request
+- **`app/api/scheduling_routes.py`**
+  - `POST /api/v1/scheduling/disponibilidad`
+  - `POST /api/v1/scheduling/crear-evento`
+  - `POST /api/v1/scheduling/reagendar-evento`
+  - `POST /api/v1/scheduling/eliminar-evento`
 
-1. `POST /api/v1/chat` recibe `system_prompt`, `message` y parámetros opcionales.
-2. `run_agent()` resuelve el modelo y parámetros.
-3. Si no hay MCP servers, intenta responder desde cache.
-4. Si hay MCP servers, descubre tools en paralelo.
-5. Se crea o reutiliza una instancia LLM.
-6. Se construye el grafo de `LangGraph`.
-7. El grafo ejecuta el loop:
-   - nodo `agent`
-   - nodo `tools`
-   - nodo `tool_tracker`
-8. Se extrae la respuesta final y se devuelven métricas.
+- **`app/nylas_client/client.py`**
+  - free/busy
+  - list/create/update/delete de eventos
+
+### Funnel y soporte comercial
+
+- **`app/api/funnel_routes.py`**
+  - `POST /api/v1/funnel/analyze`
+  - dashboards y eventos de debug del funnel
+
+### Base de datos e introspección
+
+- **`app/api/db_routes.py`**
+  - health y consultas auxiliares sobre Supabase
+
+- **`app/api/graph_routes.py`**
+  - `GET /api/v1/graph/schema`
+  - introspección del grafo y dependencias externas
+
+## Modos de ejecución
+
+### FastAPI directo
+
+- comando: `python main.py`
+- puerto por defecto: `8080`
+- útil para backend puro y Swagger local
+
+### Stack completo estilo Railway
+
+- FastAPI interno en `PYTHON_SERVICE_PORT=8000`
+- bridge Node público con `node kapso-bridge/server.mjs`
+- `railway-start.sh` levanta ambos procesos
 
 ## Invariantes importantes
 
-- `LangGraph` es la implementación principal que se debe extender.
-- El flujo principal del producto vive en Python, no en Node.
-- Los benchmarks de Node existen solo para comparación o documentación histórica.
+- `LangGraph` es la implementación principal a extender.
+- `FastAPI` es la fuente de verdad del negocio.
+- `kapso-bridge/server.mjs` es crítico para producción en Railway.
+- Los endpoints de scheduling públicos se exponen hoy a través del bridge.
 - Las tools MCP se cargan dinámicamente por request.
-- El cache solo aplica a requests sin tools MCP.
+- El cache en memoria solo aplica al chat sin MCP.
 - El modelo por defecto actual es `x-ai/grok-4.1-fast`.
+- Los benchmarks de `Vercel AI SDK` se conservan solo como referencia histórica.
+
+## Scheduling: comportamiento operativo actual
+
+El módulo de scheduling incorpora una **cuarentena local en memoria de 1 hora** para `grant_id` inválidos de Nylas.
+
+- se activa ante `401`, `403` o `404`
+- evita reintentos intermitentes con grants rotos
+- no persiste en Supabase
+- se pierde si el proceso reinicia
 
 ## Variables de entorno relevantes
+
+### Core
 
 - `OPENROUTER_API_KEY`
 - `OPENROUTER_BASE_URL`
@@ -113,92 +144,45 @@ Servir como base de un sistema multi-agente para operaciones comerciales, con es
 - `APP_NAME`
 - `DEBUG`
 
-## Benchmarks y utilidades
+### Kapso / bridge
 
-### Benchmarks LangGraph
+- `KAPSO_API_KEY`
+- `KAPSO_WEBHOOK_SECRET`
+- `KAPSO_INTERNAL_TOKEN`
+- `KAPSO_BASE_URL`
+- `INTERNAL_AGENT_API_URL`
+- `PYTHON_SERVICE_PORT`
 
-- **`scripts/benchmark_parallel_langgraph.py`**
-  - benchmark paralelo de agentes usando LangGraph
+### Nylas
 
-- **`scripts/documented_real_flow_langgraph.py`**
-  - benchmark documentado del flujo real con contexto de embudo
+- `NYLAS_API_KEY`
+- `NYLAS_API_KEY_2`
+- `NYLAS_API_URL`
 
-### Benchmarks comparativos históricos
+## Riesgos operativos conocidos
 
-- **`benchmarks/vercel-ai-sdk-compare.mjs`**
-- **`benchmarks/vercel-ai-sdk-embudo-agent.mjs`**
-- **`benchmarks/vercel-ai-sdk-parallel-agents.mjs`**
-- **`benchmarks/vercel-ai-sdk-documented-real-flow.mjs`**
-
-Estos archivos no son la base del producto. Se mantienen porque contienen evidencia comparativa útil.
+- inconsistencias de contexto comercial en Supabase
+- fallas temporales de red hacia OpenRouter, Kapso o Supabase
+- grants inválidos de Nylas en asesores específicos
+- variaciones de schemas MCP remotos
+- diferencias entre probar directo contra FastAPI y pasar por el bridge público
 
 ## Documentos clave
 
+- **`README.md`**
 - **`docs/PROJECT_CONTEXT.md`**
-  - este documento
-
 - **`docs/architecture/OVERVIEW.md`**
-  - vista de arquitectura y componentes
-
 - **`docs/API_ENDPOINTS.md`**
-  - documentación operativa de endpoints
-
-- **`docs/BENCHMARK_REAL_FLOW_RESULTS.md`**
-  - benchmark final documentado y hallazgos
-
+- **`docs/RAILWAY_KAPSO_DEPLOY.md`**
 - **`docs/NEXT_STEPS.md`**
-  - backlog técnico recomendado para la siguiente fase
-
-## Hallazgos importantes del benchmark real
-
-- `LangGraph` y `Vercel AI SDK` quedaron muy parejos en latencia total.
-- `LangGraph` fue una mejor base para control y robustez del loop con tools.
-- La diferencia de velocidad no justificó cambiar de stack.
-- El cuello principal sigue estando más en inferencia/modelo que en el runtime local.
-
-## Riesgos y temas pendientes
-
-- El contexto real de embudo puede traer inconsistencias, por ejemplo:
-  - `contexto_embudo.data.etapa_actual = null`
-  - pero metadata y `etapa_actual_orden` sí sugieren una etapa real
-
-- En el benchmark comparativo apareció una discrepancia entre usar:
-  - `contacto_id`
-  - `conversacion_id`
-  como identificador para tools del procesador
-
-- `docs/API_ENDPOINTS.md` debe mantenerse alineado con los schemas reales cuando cambie la API.
-
-## Convención para futuras sesiones
-
-Si se retoma el proyecto en otra sesión, asumir lo siguiente:
-
-- el stack principal es `LangGraph`
-- la API principal es FastAPI
-- OpenRouter es el provider activo
-- MCP es el mecanismo para herramientas dinámicas
-- los benchmarks de `Vercel AI SDK` no se deben extender salvo que haya una nueva comparación puntual
-- cualquier cambio nuevo debe priorizar:
-  - robustez
-  - trazabilidad
-  - manejo de errores
-  - observabilidad
 
 ## Dónde empezar al retomar desarrollo
 
 1. Leer este archivo.
 2. Leer `README.md`.
 3. Leer `docs/architecture/OVERVIEW.md`.
-4. Leer `app/agents/conversational.py`.
-5. Leer `app/api/routes.py`.
-6. Leer `docs/API_ENDPOINTS.md`.
-7. Revisar `docs/NEXT_STEPS.md`.
-8. Si el cambio involucra benchmarking real, revisar `docs/BENCHMARK_REAL_FLOW_RESULTS.md`.
-
-## Próximas mejoras recomendadas
-
-- centralizar mejor el contexto de embudo real dentro del flujo productivo
-- definir explícitamente qué identificador usan las tools internas
-- agregar mejor observabilidad por nodo/tool
-- endurecer estrategias de retry, timeout y fallback
-- separar mejor utilidades de benchmark frente al runtime productivo
+4. Revisar `main.py`.
+5. Revisar `kapso-bridge/server.mjs`.
+6. Revisar `app/api/kapso_routes.py` y `app/api/scheduling_routes.py`.
+7. Revisar `docs/API_ENDPOINTS.md`.
+8. Revisar `docs/RAILWAY_KAPSO_DEPLOY.md` si el cambio toca deploy o tráfico público.
