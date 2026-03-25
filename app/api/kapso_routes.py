@@ -30,6 +30,7 @@ from app.schemas.kapso import KapsoInboundRequest, KapsoInboundResponse, KapsoRe
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/kapso", tags=["kapso"])
+DEFAULT_KAPSO_FALLBACK_PHONE = "14704047294"
 DEFAULT_KAPSO_FALLBACK_AGENT_ID = 4
 FUNNEL_TIMEOUT_SECONDS = 25
 CONTACT_UPDATE_TIMEOUT_SECONDS = 20
@@ -1037,14 +1038,37 @@ async def kapso_inbound(
         numero = await db.get_numero_por_id_kapso(request.phone_number_id)
         resolved_via_fallback = False
         if not numero:
+            # Fallback 1: buscar por phone_number_id como teléfono
             numero = await db.get_numero_por_telefono(request.phone_number_id)
             if numero:
                 resolved_via_fallback = True
                 add_kapso_debug_event(
                     "fastapi",
-                    "fallback_numero",
+                    "fallback_numero_by_phone",
                     {
-                        "fallback_phone": request.phone_number_id,
+                        "lookup_phone": request.phone_number_id,
+                        "resolved_numero_id": numero.get("id"),
+                        "resolved_agente_id": numero.get("agente_id"),
+                        "resolved_empresa_id": numero.get("empresa_id"),
+                        "phone_number_id": request.phone_number_id,
+                        "message_id": request.message_id,
+                    },
+                )
+                logger.warning(
+                    "Kapso inbound resuelto por telefono=%s para phone_number_id=%s",
+                    request.phone_number_id,
+                    request.phone_number_id,
+                )
+        if not numero:
+            # Fallback 2 (último recurso): número hardcodeado
+            numero = await db.get_numero_por_telefono(DEFAULT_KAPSO_FALLBACK_PHONE)
+            if numero:
+                resolved_via_fallback = True
+                add_kapso_debug_event(
+                    "fastapi",
+                    "fallback_numero_hardcoded",
+                    {
+                        "fallback_phone": DEFAULT_KAPSO_FALLBACK_PHONE,
                         "resolved_numero_id": numero.get("id"),
                         "resolved_agente_id": numero.get("agente_id"),
                         "phone_number_id": request.phone_number_id,
@@ -1052,8 +1076,8 @@ async def kapso_inbound(
                     },
                 )
                 logger.warning(
-                    "Kapso inbound usando fallback telefono=%s para phone_number_id=%s",
-                    request.phone_number_id,
+                    "Kapso inbound usando fallback hardcoded telefono=%s para phone_number_id=%s",
+                    DEFAULT_KAPSO_FALLBACK_PHONE,
                     request.phone_number_id,
                 )
 

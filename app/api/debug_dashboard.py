@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["debug"])
 
+DEFAULT_KAPSO_FALLBACK_PHONE = "14704047294"
 DEFAULT_KAPSO_FALLBACK_AGENT_ID = 4
 
 
@@ -40,7 +41,7 @@ def _get_debug_config() -> dict:
         ),
         "kapso_internal_token": mask_secret(settings.KAPSO_INTERNAL_TOKEN),
         "supabase_url": mask_secret(settings.SUPABASE_URL),
-        "fallback_phone": "dinámico (phone_number_id del request)",
+        "fallback_phone": f"dinámico (phone_number_id) → hardcoded ({DEFAULT_KAPSO_FALLBACK_PHONE})",
         "fallback_agent_id": DEFAULT_KAPSO_FALLBACK_AGENT_ID,
     }
 
