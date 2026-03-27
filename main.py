@@ -151,4 +151,7 @@ if __name__ == "__main__":
     logger.info(f"Iniciando {settings.APP_NAME}")
     logger.info(f"Modelo default: {settings.DEFAULT_MODEL}")
     python_service_port = int(os.getenv("PYTHON_SERVICE_PORT", "8080"))
-    uvicorn.run("main:app", host="0.0.0.0", port=python_service_port, reload=settings.DEBUG)
+    python_service_host = settings.PYTHON_SERVICE_HOST or ("0.0.0.0" if settings.DEBUG else "127.0.0.1")
+    if not settings.DEBUG and not settings.KAPSO_INTERNAL_TOKEN:
+        logger.warning("KAPSO_INTERNAL_TOKEN no está configurado; los endpoints internos quedan menos protegidos")
+    uvicorn.run("main:app", host=python_service_host, port=python_service_port, reload=settings.DEBUG)

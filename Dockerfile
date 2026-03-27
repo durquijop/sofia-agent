@@ -13,7 +13,7 @@ RUN apt-get update \
 
 WORKDIR /app
 
-COPY requirements.txt package.json package-lock.json railway-start.sh ./
+COPY requirements.txt package.json package-lock.json docker-entrypoint.sh ./
 RUN pip install -r requirements.txt \
     && npm ci
 
@@ -24,9 +24,13 @@ COPY kapso-bridge ./kapso-bridge
 COPY scripts ./scripts
 COPY main.py nixpacks.toml README.md ./
 
-RUN chmod +x railway-start.sh
+RUN chmod +x docker-entrypoint.sh
 
 ENV PYTHON_SERVICE_PORT=8000 \
-    INTERNAL_AGENT_API_URL=http://127.0.0.1:8000/api/v1/kapso/inbound
+    NODE_BRIDGE_PORT=3001 \
+    INTERNAL_AGENT_API_URL=http://127.0.0.1:8000/api/v1/kapso/inbound \
+    WAIT_FOR_PYTHON=true
 
-CMD ["bash", "railway-start.sh"]
+EXPOSE 8000 3001
+
+CMD ["bash", "docker-entrypoint.sh"]

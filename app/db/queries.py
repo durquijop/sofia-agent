@@ -349,11 +349,15 @@ async def get_contacto_por_telefono(telefono: str, empresa_id: int) -> dict | No
     )
 
 
-async def upsert_contacto_whatsapp(telefono: str, empresa_id: int) -> tuple[dict, bool]:
-    """Crea o actualiza un contacto de WhatsApp minimizando consultas."""
+async def upsert_contacto_canal(telefono: str, empresa_id: int, canal: str = "whatsapp") -> tuple[dict, bool]:
     sb = await get_supabase()
     timestamp = datetime.now(timezone.utc).isoformat()
     existente = await get_contacto_por_telefono(telefono, empresa_id)
+    origen = canal.strip().lower() if canal else "whatsapp"
+    origen_label = {
+        "whatsapp": "Whatsapp",
+        "manychat": "ManyChat",
+    }.get(origen, origen.title())
 
     if existente and existente.get("id") is not None:
         updated = await sb.update(
@@ -368,13 +372,18 @@ async def upsert_contacto_whatsapp(telefono: str, empresa_id: int) -> tuple[dict
         {
             "telefono": telefono,
             "empresa_id": empresa_id,
-            "origen": "Whatsapp",
+            "origen": origen_label,
             "notas": "",
             "fecha_registro": timestamp,
             "ultima_interaccion": timestamp,
         },
     )
     return (creado, True)
+
+
+async def upsert_contacto_whatsapp(telefono: str, empresa_id: int) -> tuple[dict, bool]:
+    """Crea o actualiza un contacto de WhatsApp minimizando consultas."""
+    return await upsert_contacto_canal(telefono, empresa_id, canal="whatsapp")
 
 
 async def get_contacto_notas(contacto_id: int, limit: int = 10) -> list[dict]:

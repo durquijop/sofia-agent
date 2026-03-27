@@ -12,12 +12,15 @@ class Settings(BaseSettings):
     SUPABASE_EDGE_FUNCTION_URL: str = "https://vecspltvmyopwbjzerow.supabase.co/functions/v1"
     SUPABASE_EDGE_FUNCTION_TOKEN: str | None = None
     KAPSO_INTERNAL_TOKEN: str | None = None
+    KAPSO_DEBUG_TOKEN: str | None = None
+    KAPSO_PUBLIC_DEBUG: bool = False
     KAPSO_API_KEY: str | None = None
     KAPSO_WEBHOOK_SECRET: str | None = None
     KAPSO_BRIDGE_PORT: int | None = None
     KAPSO_BASE_URL: str | None = None
     KAPSO_BRIDGE_URL: str | None = None
     INTERNAL_AGENT_API_URL: str | None = None
+    PYTHON_SERVICE_HOST: str | None = None
     # Nylas API
     NYLAS_API_KEY: str | None = None
     NYLAS_API_KEY_2: str | None = None

@@ -38,6 +38,12 @@ const KAPSO_INTERNAL_TOKEN = process.env.KAPSO_INTERNAL_TOKEN || '';
 
 const DEFAULT_EMPRESA_ID = process.env.DEFAULT_EMPRESA_ID || '1';
 
+const DEBUG_FLAG = /^(1|true|yes|on)$/i;
+
+const KAPSO_PUBLIC_DEBUG = DEBUG_FLAG.test(String(process.env.KAPSO_PUBLIC_DEBUG || ''));
+
+const KAPSO_DEBUG_TOKEN = process.env.KAPSO_DEBUG_TOKEN || '';
+
 
 
 const client = new WhatsAppClient({
@@ -133,6 +139,90 @@ function maskSecret(value) {
   if (String(value).length <= 8) return '***';
 
   return `${String(value).slice(0, 4)}...${String(value).slice(-4)}`;
+
+}
+
+
+
+function appendDebugToken(pathname, token) {
+
+  if (!token) return pathname;
+
+  const url = new URL(pathname, 'http://localhost');
+
+  url.searchParams.set('token', token);
+
+  return `${url.pathname}${url.search}`;
+
+}
+
+
+
+function extractAccessToken(req) {
+
+  const headerToken = req.headers['x-kapso-debug-token'] ?? req.headers['x-kapso-internal-token'];
+
+  if (typeof headerToken === 'string' && headerToken.trim()) return headerToken.trim();
+
+  if (Array.isArray(headerToken) && headerToken[0]) return String(headerToken[0]).trim();
+
+  const authHeader = req.headers.authorization;
+
+  if (typeof authHeader === 'string' && authHeader.toLowerCase().startsWith('bearer ')) {
+
+    return authHeader.slice(7).trim();
+
+  }
+
+  const queryToken = req.query?.token;
+
+  if (typeof queryToken === 'string' && queryToken.trim()) return queryToken.trim();
+
+  if (Array.isArray(queryToken) && queryToken[0]) return String(queryToken[0]).trim();
+
+  return '';
+
+}
+
+
+
+function isLoopbackRequest(req) {
+
+  const candidates = [req.ip, req.socket?.remoteAddress];
+
+  return candidates.some(value => value === '127.0.0.1' || value === '::1' || value === '::ffff:127.0.0.1');
+
+}
+
+
+
+function requireDebugAccess(req, res) {
+
+  if (KAPSO_PUBLIC_DEBUG || DEBUG_FLAG.test(String(process.env.DEBUG || '')) || isLoopbackRequest(req)) {
+
+    return true;
+
+  }
+
+  const allowedTokens = new Set([KAPSO_DEBUG_TOKEN, KAPSO_INTERNAL_TOKEN].filter(Boolean));
+
+  if (!allowedTokens.size) {
+
+    res.status(503).json({ error: 'debug_disabled' });
+
+    return false;
+
+  }
+
+  if (!allowedTokens.has(extractAccessToken(req))) {
+
+    res.status(401).json({ error: 'unauthorized' });
+
+    return false;
+
+  }
+
+  return true;
 
 }
 
@@ -1156,7 +1246,7 @@ function renderAgentRuns(agentRuns = []) {
 
 
 
-function renderKapsoBasicHtml(debugData) {
+function renderKapsoBasicHtml(debugData, debugToken = '') {
 
   const interactions = Array.isArray(debugData?.interactions) ? debugData.interactions : [];
 
@@ -1350,11 +1440,11 @@ function renderKapsoBasicHtml(debugData) {
 
       <button id="toggle-auto" style="background:#16a34a;color:#fff;border:none;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:12px">⏸ Pausar</button>
 
-      <a href="/debug/kapso">Refrescar</a>
+      <a href="${appendDebugToken('/debug/kapso', debugToken)}">Refrescar</a>
 
-      <a href="/debug/kapso/data" target="_blank" rel="noreferrer">Ver JSON</a>
+      <a href="${appendDebugToken('/debug/kapso/data', debugToken)}" target="_blank" rel="noreferrer">Ver JSON</a>
 
-      <a href="/debug/kapso/visual" style="background:#6366f1;color:#fff;padding:4px 10px;border-radius:6px;text-decoration:none;font-size:12px">Ver visual</a>
+      <a href="${appendDebugToken('/debug/kapso/visual', debugToken)}" style="background:#6366f1;color:#fff;padding:4px 10px;border-radius:6px;text-decoration:none;font-size:12px">Ver visual</a>
 
     </div>
 
@@ -1464,11 +1554,20 @@ function renderKapsoBasicHtml(debugData) {
 
   </details>
 
-
-
 <script>
 
 (function(){
+
+  const DEBUG_TOKEN = new URLSearchParams(window.location.search).get('token') || ${JSON.stringify(debugToken || '')};
+  function debugPath(path){
+    if(!DEBUG_TOKEN)return path;
+    var u=new URL(path,window.location.origin);
+    u.searchParams.set('token',DEBUG_TOKEN);
+    return u.pathname+u.search;
+  }
+  function fetchDebug(path,init){
+    return fetch(debugPath(path),init);
+  }
 
   const POLL_INTERVAL = 5000;
 
@@ -1838,7 +1937,7 @@ function renderKapsoBasicHtml(debugData) {
 
     var scrollY=window.scrollY;
 
-    fetch('/debug/kapso/data').then(function(r){return r.json()}).then(function(data){
+    fetchDebug('/debug/kapso/data').then(function(r){return r.json()}).then(function(data){
 
       update(data);
 
@@ -1894,7 +1993,7 @@ function renderKapsoBasicHtml(debugData) {
 
 
 
-function renderConstellationHtml(graphData, empresasList = []) {
+function renderConstellationHtml(graphData, empresasList = [], debugToken = '') {
 
   const injectedData = graphData ? JSON.stringify(graphData) : 'null';
   const injectedEmpresas = JSON.stringify(empresasList);
@@ -2029,6 +2128,13 @@ canvas{display:block;position:absolute;top:0;left:0}
 
 <script>
 
+const DEBUG_TOKEN=new URLSearchParams(window.location.search).get('token')||${JSON.stringify(debugToken || '')};
+function debugPath(path){
+  if(!DEBUG_TOKEN)return path;
+  const u=new URL(path,window.location.origin);
+  u.searchParams.set('token',DEBUG_TOKEN);
+  return u.pathname+u.search;
+}
 const C=document.getElementById('c'),X=C.getContext('2d'),TT=document.getElementById('tooltip');
 
 const LOADER=document.getElementById('loader');
@@ -2392,7 +2498,7 @@ function pollDebugData(){
 
   lastPollAt=now;
 
-  fetch('/debug/kapso/data').then(function(r){return r.json();}).then(function(data){
+  fetch(debugPath('/debug/kapso/data')).then(function(r){return r.json();}).then(function(data){
 
     processNewEvents(data.fastapi_events);
 
@@ -2424,7 +2530,7 @@ function connectSSE(){
 
   
 
-  const es=new EventSource('/debug/kapso/stream');
+  const es=new EventSource(debugPath('/debug/kapso/stream'));
 
   
 
@@ -2480,7 +2586,7 @@ function connectSSE(){
 
 connectSSE();
 
-fetch('/debug/kapso/data').then(function(r){return r.json();}).then(function(data){
+fetch(debugPath('/debug/kapso/data')).then(function(r){return r.json();}).then(function(data){
 
   processNewEvents(data.fastapi_events);
 
@@ -2506,7 +2612,7 @@ if(_injected && _injected.nodes){
 
   // Seed seen events so existing data doesn't replay as particles
 
-  fetch('/debug/kapso/data').then(function(r){return r.json();}).then(function(data){
+  fetch(debugPath('/debug/kapso/data')).then(function(r){return r.json();}).then(function(data){
 
     const evts=data.fastapi_events;
 
@@ -3454,7 +3560,7 @@ function renderKapsoDebugHtml() {
 
   </div>
 
-  <script src="/debug/kapso/app.js"></script>
+  <script src="${appendDebugToken('/debug/kapso/app.js', debugToken)}"></script>
 
 </body>
 
@@ -3464,13 +3570,26 @@ function renderKapsoDebugHtml() {
 
 
 
-function renderKapsoDebugScript() {
+function renderKapsoDebugScript(debugToken = '') {
 
   return `let D={},sel=null,ar=true,arT=null,fq='',empresaFq='';
 
+const DEBUG_TOKEN=new URLSearchParams(window.location.search).get('token')||${JSON.stringify(debugToken || '')};
+
+function debugPath(path){
+  if(!DEBUG_TOKEN)return path;
+  const u=new URL(path,window.location.origin);
+  u.searchParams.set('token',DEBUG_TOKEN);
+  return u.pathname+u.search;
+}
+
+function fetchDebug(path,init){
+  return fetch(debugPath(path),init);
+}
+
 // Load empresas list for filter
 (function loadEmpresas(){
-  fetch('/debug/kapso/empresas').then(r=>r.json()).then(data=>{
+  fetchDebug('/debug/kapso/empresas').then(r=>r.json()).then(data=>{
     const s=document.getElementById('empresa-fi');
     if(!s||!data.empresas)return;
     data.empresas.forEach(e=>{
@@ -3793,7 +3912,7 @@ function bindEvents(){
 
   const visualBtn=document.getElementById('visual-btn');
 
-  if(visualBtn) visualBtn.addEventListener('click',()=>{ window.location.href='/debug/kapso/visual'; });
+  if(visualBtn) visualBtn.addEventListener('click',()=>{ window.location.href=debugPath('/debug/kapso/visual'); });
 
   document.querySelectorAll('.tab').forEach(tab=>{
 
@@ -4881,13 +5000,15 @@ app.post('/api/v1/scheduling/eliminar-evento', async (req, res) => {
 
 app.get('/debug/kapso', async (_req, res) => {
 
+  if (!requireDebugAccess(_req, res)) return;
+
   try {
 
     const debugData = await collectKapsoDebugPayload();
 
     res.set('Cache-Control', 'no-store, max-age=0');
 
-    res.status(200).type('html').send(renderKapsoBasicHtml(debugData));
+    res.status(200).type('html').send(renderKapsoBasicHtml(debugData, extractAccessToken(_req)));
 
   } catch (error) {
 
@@ -4900,6 +5021,7 @@ app.get('/debug/kapso', async (_req, res) => {
 
 /* ── SSE proxy: streams FastAPI debug events in real time ── */
 app.get('/debug/kapso/stream', async (req, res) => {
+  if (!requireDebugAccess(req, res)) return;
   res.set({
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
@@ -4941,6 +5063,8 @@ app.get('/debug/kapso/stream', async (req, res) => {
 
 app.get('/debug/kapso/visual', async (req, res) => {
 
+  if (!requireDebugAccess(req, res)) return;
+
   res.set('Cache-Control', 'no-store, max-age=0');
 
   // Fetch graph schema + empresas from Python backend
@@ -4972,7 +5096,7 @@ app.get('/debug/kapso/visual', async (req, res) => {
 
   }
 
-  res.status(200).type('html').send(renderConstellationHtml(graphData, empresasList));
+  res.status(200).type('html').send(renderConstellationHtml(graphData, empresasList, extractAccessToken(req)));
 
 });
 
@@ -4980,15 +5104,18 @@ app.get('/debug/kapso/visual', async (req, res) => {
 
 app.get('/debug/kapso/app.js', (_req, res) => {
 
+  if (!requireDebugAccess(_req, res)) return;
+
   res.set('Cache-Control', 'no-store, max-age=0');
 
-  res.status(200).type('application/javascript').send(renderKapsoDebugScript());
+  res.status(200).type('application/javascript').send(renderKapsoDebugScript(extractAccessToken(_req)));
 
 });
 
 
 
 app.get('/debug/kapso/empresas', async (_req, res) => {
+  if (!requireDebugAccess(_req, res)) return;
   try {
     const data = await fetchFastApiDebugJson('/api/v1/kapso/debug/empresas');
     res.set('Cache-Control', 'no-store, max-age=0');
@@ -5001,6 +5128,8 @@ app.get('/debug/kapso/empresas', async (_req, res) => {
 
 
 app.get('/debug/kapso/data', async (_req, res) => {
+
+  if (!requireDebugAccess(_req, res)) return;
 
   try {
 

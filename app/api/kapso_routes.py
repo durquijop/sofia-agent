@@ -7,7 +7,7 @@ import time
 import uuid
 
 import httpx
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from app.agents.contact_update import run_contact_update_agent
@@ -26,9 +26,11 @@ from app.core.kapso_prompt import build_kapso_context_payload, build_kapso_syste
 from app.db import queries as db
 from app.db.client import get_supabase
 from app.schemas.chat import AgentRunTrace, ChatRequest, MCPServerConfig, TimingInfo, ToolCall
+from app.schemas.channel import ChannelInboundMessage
 from app.schemas.contact_update import ContactUpdateAgentRequest, ContactUpdateAgentResponse
 from app.schemas.funnel import FunnelAgentRequest, FunnelAgentResponse
 from app.schemas.kapso import KapsoInboundRequest, KapsoInboundResponse, KapsoReactionPayload
+from app.services.channel_adapter import normalize_kapso_inbound
 
 logger = logging.getLogger(__name__)
 
@@ -946,15 +948,54 @@ def _get_debug_config() -> dict:
         "python_service_port": os.getenv("PYTHON_SERVICE_PORT", "8000"),
         "internal_agent_api_url": os.getenv("INTERNAL_AGENT_API_URL", "http://127.0.0.1:8000/api/v1/kapso/inbound"),
         "kapso_internal_token": mask_secret(settings.KAPSO_INTERNAL_TOKEN),
+        "kapso_debug_token": mask_secret(settings.KAPSO_DEBUG_TOKEN),
+        "kapso_public_debug": settings.KAPSO_PUBLIC_DEBUG,
         "supabase_url": mask_secret(settings.SUPABASE_URL),
         "fallback_phone": "(eliminado — error directo si no se resuelve)",
         "fallback_agent_id": "(eliminado — error directo si no se resuelve)",
     }
 
 
+def _is_loopback_client(request: Request) -> bool:
+    host = request.client.host if request.client else None
+    return host in {"127.0.0.1", "::1", "localhost"}
+
+
+def _resolve_debug_access_token(request: Request, x_kapso_internal_token: str | None, x_kapso_debug_token: str | None) -> str | None:
+    if x_kapso_debug_token:
+        return x_kapso_debug_token
+    if x_kapso_internal_token:
+        return x_kapso_internal_token
+    query_token = request.query_params.get("token")
+    if query_token:
+        return query_token
+    auth_header = request.headers.get("authorization")
+    if auth_header and auth_header.lower().startswith("bearer "):
+        return auth_header[7:].strip()
+    return None
+
+
+def _require_kapso_debug_access(request: Request, x_kapso_internal_token: str | None, x_kapso_debug_token: str | None) -> None:
+    settings = get_settings()
+    if settings.DEBUG or settings.KAPSO_PUBLIC_DEBUG or _is_loopback_client(request):
+        return
+    allowed_tokens = {token for token in [settings.KAPSO_DEBUG_TOKEN, settings.KAPSO_INTERNAL_TOKEN] if token}
+    provided_token = _resolve_debug_access_token(request, x_kapso_internal_token, x_kapso_debug_token)
+    if not allowed_tokens:
+        raise HTTPException(status_code=503, detail="Debug disabled")
+    if provided_token not in allowed_tokens:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
 @router.get("/debug/events")
-async def kapso_debug_events(limit: int = 100):
+async def kapso_debug_events(
+    request: Request,
+    limit: int = 100,
+    x_kapso_internal_token: str | None = Header(default=None),
+    x_kapso_debug_token: str | None = Header(default=None),
+):
     """Return merged events: in-memory (fresh) + Supabase (persistent)."""
+    _require_kapso_debug_access(request, x_kapso_internal_token, x_kapso_debug_token)
     memory_events = get_kapso_debug_events(limit)
 
     # Load persisted events from Supabase so data survives deploys
@@ -998,13 +1039,23 @@ async def kapso_debug_events(limit: int = 100):
 
 
 @router.get("/debug/config")
-async def kapso_debug_config():
+async def kapso_debug_config(
+    request: Request,
+    x_kapso_internal_token: str | None = Header(default=None),
+    x_kapso_debug_token: str | None = Header(default=None),
+):
+    _require_kapso_debug_access(request, x_kapso_internal_token, x_kapso_debug_token)
     return _get_debug_config()
 
 
 @router.get("/debug/empresas")
-async def kapso_debug_empresas():
+async def kapso_debug_empresas(
+    request: Request,
+    x_kapso_internal_token: str | None = Header(default=None),
+    x_kapso_debug_token: str | None = Header(default=None),
+):
     """Return list of empresas for dashboard filtering."""
+    _require_kapso_debug_access(request, x_kapso_internal_token, x_kapso_debug_token)
     try:
         db = await get_supabase()
         rows = await db.query("wp_empresa_perfil", select="id,nombre")
@@ -1016,8 +1067,13 @@ async def kapso_debug_empresas():
 
 
 @router.get("/debug/stream")
-async def kapso_debug_stream():
+async def kapso_debug_stream(
+    request: Request,
+    x_kapso_internal_token: str | None = Header(default=None),
+    x_kapso_debug_token: str | None = Header(default=None),
+):
     """SSE endpoint — streams debug events in real time."""
+    _require_kapso_debug_access(request, x_kapso_internal_token, x_kapso_debug_token)
     q = subscribe_sse()
 
     async def _generate():
@@ -1054,6 +1110,7 @@ async def kapso_inbound(
     settings = get_settings()
     started_at = time.perf_counter()
     interaction_id = str(uuid.uuid4())
+    channel_message: ChannelInboundMessage = normalize_kapso_inbound(request)
     add_kapso_debug_event(
         "fastapi",
         "inbound_received",
@@ -1061,10 +1118,10 @@ async def kapso_inbound(
             "phone_number_id": request.phone_number_id,
             "from": request.from_phone,
             "contact_name": request.contact_name,
-            "conversation_id": request.kapso_conversation_id,
+            "conversation_id": channel_message.external_conversation_id,
             "message_id": request.message_id,
             "message_type": request.message_type,
-            "text": request.text,
+            "interaction_id": interaction_id,
         },
     )
     logger.info(
@@ -1162,7 +1219,11 @@ async def kapso_inbound(
         conversacion_db = None
 
         if not slash_command and empresa_id and numero_id:
-            contacto, contacto_creado = await db.upsert_contacto_whatsapp(normalized_from_phone, empresa_id)
+            contacto, contacto_creado = await db.upsert_contacto_canal(
+                normalized_from_phone,
+                empresa_id,
+                canal=str(numero.get("canal") or channel_message.channel or "whatsapp"),
+            )
             if contacto and contacto.get("id") is not None:
                 conversacion_db = await db.get_conversacion_activa(int(contacto["id"]), numero_id)
                 if conversacion_db and conversacion_db.get("agente_id"):
@@ -1205,7 +1266,11 @@ async def kapso_inbound(
                 contacto = await db.get_contacto_por_telefono(normalized_from_phone, empresa_id)
                 contacto_creado = False
             else:
-                contacto, contacto_creado = await db.upsert_contacto_whatsapp(normalized_from_phone, empresa_id)
+                contacto, contacto_creado = await db.upsert_contacto_canal(
+                    normalized_from_phone,
+                    empresa_id,
+                    canal=str(numero.get("canal") or channel_message.channel or "whatsapp"),
+                )
             if numero_id and contacto and contacto.get("id") is not None:
                 conversacion_db = await db.get_conversacion_activa(int(contacto["id"]), numero_id)
         if not slash_command and empresa_id and numero_id and contacto and contacto.get("id") is not None and conversacion_db is None:
@@ -1226,7 +1291,7 @@ async def kapso_inbound(
         model = agent.get("llm") or None
         mcp_servers_list = _build_mcp_servers(agent)
         message_parts = _separate_message_parts(request)
-        conversation_id = f"kapso:{request.kapso_conversation_id}"
+        conversation_id = f"{channel_message.provider or 'kapso'}:{channel_message.external_conversation_id}"
         memory_session_id = normalized_from_phone
         if contacto and contacto.get("id") is not None:
             memory_session_id = str(contacto["id"])
@@ -1482,7 +1547,11 @@ async def kapso_inbound(
         inbound_message_ids: list[int] = []
         if conversacion_db and conversacion_db.get("id") is not None:
             metadata_base = {
-                "canal": str(numero.get("canal") or "whatsapp"),
+                "canal": str(numero.get("canal") or channel_message.channel or "whatsapp"),
+                "channel_provider": channel_message.provider,
+                "channel_account_id": channel_message.channel_account_id,
+                "external_conversation_id": channel_message.external_conversation_id,
+                "external_message_id": channel_message.external_message_id,
                 "phone_number_id": request.phone_number_id,
                 "kapso_conversation_id": request.kapso_conversation_id,
                 "kapso_message_id": request.message_id,
