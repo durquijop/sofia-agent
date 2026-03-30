@@ -617,9 +617,15 @@ def _build_message_error_update(message: dict, error_text: str, error_type: str)
     }
 
 
-def _ensure_reply_text(reply_text: str | None) -> str:
-    normalized = str(reply_text or "").strip()
-    return normalized or DEFAULT_EMPTY_REPLY_TEXT
+async def _update_inbound_message_statuses(message_ids: list[int], status: str) -> None:
+    for message_id in message_ids:
+        try:
+            await db.actualizar_mensaje(int(message_id), {"status": status})
+        except Exception:
+            logger.exception(
+                "kapso.inbound_status_update_failed",
+                extra={"message_id": message_id, "status": status},
+            )
 
 
 def _should_suppress_kapso_send(reply_text: str | None) -> bool:
@@ -1560,14 +1566,13 @@ async def kapso_inbound(
                 "has_media": request.has_media,
             }
             for part in message_parts or [{"contenido": user_message, "tipo": "texto"}]:
-                status = "procesando" if part["tipo"] == "multimedia" else "buffer"
                 mensajes_guardados.append(
                     await db.insertar_mensaje(
                         conversacion_id=int(conversacion_db["id"]),
                         contenido=part["contenido"],
                         remitente="usuario",
                         tipo=part["tipo"],
-                        status=status,
+                        status="buffer",
                         metadata=metadata_base,
                         empresa_id=empresa_id,
                     )
@@ -1627,6 +1632,8 @@ async def kapso_inbound(
             request.from_phone,
             request.message_type,
         )
+
+        await _update_inbound_message_statuses(inbound_message_ids, "procesando")
 
         conversational_result, funnel_result, contact_update_result, merged_timing, merged_tools, merged_agent_runs = await _run_both_agents(
             started_at=started_at,
@@ -1796,14 +1803,7 @@ async def kapso_inbound(
         if is_closing_followup:
             suppress_send = False
 
-        for inbound_message_id in inbound_message_ids:
-            try:
-                await db.actualizar_mensaje(inbound_message_id, {"status": "processed"})
-            except Exception:
-                logger.exception(
-                    "kapso.finalize_inbound_status_failed",
-                    extra={"message_id": inbound_message_id},
-                )
+        await _update_inbound_message_statuses(inbound_message_ids, "enviado")
 
         reaction_payload = None
         if reaction_emoji:
@@ -1980,8 +1980,8 @@ async def _retry_single_stuck_message(msg: dict) -> bool:
 
     # Check if there's already an agent response after this message (avoid duplicates)
     if timestamp and await db.has_agent_response_after(int(conversacion_id), timestamp):
-        logger.info("retry_stuck: msg %s already has agent response, marking processed", msg_id)
-        await db.actualizar_mensaje(int(msg_id), {"status": "processed"})
+        logger.info("retry_stuck: msg %s already has agent response, marking enviado", msg_id)
+        await db.actualizar_mensaje(int(msg_id), {"status": "enviado"})
         return True
 
     # Get conversation context
@@ -2088,6 +2088,8 @@ async def _retry_single_stuck_message(msg: dict) -> bool:
         user_message = contenido.strip() or "El usuario envió un mensaje sin contenido legible."
         started_at = time.perf_counter()
 
+        await db.actualizar_mensaje(int(msg_id), {"status": "procesando"})
+
         conversational_result, funnel_result, contact_update_result, merged_timing, merged_tools, merged_agent_runs = await _run_both_agents(
             started_at=started_at,
             system_prompt=system_prompt,
@@ -2123,8 +2125,8 @@ async def _retry_single_stuck_message(msg: dict) -> bool:
             empresa_id=int(empresa_id) if empresa_id else None,
         )
 
-        # Mark original inbound message as processed
-        await db.actualizar_mensaje(int(msg_id), {"status": "processed"})
+        # Mark original inbound message as enviado
+        await db.actualizar_mensaje(int(msg_id), {"status": "enviado"})
 
         # Dispatch to bridge for WhatsApp delivery
         if not suppress_send:
