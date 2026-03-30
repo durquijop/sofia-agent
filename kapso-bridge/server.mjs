@@ -722,6 +722,226 @@ async function collectKapsoDebugPayload() {
 
 
 
+const PUBLIC_VISUAL_NODE_IDS = {
+
+  whatsapp: 'n1',
+
+  orch: 'n2',
+
+  conv: 'n3',
+
+  funnel: 'n4',
+
+  contact: 'n5',
+
+  supabase: 'n6',
+
+  openrouter: 'n7',
+
+  storage: 'n8',
+
+  edge_fn: 'n9',
+
+  vision: 'n10',
+
+  t_mcp: 'n11',
+
+  mcp_srv: 'n12',
+
+  t_reaction: 'n13',
+
+  t_nota: 'n14',
+
+  t_calificado: 'n15',
+
+  t_comandos: 'n16',
+
+  t_metadata: 'n17',
+
+  t_update: 'n18',
+
+  t_spam: 'n19',
+
+};
+
+
+
+const PUBLIC_VISUAL_ALLOWED_STAGES = new Set([
+
+  'inbound_received',
+
+  'fallback_numero',
+
+  'fallback_agent',
+
+  'inbound_entities_resolved',
+
+  'inbound_messages_persisted',
+
+  'memory_session_resolved',
+
+  'prompt_context_built',
+
+  'run_agent_start',
+
+  'run_agent_done',
+
+  'run_funnel_done',
+
+  'run_contact_update_done',
+
+  'audio_processing',
+
+  'image_processing',
+
+  'document_processing',
+
+  'slash_command_done',
+
+  'call_fastapi_done',
+
+  'kapso_send_done',
+
+  'kapso_send_reaction_with_text',
+
+  'http_error',
+
+  'exception',
+
+]);
+
+
+
+function sanitizePublicConstellationGraph(graphData) {
+
+  if (!graphData || !Array.isArray(graphData.nodes)) return null;
+
+
+
+  const idMap = new Map();
+
+  const nodes = graphData.nodes.map((node, index) => {
+
+    const publicId = PUBLIC_VISUAL_NODE_IDS[node.id] || `x${index + 1}`;
+
+    idMap.set(node.id, publicId);
+
+    return {
+
+      id: publicId,
+
+      kind: String(node.kind || 'external'),
+
+      x: typeof node.x === 'number' ? node.x : Math.random(),
+
+      y: typeof node.y === 'number' ? node.y : Math.random(),
+
+      r: typeof node.r === 'number' ? node.r : 12,
+
+      color: typeof node.color === 'string' ? node.color : '#818cf8',
+
+      glow: typeof node.glow === 'string' ? node.glow : 'rgba(129,140,248,.25)',
+
+      label: '',
+
+      desc: '',
+
+      detail: '',
+
+    };
+
+  });
+
+
+
+  const edges = Array.isArray(graphData.edges)
+
+    ? graphData.edges.map(edge => ({
+
+        from: idMap.get(edge.from),
+
+        to: idMap.get(edge.to),
+
+        dash: Boolean(edge.dash),
+
+      })).filter(edge => edge.from && edge.to)
+
+    : [];
+
+
+
+  return { nodes, edges };
+
+}
+
+
+
+function matchesPublicVisualEmpresa(event, empresaId = '') {
+
+  if (!empresaId) return true;
+
+  const payload = event?.payload || {};
+
+  if (payload.empresa_id != null) return String(payload.empresa_id) === String(empresaId);
+
+  return true;
+
+}
+
+
+
+function sanitizePublicVisualEvent(event) {
+
+  if (!event || !event.timestamp || !PUBLIC_VISUAL_ALLOWED_STAGES.has(event.stage)) return null;
+
+  return {
+
+    timestamp: event.timestamp,
+
+    source: event.source === 'bridge' ? 'bridge' : 'fastapi',
+
+    stage: event.stage,
+
+  };
+
+}
+
+
+
+async function collectKapsoPublicVisualPayload(empresaId = '') {
+
+  const fastapiEventsResult = await Promise.allSettled([
+
+    fetchFastApiDebugJson('/api/v1/kapso/debug/events?limit=100'),
+
+  ]);
+
+
+
+  const fastapiEvents = fastapiEventsResult[0].status === 'fulfilled' ? fastapiEventsResult[0].value.events : [];
+
+
+
+  const events = [...bridgeDebugEvents, ...fastapiEvents]
+
+    .filter(event => matchesPublicVisualEmpresa(event, empresaId))
+
+    .map(sanitizePublicVisualEvent)
+
+    .filter(Boolean)
+
+    .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+
+    .slice(-100);
+
+
+
+  return { events };
+
+}
+
+
+
 function fmtMs(v) { return v != null ? Math.round(v) + ' ms' : '—'; }
 
 
@@ -3231,6 +3451,496 @@ C.addEventListener('mouseleave',()=>{
 
 
 
+function renderPublicConstellationHtml(graphData, publicDataPath) {
+
+  const injectedData = graphData ? JSON.stringify(graphData) : 'null';
+
+  return `<!doctype html>
+
+<html lang="es">
+
+<head>
+
+<meta charset="utf-8">
+
+<meta name="viewport" content="width=device-width,initial-scale=1">
+
+<title>Kapso Visual</title>
+
+<style>
+
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
+
+*{margin:0;padding:0;box-sizing:border-box}
+
+html,body{width:100%;height:100%;overflow:hidden;background:#020010;font-family:'Outfit',system-ui,sans-serif}
+
+canvas{display:block;position:absolute;top:0;left:0}
+
+#loader{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:10;color:rgba(167,139,250,.55);font-size:14px;letter-spacing:2px;text-transform:uppercase;pointer-events:none}
+
+</style>
+
+</head>
+
+<body>
+
+<canvas id="c"></canvas>
+
+<div id="loader">Cargando animación…</div>
+
+<script>
+
+const DATA_PATH=${JSON.stringify(publicDataPath)};
+
+const C=document.getElementById('c'),X=C.getContext('2d');
+
+const LOADER=document.getElementById('loader');
+
+let W,H,t=0,dpr=1;
+
+let NODES=[],EDGES=[];
+
+const flowParticles=[];
+
+const seenEventKeys=new Set();
+
+const SPEED_MULT=2;
+
+const PARTICLE_BASE_DURATION=2200;
+
+const STAGE_FLOWS={
+
+  inbound_received:[['n1','n2','#60a5fa']],
+
+  fallback_numero:[['n2','n2','#f59e0b']],
+
+  fallback_agent:[['n2','n2','#f59e0b']],
+
+  inbound_entities_resolved:[['n2','n6','#f472b6'],['n6','n2','#f472b6']],
+
+  inbound_messages_persisted:[['n2','n6','#f472b6']],
+
+  memory_session_resolved:[['n2','n6','#f472b6'],['n6','n2','#f472b6']],
+
+  prompt_context_built:[['n2','n3','#a78bfa']],
+
+  run_agent_start:[['n2','n3','#a78bfa'],['n2','n4','#fb923c'],['n2','n5','#fb923c']],
+
+  run_agent_done:[['n3','n7','#60a5fa'],['n3','n2','#a78bfa'],['n2','n1','#34d399']],
+
+  run_funnel_done:[['n4','n7','#60a5fa'],['n4','n2','#fb923c']],
+
+  run_contact_update_done:[['n5','n7','#60a5fa'],['n5','n6','#f472b6']],
+
+  slash_command_done:[['n2','n1','#34d399']],
+
+  audio_processing:[['n2','n8','#f472b6'],['n2','n9','#60a5fa']],
+
+  image_processing:[['n2','n8','#f472b6'],['n2','n10','#60a5fa'],['n10','n7','#60a5fa']],
+
+  document_processing:[['n2','n8','#f472b6'],['n2','n9','#60a5fa']],
+
+  call_fastapi_done:[['n2','n1','#34d399']],
+
+  kapso_send_done:[['n2','n1','#34d399']],
+
+  kapso_send_reaction_with_text:[['n2','n1','#34d399']],
+
+  http_error:[['n2','n1','#ef4444']],
+
+  exception:[['n2','n1','#ef4444']],
+
+};
+
+const nodePulse={};
+
+const stars=Array.from({length:400},()=>({x:Math.random(),y:Math.random(),s:Math.random()*1.2+.3,b:Math.random(),sp:Math.random()*.5+.5}));
+
+const nebulae=[
+
+  {x:.3,y:.35,rx:220,ry:140,color:'rgba(99,102,241,.04)'},
+
+  {x:.7,y:.6,rx:260,ry:170,color:'rgba(139,92,246,.05)'},
+
+  {x:.55,y:.2,rx:180,ry:110,color:'rgba(236,72,153,.035)'}
+
+];
+
+function resize(){
+
+  dpr=Math.min(window.devicePixelRatio||1,2);
+
+  W=window.innerWidth;H=window.innerHeight;
+
+  C.width=W*dpr;C.height=H*dpr;C.style.width=W+'px';C.style.height=H+'px';
+
+  X.setTransform(dpr,0,0,dpr,0,0);
+
+}
+
+window.addEventListener('resize',resize);resize();
+
+function nodePos(n){return{x:n.x*W,y:n.y*H};}
+
+function physics(){
+
+  for(let i=0;i<NODES.length;i++){
+
+    for(let j=i+1;j<NODES.length;j++){
+
+      const a=NODES[i],b=NODES[j];
+
+      const ax=a.x*W,ay=a.y*H,bx=b.x*W,by=b.y*H;
+
+      const dx=bx-ax,dy=by-ay;
+
+      const dist=Math.sqrt(dx*dx+dy*dy)||1;
+
+      const min=((a.r||12)+(b.r||12))*2.3;
+
+      if(dist<min){
+
+        const f=(min-dist)/min*0.00012;
+
+        const nx=dx/dist,ny=dy/dist;
+
+        a.vx=(a.vx||0)-nx*f;b.vx=(b.vx||0)+nx*f;
+
+        a.vy=(a.vy||0)-ny*f;b.vy=(b.vy||0)+ny*f;
+
+      }
+
+    }
+
+  }
+
+  for(const e of EDGES){
+
+    const a=NODES.find(n=>n.id===e.from),b=NODES.find(n=>n.id===e.to);
+
+    if(!a||!b)continue;
+
+    const dx=b.x-a.x,dy=b.y-a.y;
+
+    const dist=Math.sqrt(dx*dx+dy*dy)||1;
+
+    const target=.16;
+
+    const force=(dist-target)*0.0009;
+
+    const nx=dx/dist,ny=dy/dist;
+
+    a.vx=(a.vx||0)+nx*force;b.vx=(b.vx||0)-nx*force;
+
+    a.vy=(a.vy||0)+ny*force;b.vy=(b.vy||0)-ny*force;
+
+  }
+
+  for(const n of NODES){
+
+    n.vx=(n.vx||0)*0.97;
+
+    n.vy=(n.vy||0)*0.97;
+
+    n.vx+=(0.5-n.x)*0.00002;
+
+    n.vy+=(0.5-n.y)*0.00002;
+
+    n.x+=n.vx;
+
+    n.y+=n.vy;
+
+    n.x=Math.max(0.08,Math.min(0.92,n.x));
+
+    n.y=Math.max(0.1,Math.min(0.9,n.y));
+
+  }
+
+}
+
+function triggerFlows(stage){
+
+  const flows=STAGE_FLOWS[stage];
+
+  if(!flows)return;
+
+  const duration=PARTICLE_BASE_DURATION/SPEED_MULT;
+
+  flows.forEach(function(f,i){
+
+    setTimeout(function(){
+
+      flowParticles.push({fromId:f[0],toId:f[1],progress:0,speed:1/duration,color:f[2],r:5,trail:[]});
+
+      nodePulse[f[0]]={until:Date.now()+800,color:f[2]};
+
+      nodePulse[f[1]]={until:Date.now()+800+duration,color:f[2]};
+
+    },i*180/SPEED_MULT);
+
+  });
+
+}
+
+function processEvents(events){
+
+  if(!Array.isArray(events)||!events.length)return;
+
+  const fresh=[];
+
+  for(const e of events){
+
+    if(!e||!e.stage||!e.timestamp)continue;
+
+    const key=(e.timestamp||'')+'|'+(e.stage||'')+'|'+(e.source||'');
+
+    if(seenEventKeys.has(key))continue;
+
+    seenEventKeys.add(key);
+
+    if(STAGE_FLOWS[e.stage])fresh.push(e);
+
+  }
+
+  fresh.sort(function(a,b){return new Date(a.timestamp)-new Date(b.timestamp);});
+
+  let acc=0;
+
+  fresh.forEach(function(ev){setTimeout(function(){triggerFlows(ev.stage);},acc);acc+=Math.max(180,450/SPEED_MULT);});
+
+}
+
+function poll(){
+
+  fetch(DATA_PATH).then(function(r){return r.json();}).then(function(data){processEvents(data.events||[]);}).catch(function(){});
+
+}
+
+function drawBg(){
+
+  const bg=X.createLinearGradient(0,0,W,H);
+
+  bg.addColorStop(0,'#020010');bg.addColorStop(.5,'#05031c');bg.addColorStop(1,'#020010');
+
+  X.fillStyle=bg;X.fillRect(0,0,W,H);
+
+  nebulae.forEach(function(n){
+
+    const g=X.createRadialGradient(n.x*W,n.y*H,0,n.x*W,n.y*H,n.rx);
+
+    g.addColorStop(0,n.color);g.addColorStop(1,'transparent');
+
+    X.fillStyle=g;
+
+    X.beginPath();X.ellipse(n.x*W,n.y*H,n.rx,n.ry,0,0,Math.PI*2);X.fill();
+
+  });
+
+  stars.forEach(function(s){
+
+    const a=.15+.55*((Math.sin(t*s.sp+s.b*6)+1)/2);
+
+    X.fillStyle='rgba(255,255,255,'+a+')';
+
+    X.beginPath();X.arc(s.x*W,s.y*H,s.s,0,Math.PI*2);X.fill();
+
+  });
+
+}
+
+function drawParticles(){
+
+  for(let i=flowParticles.length-1;i>=0;i--){
+
+    const p=flowParticles[i];
+
+    const fromNode=NODES.find(n=>n.id===p.fromId),toNode=NODES.find(n=>n.id===p.toId);
+
+    if(!fromNode||!toNode){flowParticles.splice(i,1);continue;}
+
+    p.progress+=p.speed*16.666*SPEED_MULT;
+
+    if(p.progress>=1){flowParticles.splice(i,1);continue;}
+
+    const a=nodePos(fromNode),b=nodePos(toNode);
+
+    const x=a.x+(b.x-a.x)*p.progress;
+
+    const y=a.y+(b.y-a.y)*p.progress;
+
+    p.trail.push({x,y});
+
+    if(p.trail.length>18)p.trail.shift();
+
+    for(let j=0;j<p.trail.length;j++){
+
+      const tp=p.trail[j];
+
+      X.globalAlpha=(j+1)/p.trail.length*.25;
+
+      X.fillStyle=p.color;
+
+      X.beginPath();X.arc(tp.x,tp.y,p.r*(j+1)/p.trail.length*.9,0,Math.PI*2);X.fill();
+
+    }
+
+    X.globalAlpha=1;
+
+    X.shadowColor=p.color;X.shadowBlur=18;
+
+    X.fillStyle=p.color;
+
+    X.beginPath();X.arc(x,y,p.r,0,Math.PI*2);X.fill();
+
+    X.shadowBlur=0;
+
+  }
+
+}
+
+function draw(){
+
+  t+=0.016*SPEED_MULT;
+
+  physics();
+
+  drawBg();
+
+  for(const e of EDGES){
+
+    const a=NODES.find(n=>n.id===e.from),b=NODES.find(n=>n.id===e.to);
+
+    if(!a||!b)continue;
+
+    const p1=nodePos(a),p2=nodePos(b);
+
+    const hasFlow=flowParticles.some(fp=>fp.fromId===e.from&&fp.toId===e.to);
+
+    X.save();
+
+    X.strokeStyle=hasFlow?'rgba(255,255,255,.25)':'rgba(255,255,255,.1)';
+
+    X.lineWidth=hasFlow?1.5:.8;
+
+    if(e.dash){X.setLineDash([5,8]);}else{X.setLineDash([]);}
+
+    X.beginPath();X.moveTo(p1.x,p1.y);X.lineTo(p2.x,p2.y);X.stroke();
+
+    X.restore();
+
+    const speed=(t*(.3+a.x*.2))%1;
+
+    const epx=p1.x+(p2.x-p1.x)*speed;
+
+    const epy=p1.y+(p2.y-p1.y)*speed;
+
+    X.fillStyle='rgba(255,255,255,.12)';
+
+    X.beginPath();X.arc(epx,epy,1.5,0,6.28);X.fill();
+
+  }
+
+  drawParticles();
+
+  const nowTs=Date.now();
+
+  for(const n of NODES){
+
+    const p=nodePos(n);
+
+    const pulse=1+.06*Math.sin(t*2.5+n.x*8+n.y*5);
+
+    const np=nodePulse[n.id];
+
+    const isPulsing=np&&nowTs<np.until;
+
+    const pulseExtra=isPulsing?1+.25*Math.sin((nowTs-np.until+800)/800*Math.PI):0;
+
+    const R=n.r*pulse*(isPulsing?1+pulseExtra*.15:1);
+
+    const glowColor=isPulsing?np.color:n.glow;
+
+    const g=X.createRadialGradient(p.x,p.y,R*.2,p.x,p.y,R*2.5);
+
+    g.addColorStop(0,isPulsing?(np.color+'88'):glowColor);g.addColorStop(1,'transparent');
+
+    X.fillStyle=g;X.beginPath();X.arc(p.x,p.y,R*2.5,0,6.28);X.fill();
+
+    if(isPulsing){
+
+      X.strokeStyle=np.color;
+
+      X.lineWidth=2;
+
+      X.globalAlpha=.5;
+
+      X.beginPath();X.arc(p.x,p.y,R*1.6,0,6.28);X.stroke();
+
+      X.globalAlpha=1;
+
+    }
+
+    const cg=X.createRadialGradient(p.x-R*.2,p.y-R*.25,R*.1,p.x,p.y,R);
+
+    cg.addColorStop(0,'rgba(255,255,255,.25)');cg.addColorStop(.4,n.color);cg.addColorStop(1,n.color+'99');
+
+    X.fillStyle=cg;
+
+    X.beginPath();X.arc(p.x,p.y,R,0,6.28);X.fill();
+
+    X.strokeStyle=isPulsing?'rgba(255,255,255,.35)':'rgba(255,255,255,.1)';
+
+    X.lineWidth=isPulsing?1.5:1;
+
+    X.beginPath();X.arc(p.x,p.y,R+1,0,6.28);X.stroke();
+
+  }
+
+  requestAnimationFrame(draw);
+
+}
+
+const _injected=${injectedData};
+
+if(_injected&&_injected.nodes){
+
+  NODES=_injected.nodes;
+
+  EDGES=_injected.edges||[];
+
+  NODES.forEach(function(n){n.vx=0;n.vy=0;});
+
+  if(LOADER)LOADER.style.display='none';
+
+  setTimeout(function(){triggerFlows('inbound_received');},800);
+
+  setTimeout(function(){triggerFlows('run_agent_start');},1600);
+
+  setTimeout(function(){triggerFlows('run_agent_done');},2600);
+
+}else if(LOADER){
+
+  LOADER.textContent='Animación no disponible';
+
+}
+
+poll();
+
+setInterval(poll,10000);
+
+requestAnimationFrame(draw);
+
+</script>
+
+</body>
+
+</html>`;
+
+}
+
+
+
 function renderKapsoDebugHtml() {
 
   return `<!doctype html>
@@ -5097,6 +5807,62 @@ app.get('/debug/kapso/visual', async (req, res) => {
   }
 
   res.status(200).type('html').send(renderConstellationHtml(graphData, empresasList, extractAccessToken(req)));
+
+});
+
+
+
+app.get('/public/kapso/visual', async (req, res) => {
+
+  res.set('Cache-Control', 'no-store, max-age=0');
+
+  let graphData = null;
+
+  try {
+
+    const baseUrl = INTERNAL_AGENT_API_URL.replace(/\/api\/v1\/kapso\/inbound$/, '');
+
+    const eid = req.query.empresa_id || DEFAULT_EMPRESA_ID;
+
+    const empresaParam = eid ? `?empresa_id=${encodeURIComponent(eid)}` : '';
+
+    const graphRes = await fetch(`${baseUrl}/api/v1/graph/schema${empresaParam}`);
+
+    if (graphRes.ok) graphData = sanitizePublicConstellationGraph(await graphRes.json());
+
+  } catch (err) {
+
+    console.warn('[public visual] Could not fetch graph schema:', err.message);
+
+  }
+
+
+
+  const dataPathUrl = new URL('/public/kapso/visual/data', 'http://localhost');
+
+  if (req.query.empresa_id) dataPathUrl.searchParams.set('empresa_id', String(req.query.empresa_id));
+
+  res.status(200).type('html').send(renderPublicConstellationHtml(graphData, `${dataPathUrl.pathname}${dataPathUrl.search}`));
+
+});
+
+
+
+app.get('/public/kapso/visual/data', async (req, res) => {
+
+  try {
+
+    const payload = await collectKapsoPublicVisualPayload(req.query.empresa_id || '');
+
+    res.set('Cache-Control', 'no-store, max-age=0');
+
+    res.status(200).json(payload);
+
+  } catch (error) {
+
+    res.status(200).json({ events: [] });
+
+  }
 
 });
 
