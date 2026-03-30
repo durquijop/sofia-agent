@@ -628,6 +628,13 @@ async def _update_inbound_message_statuses(message_ids: list[int], status: str) 
             )
 
 
+def _ensure_reply_text(reply_text: str | None) -> str:
+    normalized = str(reply_text or "").strip()
+    if normalized:
+        return normalized
+    return "Gracias por tu mensaje. ¿Podrías darme un poco más de detalle para ayudarte mejor?"
+
+
 def _should_suppress_kapso_send(reply_text: str | None) -> bool:
     return str(reply_text or "").lstrip().startswith("❌")
 
