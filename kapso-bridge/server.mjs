@@ -812,6 +812,50 @@ const PUBLIC_VISUAL_ALLOWED_STAGES = new Set([
 
 
 
+const PUBLIC_VISUAL_NODE_META = {
+
+  whatsapp: { label: 'WhatsApp', desc: 'Canal de mensajería', detail: 'Canal de entrada y salida de la conversación.', kind: 'external' },
+
+  orch: { label: 'Orquestador', desc: 'Coordinación central', detail: 'Coordina el flujo entre agentes, memoria, herramientas y canal.', kind: 'orchestrator' },
+
+  conv: { label: 'Conversacional', desc: 'Agente conversacional', detail: 'Gestiona razonamiento y respuesta general del sistema.', kind: 'agent' },
+
+  funnel: { label: 'Embudo', desc: 'Agente de clasificación', detail: 'Evalúa etapa y señales del flujo comercial sin exponer reglas internas.', kind: 'agent' },
+
+  contact: { label: 'Contacto', desc: 'Agente de actualización', detail: 'Actualiza y normaliza información del contacto de forma abstracta.', kind: 'agent' },
+
+  supabase: { label: 'Base de datos', desc: 'Persistencia', detail: 'Guarda estado conversacional y contexto operativo.', kind: 'database' },
+
+  openrouter: { label: 'Motor LLM', desc: 'Proveedor de modelo', detail: 'Procesa inferencia de lenguaje mediante un servicio externo.', kind: 'external' },
+
+  storage: { label: 'Storage', desc: 'Archivos y media', detail: 'Almacena adjuntos y recursos del flujo.', kind: 'database' },
+
+  edge_fn: { label: 'Edge Functions', desc: 'Procesamiento auxiliar', detail: 'Ejecuta lógica desacoplada del flujo principal.', kind: 'external' },
+
+  vision: { label: 'Visión', desc: 'Análisis multimodal', detail: 'Procesa imágenes y contenido visual.', kind: 'external' },
+
+  t_mcp: { label: 'MCP Tools', desc: 'Herramientas dinámicas', detail: 'Activa capacidades externas por protocolo de herramientas.', kind: 'tool' },
+
+  mcp_srv: { label: 'MCP Servers', desc: 'Servidores de herramientas', detail: 'Proveen herramientas integradas al flujo.', kind: 'external' },
+
+  t_reaction: { label: 'Reacciones', desc: 'Acción de canal', detail: 'Envía señales rápidas de interacción al canal.', kind: 'tool' },
+
+  t_nota: { label: 'Notas', desc: 'Registro interno', detail: 'Genera registro operativo sin exponer estructura interna.', kind: 'tool' },
+
+  t_calificado: { label: 'Calificación', desc: 'Actualización de estado', detail: 'Marca el estado comercial del contacto de forma abstracta.', kind: 'tool' },
+
+  t_comandos: { label: 'Comandos', desc: 'Acciones operativas', detail: 'Ejecuta acciones operativas controladas del sistema.', kind: 'tool' },
+
+  t_metadata: { label: 'Metadata', desc: 'Actualización contextual', detail: 'Ajusta datos contextuales sin revelar estructuras sensibles.', kind: 'tool' },
+
+  t_update: { label: 'Actualización', desc: 'Datos de contacto', detail: 'Refresca información del contacto sin exponer campos internos.', kind: 'tool' },
+
+  t_spam: { label: 'Control spam', desc: 'Protección de canal', detail: 'Aplica controles de seguridad y supresión del canal.', kind: 'tool' },
+
+};
+
+
+
 function sanitizePublicConstellationGraph(graphData) {
 
   if (!graphData || !Array.isArray(graphData.nodes)) return null;
@@ -824,17 +868,25 @@ function sanitizePublicConstellationGraph(graphData) {
 
     const publicId = PUBLIC_VISUAL_NODE_IDS[node.id] || `x${index + 1}`;
 
+    const meta = PUBLIC_VISUAL_NODE_META[node.id] || {};
+
+    const kind = String(meta.kind || node.kind || 'external');
+
     idMap.set(node.id, publicId);
 
     return {
 
       id: publicId,
 
-      kind: String(node.kind || 'external'),
+      kind,
 
       x: typeof node.x === 'number' ? node.x : Math.random(),
 
       y: typeof node.y === 'number' ? node.y : Math.random(),
+
+      hx: typeof node.x === 'number' ? node.x : Math.random(),
+
+      hy: typeof node.y === 'number' ? node.y : Math.random(),
 
       r: typeof node.r === 'number' ? node.r : 12,
 
@@ -842,11 +894,11 @@ function sanitizePublicConstellationGraph(graphData) {
 
       glow: typeof node.glow === 'string' ? node.glow : 'rgba(129,140,248,.25)',
 
-      label: '',
+      label: meta.label || (kind === 'tool' ? 'Herramienta' : kind === 'database' ? 'Datos' : kind === 'agent' ? 'Agente' : kind === 'orchestrator' ? 'Orquestador' : 'Servicio'),
 
-      desc: '',
+      desc: meta.desc || 'Componente del sistema',
 
-      detail: '',
+      detail: meta.detail || 'Componente abstracto del flujo multiagente.',
 
     };
 
@@ -3479,6 +3531,28 @@ canvas{display:block;position:absolute;top:0;left:0}
 
 #loader{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:10;color:rgba(167,139,250,.55);font-size:14px;letter-spacing:2px;text-transform:uppercase;pointer-events:none}
 
+#header{position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:20;text-align:center;pointer-events:none}
+
+#header h1{font-size:22px;letter-spacing:8px;font-weight:600;background:linear-gradient(90deg,#a78bfa,#60a5fa,#f472b6);-webkit-background-clip:text;background-clip:text;color:transparent;text-transform:uppercase}
+
+#header p{font-size:11px;letter-spacing:3px;color:rgba(255,255,255,.18);margin-top:2px;text-transform:uppercase}
+
+#tooltip{position:fixed;display:none;z-index:30;background:rgba(8,4,28,.94);border:1px solid rgba(139,92,246,.3);border-radius:14px;padding:16px 20px;max-width:360px;font-size:13px;line-height:1.7;backdrop-filter:blur(16px);box-shadow:0 0 40px rgba(99,102,241,.15),0 12px 40px rgba(0,0,0,.6);pointer-events:none}
+
+#tooltip h3{font-size:15px;margin-bottom:6px;font-weight:600;color:#fff}
+
+#tooltip .tag{display:inline-block;padding:3px 10px;border-radius:6px;font-size:10px;font-weight:600;letter-spacing:.8px;margin-bottom:10px;text-transform:uppercase}
+
+#tooltip .detail{color:rgba(203,213,225,.75);font-size:12px}
+
+#tooltip .detail b{color:#e2e8f0}
+
+#legend{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);z-index:20;display:flex;gap:20px;font-size:12px;color:rgba(255,255,255,.35);background:rgba(8,4,28,.6);border:1px solid rgba(255,255,255,.06);border-radius:12px;padding:10px 24px;backdrop-filter:blur(12px)}
+
+#legend span{display:flex;align-items:center;gap:8px}
+
+#legend i{width:8px;height:8px;border-radius:999px;display:inline-block}
+
 </style>
 
 </head>
@@ -3489,15 +3563,33 @@ canvas{display:block;position:absolute;top:0;left:0}
 
 <div id="loader">Cargando animación…</div>
 
+<div id="header"><h1>Monica Brain</h1><p>Neural Architecture Map</p></div>
+
+<div id="tooltip"></div>
+
+<div id="legend">
+
+  <span><i style="background:#a78bfa"></i>Orquestador</span>
+
+  <span><i style="background:#fb923c"></i>Agente</span>
+
+  <span><i style="background:#34d399"></i>Herramienta</span>
+
+  <span><i style="background:#60a5fa"></i>Externo</span>
+
+  <span><i style="background:#f472b6"></i>Base de datos</span>
+
+</div>
+
 <script>
 
 const DATA_PATH=${JSON.stringify(publicDataPath)};
 
-const C=document.getElementById('c'),X=C.getContext('2d');
+const C=document.getElementById('c'),X=C.getContext('2d'),TT=document.getElementById('tooltip');
 
 const LOADER=document.getElementById('loader');
 
-let W,H,t=0,dpr=1;
+let W,H,mx=-1,my=-1,hovered=null,dragging=null,dragOff={x:0,y:0},prevMx=0,prevMy=0,dragVx=0,dragVy=0,t=0,dpr=1;
 
 let NODES=[],EDGES=[];
 
@@ -3615,37 +3707,17 @@ function physics(){
 
   }
 
-  for(const e of EDGES){
-
-    const a=NODES.find(n=>n.id===e.from),b=NODES.find(n=>n.id===e.to);
-
-    if(!a||!b)continue;
-
-    const dx=b.x-a.x,dy=b.y-a.y;
-
-    const dist=Math.sqrt(dx*dx+dy*dy)||1;
-
-    const target=.16;
-
-    const force=(dist-target)*0.0009;
-
-    const nx=dx/dist,ny=dy/dist;
-
-    a.vx=(a.vx||0)+nx*force;b.vx=(b.vx||0)-nx*force;
-
-    a.vy=(a.vy||0)+ny*force;b.vy=(b.vy||0)-ny*force;
-
-  }
-
   for(const n of NODES){
 
-    n.vx=(n.vx||0)*0.97;
+    if(n===dragging)continue;
 
-    n.vy=(n.vy||0)*0.97;
+    n.vx=(n.vx||0)*0.9;
 
-    n.vx+=(0.5-n.x)*0.00002;
+    n.vy=(n.vy||0)*0.9;
 
-    n.vy+=(0.5-n.y)*0.00002;
+    n.vx+=((n.hx??n.x)-n.x)*0.0035;
+
+    n.vy+=((n.hy??n.y)-n.y)*0.0035;
 
     n.x+=n.vx;
 
@@ -3656,6 +3728,22 @@ function physics(){
     n.y=Math.max(0.1,Math.min(0.9,n.y));
 
   }
+
+}
+
+function hitTest(ex,ey){
+
+  for(const n of NODES){
+
+    const p=nodePos(n);
+
+    const dx=ex-p.x,dy=ey-p.y;
+
+    if(dx*dx+dy*dy<(n.r+14)*(n.r+14))return n;
+
+  }
+
+  return null;
 
 }
 
@@ -3815,13 +3903,42 @@ function draw(){
 
     const p1=nodePos(a),p2=nodePos(b);
 
+    const isHov=hovered&&(hovered.id===a.id||hovered.id===b.id);
+
+    const isConnected=hovered&&EDGES.some(ed=>(ed.from===hovered.id||ed.to===hovered.id)&&(ed.from===a.id||ed.to===a.id||ed.from===b.id||ed.to===b.id));
+
     const hasFlow=flowParticles.some(fp=>fp.fromId===e.from&&fp.toId===e.to);
 
     X.save();
 
-    X.strokeStyle=hasFlow?'rgba(255,255,255,.25)':'rgba(255,255,255,.1)';
 
-    X.lineWidth=hasFlow?1.5:.8;
+    if(isHov){
+
+      X.shadowColor=a.color;X.shadowBlur=8;
+
+      X.strokeStyle='rgba(255,255,255,.5)';
+
+      X.lineWidth=2;
+
+    }else if(hasFlow){
+
+      X.strokeStyle='rgba(255,255,255,.25)';
+
+      X.lineWidth=1.5;
+
+    }else if(hovered&&!isConnected){
+
+      X.strokeStyle='rgba(255,255,255,.03)';
+
+      X.lineWidth=.5;
+
+    }else{
+
+      X.strokeStyle='rgba(255,255,255,.1)';
+
+      X.lineWidth=.8;
+
+    }
 
     if(e.dash){X.setLineDash([5,8]);}else{X.setLineDash([]);}
 
@@ -3835,9 +3952,11 @@ function draw(){
 
     const epy=p1.y+(p2.y-p1.y)*speed;
 
-    X.fillStyle='rgba(255,255,255,.12)';
 
-    X.beginPath();X.arc(epx,epy,1.5,0,6.28);X.fill();
+    X.fillStyle=isHov?'rgba(255,255,255,.6)':'rgba(255,255,255,.12)';
+
+
+    X.beginPath();X.arc(epx,epy,isHov?2.5:1.5,0,6.28);X.fill();
 
   }
 
@@ -3848,6 +3967,12 @@ function draw(){
   for(const n of NODES){
 
     const p=nodePos(n);
+
+    const isHov=hovered&&hovered.id===n.id;
+
+    const isConn=hovered&&EDGES.some(e=>(e.from===hovered.id&&e.to===n.id)||(e.to===hovered.id&&e.from===n.id));
+
+    const dimmed=hovered&&!isHov&&!isConn;
 
     const pulse=1+.06*Math.sin(t*2.5+n.x*8+n.y*5);
 
@@ -3865,15 +3990,23 @@ function draw(){
 
     g.addColorStop(0,isPulsing?(np.color+'88'):glowColor);g.addColorStop(1,'transparent');
 
-    X.fillStyle=g;X.beginPath();X.arc(p.x,p.y,R*2.5,0,6.28);X.fill();
 
-    if(isPulsing){
+    X.globalAlpha=dimmed?.2:1;
 
-      X.strokeStyle=np.color;
+    X.fillStyle=g;X.beginPath();X.arc(p.x,p.y,R*(isHov?3:2.5),0,6.28);X.fill();
 
-      X.lineWidth=2;
 
-      X.globalAlpha=.5;
+    if(isHov||isPulsing){
+
+
+      X.strokeStyle=isPulsing?np.color:n.color;
+
+
+      X.lineWidth=isPulsing?2:1.5;
+
+
+      X.globalAlpha=isPulsing?.5:.3;
+
 
       X.beginPath();X.arc(p.x,p.y,R*1.6,0,6.28);X.stroke();
 
@@ -3887,19 +4020,150 @@ function draw(){
 
     X.fillStyle=cg;
 
+
+    X.globalAlpha=dimmed?.25:(isHov?1:.8);
+
     X.beginPath();X.arc(p.x,p.y,R,0,6.28);X.fill();
 
-    X.strokeStyle=isPulsing?'rgba(255,255,255,.35)':'rgba(255,255,255,.1)';
+    X.globalAlpha=1;
 
-    X.lineWidth=isPulsing?1.5:1;
+
+    X.strokeStyle=dimmed?'rgba(255,255,255,.04)':(isHov?'rgba(255,255,255,.6)':isPulsing?'rgba(255,255,255,.35)':'rgba(255,255,255,.1)');
+
+
+    X.lineWidth=isHov?2:isPulsing?1.5:1;
 
     X.beginPath();X.arc(p.x,p.y,R+1,0,6.28);X.stroke();
+
+    const fontSize=n.kind==='orchestrator'?15:n.kind==='agent'?14:12;
+
+    X.font=(n.kind==='orchestrator'||n.kind==='agent'?'600 ':'400 ')+fontSize+'px Outfit,system-ui,sans-serif';
+
+    X.fillStyle=dimmed?'rgba(255,255,255,.15)':'rgba(255,255,255,.85)';
+
+    X.textAlign='center';X.textBaseline='middle';
+
+    X.fillText(n.label,p.x,p.y+R+18);
 
   }
 
   requestAnimationFrame(draw);
 
 }
+
+C.addEventListener('mousedown',e=>{
+
+  const hit=hitTest(e.clientX,e.clientY);
+
+  if(hit){
+
+    dragging=hit;
+
+    hit.vx=0;hit.vy=0;
+
+    const p=nodePos(hit);
+
+    dragOff.x=e.clientX-p.x;
+
+    dragOff.y=e.clientY-p.y;
+
+    prevMx=e.clientX;prevMy=e.clientY;
+
+    dragVx=0;dragVy=0;
+
+    TT.style.display='none';
+
+  }
+
+});
+
+C.addEventListener('mousemove',e=>{
+
+  mx=e.clientX;my=e.clientY;
+
+  if(dragging){
+
+    dragging.x=(mx-dragOff.x)/W;
+
+    dragging.y=(my-dragOff.y)/H;
+
+    dragging.vx=0.7*dragVx+0.3*(mx-prevMx)/W;
+
+    dragging.vy=0.7*dragVy+0.3*(my-prevMy)/H;
+
+    prevMx=mx;prevMy=my;
+
+    C.style.cursor='grabbing';
+
+    TT.style.display='none';
+
+    return;
+
+  }
+
+  hovered=hitTest(mx,my);
+
+  if(hovered){
+
+    C.style.cursor='grab';
+
+    const n=hovered;
+
+    const colors={orchestrator:'#a78bfa',agent:'#fb923c',tool:'#34d399',external:'#60a5fa',database:'#f472b6'};
+
+    const labels={orchestrator:'ORQUESTADOR',agent:'AGENTE',tool:'HERRAMIENTA',external:'SERVICIO EXTERNO',database:'BASE DE DATOS'};
+
+    TT.innerHTML='<h3>'+n.desc+'</h3>'
+
+      +'<span class="tag" style="background:'+colors[n.kind]+'18;color:'+colors[n.kind]+';border:1px solid '+colors[n.kind]+'44">'+labels[n.kind]+'</span>'
+
+      +'<div class="detail">'+n.detail.replace(/\\n/g,'<br>')+'</div>';
+
+    TT.style.display='block';
+
+    let tx=mx+18,ty=my+18;
+
+    if(tx+370>W)tx=mx-380;
+
+    if(ty+220>H)ty=my-230;
+
+    TT.style.left=tx+'px';TT.style.top=ty+'px';
+
+  }else{
+
+    C.style.cursor='default';
+
+    TT.style.display='none';
+
+  }
+
+});
+
+window.addEventListener('mouseup',()=>{
+
+  if(dragging){
+
+    dragging.vx=dragVx*.35;
+
+    dragging.vy=dragVy*.35;
+
+  }
+
+  dragging=null;
+
+});
+
+C.addEventListener('mouseleave',()=>{
+
+  hovered=null;
+
+  if(dragging){dragging.vx=dragVx*.25;dragging.vy=dragVy*.25;}
+
+  dragging=null;
+
+  TT.style.display='none';
+
+});
 
 const _injected=${injectedData};
 
@@ -3909,7 +4173,8 @@ if(_injected&&_injected.nodes){
 
   EDGES=_injected.edges||[];
 
-  NODES.forEach(function(n){n.vx=0;n.vy=0;});
+
+  NODES.forEach(function(n){n.vx=0;n.vy=0;n.hx=n.hx??n.x;n.hy=n.hy??n.y;});
 
   if(LOADER)LOADER.style.display='none';
 
