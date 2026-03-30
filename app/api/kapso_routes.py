@@ -1787,7 +1787,7 @@ async def kapso_inbound(
                     contenido=final_reply_text,
                     remitente="agente",
                     tipo="texto",
-                    status="suppressed" if suppress_send else "sent",
+                    status="suppressed" if suppress_send else "enviado",
                     modelo_llm=conversational_result.model_used,
                     metadata={
                         "source": "kapso_outbound",
@@ -1807,6 +1807,7 @@ async def kapso_inbound(
                         "reply_preview": final_reply_text[:300],
                     },
                 )
+
         if is_closing_followup:
             suppress_send = False
 
@@ -2121,7 +2122,7 @@ async def _retry_single_stuck_message(msg: dict) -> bool:
             contenido=final_reply_text,
             remitente="agente",
             tipo="texto",
-            status="suppressed" if suppress_send else "sent",
+            status="suppressed" if suppress_send else "enviado",
             modelo_llm=conversational_result.model_used,
             metadata={
                 "source": "retry_stuck",
