@@ -647,7 +647,6 @@ def _build_graph(llm_with_tools, tools: list) -> StateGraph:
         )
         if only_reaction_tools and _is_reaction_only_request(original_user_message):
             short_circuit_after_tools = True
-            short_circuit_response = _build_reaction_ack(original_user_message, reaction_emoji)
 
         # When only reaction was called but the message needs more processing
         # (e.g. user provided email + expects availability check), give back
