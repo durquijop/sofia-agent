@@ -2200,6 +2200,7 @@ function renderKapsoBasicHtml(debugData, debugToken = '') {
 </body>
 
 </html>`;
+}
 
 
 
@@ -3428,6 +3429,7 @@ requestAnimationFrame(draw);
 </body>
 
 </html>`;
+}
 
 
 
