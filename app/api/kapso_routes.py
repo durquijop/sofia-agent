@@ -1768,25 +1768,18 @@ async def kapso_inbound(
                     empresa_id=empresa_id,
                 )
         else:
-            raw_response = str(conversational_result.response or "").strip()
-            # Si el LLM no generó texto pero sí hay reacción, suprimimos el envío de texto
-            # para que solo se envíe la reacción sin un mensaje vacío o fallback forzado.
-            if not raw_response and reaction_emoji:
-                final_reply_text = ""
-                suppress_send = True
-            else:
-                final_reply_text = _ensure_reply_text(conversational_result.response)
-                suppress_send = _should_suppress_kapso_send(final_reply_text)
-                if final_reply_text != raw_response:
-                    add_kapso_debug_event(
-                        "fastapi",
-                        "empty_reply_fallback",
-                        {
-                            "message_id": request.message_id,
-                            "conversation_id": conversational_result.conversation_id,
-                            "fallback_text": final_reply_text,
-                        },
-                    )
+            final_reply_text = _ensure_reply_text(conversational_result.response)
+            suppress_send = _should_suppress_kapso_send(final_reply_text)
+            if final_reply_text != str(conversational_result.response or "").strip():
+                add_kapso_debug_event(
+                    "fastapi",
+                    "empty_reply_fallback",
+                    {
+                        "message_id": request.message_id,
+                        "conversation_id": conversational_result.conversation_id,
+                        "fallback_text": final_reply_text,
+                    },
+                )
 
             if conversacion_db_id and final_reply_text:
                 await db.insertar_mensaje(
@@ -1794,7 +1787,7 @@ async def kapso_inbound(
                     contenido=final_reply_text,
                     remitente="agente",
                     tipo="texto",
-                    status="suppressed" if suppress_send else "sent",
+                    status="suppressed" if suppress_send else "enviado",
                     modelo_llm=conversational_result.model_used,
                     metadata={
                         "source": "kapso_outbound",
@@ -1814,6 +1807,7 @@ async def kapso_inbound(
                         "reply_preview": final_reply_text[:300],
                     },
                 )
+
         if is_closing_followup:
             suppress_send = False
 
@@ -2128,7 +2122,7 @@ async def _retry_single_stuck_message(msg: dict) -> bool:
             contenido=final_reply_text,
             remitente="agente",
             tipo="texto",
-            status="suppressed" if suppress_send else "sent",
+            status="suppressed" if suppress_send else "enviado",
             modelo_llm=conversational_result.model_used,
             metadata={
                 "source": "retry_stuck",
