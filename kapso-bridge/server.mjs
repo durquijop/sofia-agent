@@ -1074,7 +1074,11 @@ function renderTimingCells(item) {
 
     + `<td>${fmtMs(infraMs)}</td>`
 
-    + `<td>${fmtMs(llmMs)}</td>`
+    + `<td>${fmtMs(llmMs)}</td>`;
+
+}
+
+function renderTools(items) {
 
   if (!Array.isArray(items) || !items.length) {
 
@@ -1143,46 +1147,6 @@ function renderTimingCells(item) {
 
     </table>`;
   }
-
-
-
-  return `
-
-    <table style="margin-top:8px">
-
-      <thead>
-
-        <tr>
-
-          <th>Tool</th>
-
-          <th>Source</th>
-
-          <th>Descripción</th>
-
-        </tr>
-
-      </thead>
-
-      <tbody>
-
-        ${items.map(item => `
-
-          <tr>
-
-            <td>${escapeHtml(item.tool_name || '—')}</td>
-
-            <td>${escapeHtml(item.source || '—')}</td>
-
-            <td>${escapeHtml(item.description || '—')}</td>
-
-          </tr>`).join('')}
-
-      </tbody>
-
-    </table>`;
-
-}
 
 
 
