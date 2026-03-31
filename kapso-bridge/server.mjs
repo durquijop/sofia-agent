@@ -994,7 +994,7 @@ async function collectKapsoPublicVisualPayload(empresaId = '') {
 
 
 
-function fmtMs(v) { return v != null ? Math.round(v) + ' ms' : '—'; }
+function fmtMs(v) { return v != null ? (v / 1000).toFixed(1) + ' s' : '—'; }
 
 
 
@@ -1016,9 +1016,9 @@ function timingColorClass(ms) {
 
   if (ms == null) return '';
 
-  if (ms < 5000) return 'color:#34d399';
+  if (ms <= 20000) return 'color:#34d399';
 
-  if (ms < 15000) return 'color:#fbbf24';
+  if (ms <= 30000) return 'color:#fbbf24';
 
   return 'color:#f87171';
 
@@ -1076,22 +1076,41 @@ function renderTimingCells(item) {
 
     + `<td>${fmtMs(llmMs)}</td>`
 
-    + `<td>${fmtMs(toolMs)}</td>`
-
-    + `<td style="font-size:11px">${agentParts.length ? agentParts.join('<br>') : '—'}</td>`;
-
-}
-
-
-
-function renderToolList(items = []) {
-
   if (!Array.isArray(items) || !items.length) {
 
     return '<div style="color:#94a3b8">Sin herramientas.</div>';
 
   }
 
+
+
+  const rows = items.map(item => {
+
+    const durationText = item.duration_ms != null ? (item.duration_ms / 1000).toFixed(1) + ' s' : '—';
+
+    const errorHtml = item.error
+      ? '<div style="margin-top:8px;color:#fca5a5"><strong>Error:</strong> ' + escapeHtml(item.error) + '</div>'
+      : '';
+
+    return ''
+      + '<tr>'
+      + '<td>' + escapeHtml(item.tool_name || '—') + '</td>'
+      + '<td>' + escapeHtml(item.source || '—') + '</td>'
+      + '<td>' + escapeHtml(item.status || 'ok') + '</td>'
+      + '<td>' + escapeHtml(durationText) + '</td>'
+      + '<td>' + escapeHtml(item.description || '—') + '</td>'
+      + '</tr>'
+      + '<tr>'
+      + '<td colspan="5">'
+      + '<div style="margin-bottom:8px"><strong>Input</strong></div>'
+      + '<pre>' + escapeHtml(JSON.stringify(item.tool_input || {}, null, 2)) + '</pre>'
+      + '<div style="margin:8px 0 8px"><strong>Output</strong></div>'
+      + '<pre>' + escapeHtml(item.tool_output || '—') + '</pre>'
+      + errorHtml
+      + '</td>'
+      + '</tr>';
+
+  }).join('');
 
 
   return `
@@ -1118,54 +1137,11 @@ function renderToolList(items = []) {
 
       <tbody>
 
-        ${items.map(item => `
-
-          <tr>
-
-            <td>${escapeHtml(item.tool_name || '—')}</td>
-
-            <td>${escapeHtml(item.source || '—')}</td>
-
-            <td>${escapeHtml(item.status || 'ok')}</td>
-
-            <td>${escapeHtml(item.duration_ms != null ? `${item.duration_ms} ms` : '—')}</td>
-
-            <td>${escapeHtml(item.description || '—')}</td>
-
-          </tr>
-
-          <tr>
-
-            <td colspan="5">
-
-              <div style="margin-bottom:8px"><strong>Input</strong></div>
-
-              <pre>${escapeHtml(JSON.stringify(item.tool_input || {}, null, 2))}</pre>
-
-              <div style="margin:8px 0 8px"><strong>Output</strong></div>
-
-              <pre>${escapeHtml(item.tool_output || '—')}</pre>
-
-              ${item.error ? `<div style="margin-top:8px;color:#fca5a5"><strong>Error:</strong> ${escapeHtml(item.error)}</div>` : ''}
-
-            </td>
-
-          </tr>`).join('')}
+        ${rows}
 
       </tbody>
 
     </table>`;
-
-}
-
-
-
-function renderAvailableToolList(items = []) {
-
-  if (!Array.isArray(items) || !items.length) {
-
-    return '<div style="color:#94a3b8">Sin herramientas disponibles.</div>';
-
   }
 
 
@@ -1246,7 +1222,7 @@ function renderTimingTable(timing = {}) {
 
         <tr>
 
-          <td style="${timing.total_ms != null ? (timing.total_ms < 5000 ? 'color:#34d399' : timing.total_ms < 15000 ? 'color:#fbbf24' : 'color:#f87171') : ''}"><b>${fmtMs(timing.total_ms)}</b></td>
+          <td style="${timing.total_ms != null ? (timing.total_ms <= 20000 ? 'color:#34d399' : timing.total_ms <= 30000 ? 'color:#fbbf24' : 'color:#f87171') : ''}"><b>${fmtMs(timing.total_ms)}</b></td>
 
           <td>${fmtMs(infraMs)}</td>
 
@@ -1570,7 +1546,7 @@ function renderKapsoBasicHtml(debugData, debugToken = '') {
 
           <td>${escapeHtml(item.message_type || 'text')}</td>
 
-          <td style="white-space:pre-wrap;max-width:320px">${escapeHtml(item.message_text || '—')}</td>
+          <td style="max-width:220px;overflow:hidden;word-break:break-word">${(()=>{const t=item.message_text||'—';if(t.length<=120)return `<span style="white-space:pre-wrap">${escapeHtml(t)}</span>`;const id=`msg-${index}`;return `<span id="${id}-short" style="white-space:pre-wrap">${escapeHtml(t.slice(0,120))}<span>... </span><a href="#" style="color:#93c5fd;font-size:11px" onclick="document.getElementById('${id}-short').style.display='none';document.getElementById('${id}-full').style.display='';return false">leer más</a></span><span id="${id}-full" style="display:none;white-space:pre-wrap">${escapeHtml(t)} <a href="#" style="color:#93c5fd;font-size:11px" onclick="document.getElementById('${id}-full').style.display='none';document.getElementById('${id}-short').style.display='';return false">ver menos</a></span>`;})()}</td>
 
           <td>${escapeHtml(item.agent_name || '—')}</td>
 
@@ -1598,7 +1574,7 @@ function renderKapsoBasicHtml(debugData, debugToken = '') {
 
       <details class="section" id="interaction-${index}">
 
-        <summary>${escapeHtml(item.contact_name || item.from_phone || item.message_id || `Interacción ${index + 1}`)} · ${escapeHtml(item.status || 'processing')} · ${escapeHtml(item.duration_ms != null ? `${item.duration_ms} ms` : '—')}</summary>
+        <summary>${escapeHtml(item.contact_name || item.from_phone || item.message_id || `Interacción ${index + 1}`)} · ${escapeHtml(item.status || 'processing')} · ${escapeHtml(item.duration_ms != null ? `${(item.duration_ms / 1000).toFixed(1)} s` : '—')}</summary>
 
         <div style="margin-top:12px">
 
@@ -1732,11 +1708,11 @@ function renderKapsoBasicHtml(debugData, debugToken = '') {
 
     <div class="card"><div class="label">Errores</div><div class="value">${errorCount}</div></div>
 
-    <div class="card"><div class="label">Tiempo AVG</div><div class="value">${avgDuration != null ? `${avgDuration} ms` : '—'}</div></div>
+    <div class="card"><div class="label">Tiempo AVG</div><div class="value">${avgDuration != null ? `${(avgDuration / 1000).toFixed(1)} s` : '—'}</div></div>
 
-    <div class="card"><div class="label">LLM AVG</div><div class="value">${avgLlm != null ? `${avgLlm} ms` : '—'}</div></div>
+    <div class="card"><div class="label">LLM AVG</div><div class="value">${avgLlm != null ? `${(avgLlm / 1000).toFixed(1)} s` : '—'}</div></div>
 
-    <div class="card"><div class="label">Infra AVG</div><div class="value">${avgInfra != null ? `${avgInfra} ms` : '—'}</div></div>
+    <div class="card"><div class="label">Infra AVG</div><div class="value">${avgInfra != null ? `${(avgInfra / 1000).toFixed(1)} s` : '—'}</div></div>
 
   </div>
 
@@ -1851,9 +1827,9 @@ function renderKapsoBasicHtml(debugData, debugToken = '') {
 
   function esc(v){ return String(v??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
-  function fms(v){ return v!=null?Math.round(v)+' ms':'—'; }
+  function fms(v){ return v!=null?(v/1000).toFixed(1)+' s':'—'; }
 
-  function tcls(ms){ if(ms==null)return ''; if(ms<5000)return 'color:#34d399'; if(ms<15000)return 'color:#fbbf24'; return 'color:#f87171'; }
+  function tcls(ms){ if(ms==null)return ''; if(ms<=20000)return 'color:#34d399'; if(ms<=30000)return 'color:#fbbf24'; return 'color:#f87171'; }
 
   function infraMs(item){
 
@@ -1917,7 +1893,7 @@ function renderKapsoBasicHtml(debugData, debugToken = '') {
 
       +'<td>'+esc(item.message_type||'text')+'</td>'
 
-      +'<td style="white-space:pre-wrap;max-width:320px">'+esc(item.message_text||'—')+'</td>'
+      +(function(){var t=item.message_text||'—';if(t.length<=120)return '<td style="max-width:220px;overflow:hidden;word-break:break-word;white-space:pre-wrap">'+esc(t)+'</td>';var id='msg-dyn-'+idx;return '<td style="max-width:220px;overflow:hidden;word-break:break-word">'+'<span id="'+id+'-short" style="white-space:pre-wrap">'+esc(t.slice(0,120))+'<span>... </span><a href="#" style="color:#93c5fd;font-size:11px" onclick="document.getElementById(\''+id+'-short\').style.display=\'none\';document.getElementById(\''+id+'-full\').style.display=\'\';return false">leer más</a></span>'+'<span id="'+id+'-full" style="display:none;white-space:pre-wrap">'+esc(t)+' <a href="#" style="color:#93c5fd;font-size:11px" onclick="document.getElementById(\''+id+'-full\').style.display=\'none\';document.getElementById(\''+id+'-short\').style.display=\'\';return false">ver menos</a></span>'+'</td>';})()
 
       +'<td>'+esc(item.agent_name||'—')+'</td>'
 
@@ -2209,7 +2185,7 @@ function renderKapsoBasicHtml(debugData, debugToken = '') {
 
     var scrollY=window.scrollY;
 
-    fetchDebug('/debug/kapso/data').then(function(r){return r.json()}).then(function(data){
+    fetch(debugPath('/debug/kapso/data')).then(function(r){return r.json()}).then(function(data){
 
       update(data);
 
@@ -2261,7 +2237,7 @@ function renderKapsoBasicHtml(debugData, debugToken = '') {
 
 </html>`;
 
-}
+
 
 
 
@@ -2278,7 +2254,7 @@ function renderConstellationHtml(graphData, empresasList = [], debugToken = '') 
 
 <meta charset="utf-8">
 
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 
 <title>Monica Brain — Neural Map</title>
 
@@ -2324,7 +2300,7 @@ canvas{display:block;position:absolute;top:0;left:0}
 
 #speed-ctrl span{font-size:11px;color:rgba(255,255,255,.35);letter-spacing:1px;text-transform:uppercase;margin-right:4px}
 
-#speed-ctrl button{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);color:rgba(203,213,225,.7);font-size:11px;font-weight:600;padding:3px 10px;border-radius:6px;cursor:pointer;transition:all .15s;font-family:inherit}
+#speed-ctrl button{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);color:rgba(203,213,225,.7);font-size:11px;font-weight:500;padding:3px 10px;border-radius:6px;cursor:pointer;transition:all .15s;font-family:inherit}
 
 #speed-ctrl button.active{background:rgba(167,139,250,.25);border-color:rgba(167,139,250,.5);color:#c4b5fd}
 
@@ -2370,33 +2346,17 @@ canvas{display:block;position:absolute;top:0;left:0}
 
 <div id="legend">
 
-  <span><i style="background:#a78bfa;color:#a78bfa"></i> Orquestador</span>
+  <span><i style="background:#a78bfa"></i> Orquestador</span>
 
-  <span><i style="background:#fb923c;color:#fb923c"></i> Agente</span>
+  <span><i style="background:#fb923c"></i> Agente</span>
 
-  <span><i style="background:#34d399;color:#34d399"></i> Herramienta</span>
+  <span><i style="background:#34d399"></i> Herramienta</span>
 
-  <span><i style="background:#60a5fa;color:#60a5fa"></i> Externo</span>
+  <span><i style="background:#60a5fa"></i> Externo</span>
 
-  <span><i style="background:#f472b6;color:#f472b6"></i> Base de datos</span>
-
-</div>
-
-<div id="speed-ctrl">
-
-  <span>Velocidad</span>
-
-  <button data-speed="1">x1</button>
-
-  <button class="active" data-speed="2">x2</button>
-
-  <button data-speed="4">x4</button>
-
-  <button data-speed="8">x8</button>
+  <span><i style="background:#f472b6"></i> Base de datos</span>
 
 </div>
-
-<div id="realtime-badge"><i></i>Live</div>
 
 <script>
 
@@ -2770,14 +2730,13 @@ function pollDebugData(){
 
   lastPollAt=now;
 
-  fetch(debugPath('/debug/kapso/data')).then(function(r){return r.json();}).then(function(data){
+  fetch(debugPath('/debug/kapso/data')).then(function(r){return r.json()}).then(function(data){
 
     processNewEvents(data.fastapi_events);
 
   }).catch(function(){});
 
 }
-
 
 
 /* ── SSE connection ── */
@@ -2853,7 +2812,6 @@ function connectSSE(){
 }
 
 
-
 // Start SSE + initial load of existing events
 
 connectSSE();
@@ -2892,7 +2850,8 @@ if(_injected && _injected.nodes){
 
       evts.forEach(function(e){
 
-        if(!e||!e.stage)return;
+        if(!e||!e.stage)continue;
+        if(!_matchesEmpresaFilter(e))continue;
 
         seenEventKeys.add((e.timestamp||'')+'|'+(e.stage||'')+'|'+(e.source||''));
 
@@ -2919,7 +2878,6 @@ if(_injected && _injected.nodes){
 }
 
 
-
 /* ── Nebula & stars ── */
 
 const stars=Array.from({length:400},()=>({x:Math.random(),y:Math.random(),s:Math.random()*1.2+.3,b:Math.random(),sp:Math.random()*.5+.5}));
@@ -2935,7 +2893,6 @@ const nebulae=[
   {x:.5,y:.7,rx:200,ry:130,color:'rgba(52,211,153,.025)'},
 
 ];
-
 
 
 function resize(){
@@ -2955,9 +2912,7 @@ function resize(){
 window.addEventListener('resize',resize);resize();
 
 
-
 function nodePos(n){return{x:n.x*W,y:n.y*H}}
-
 
 
 function physics(){
@@ -3006,7 +2961,6 @@ function physics(){
 }
 
 
-
 let lastFrameTime=performance.now();
 
 function draw(){
@@ -3018,7 +2972,6 @@ function draw(){
   lastFrameTime=now;
 
 
-
   t+=.002;
 
   physics();
@@ -3026,9 +2979,7 @@ function draw(){
   pollDebugData();
 
 
-
   X.clearRect(0,0,W,H);
-
 
 
   // Deep space gradient
@@ -3038,7 +2989,6 @@ function draw(){
   bg.addColorStop(0,'#0a0520');bg.addColorStop(.5,'#050214');bg.addColorStop(1,'#020010');
 
   X.fillStyle=bg;X.fillRect(0,0,W,H);
-
 
 
   // Nebulae
@@ -3060,7 +3010,6 @@ function draw(){
   }
 
 
-
   // Stars
 
   for(const s of stars){
@@ -3072,7 +3021,6 @@ function draw(){
     X.beginPath();X.arc(s.x*W,s.y*H,s.s,0,6.28);X.fill();
 
   }
-
 
 
   // Update + draw flow particles
@@ -3092,7 +3040,6 @@ function draw(){
     if(p.progress>=1){flowParticles.splice(i,1);continue;}
 
 
-
     const fp=nodePos(fromNode);
 
     const tp=nodePos(toNode);
@@ -3102,13 +3049,11 @@ function draw(){
     const py=fp.y+(tp.y-fp.y)*p.progress;
 
 
-
     // Trail
 
     p.trail.push({x:px,y:py});
 
     if(p.trail.length>18)p.trail.shift();
-
 
 
     // Draw trail
@@ -3138,7 +3083,6 @@ function draw(){
     }
 
 
-
     // Draw particle head
 
     X.save();
@@ -3152,7 +3096,6 @@ function draw(){
     X.shadowBlur=0;X.restore();
 
   }
-
 
 
   // Edges
@@ -3170,14 +3113,13 @@ function draw(){
     const isConnected=hovered&&EDGES.some(ed=>(ed.from===hovered.id||ed.to===hovered.id)&&(ed.from===a.id||ed.to===a.id||ed.from===b.id||ed.to===b.id));
 
 
-
     // Check if any active flow particle is on this edge
 
     const hasFlow=flowParticles.some(fp=>fp.fromId===e.from&&fp.toId===e.to);
 
 
-
     X.save();
+
 
     if(isHov){
 
@@ -3211,10 +3153,7 @@ function draw(){
 
     X.beginPath();X.moveTo(p1.x,p1.y);X.lineTo(p2.x,p2.y);X.stroke();
 
-    X.shadowBlur=0;
-
     X.restore();
-
 
 
     // Ambient edge particle
@@ -3227,12 +3166,13 @@ function draw(){
 
       const epy=p1.y+(p2.y-p1.y)*speed;
 
+
       X.fillStyle=isHov?'rgba(255,255,255,.6)':'rgba(255,255,255,.12)';
+
 
       X.beginPath();X.arc(epx,epy,isHov?2.5:1.5,0,6.28);X.fill();
 
     }
-
 
 
     if(e.label&&isHov){
@@ -3252,7 +3192,6 @@ function draw(){
   }
 
 
-
   // Nodes
 
   const nowTs=Date.now();
@@ -3270,7 +3209,6 @@ function draw(){
     const pulse=1+.06*Math.sin(t*2.5+n.x*8+n.y*5);
 
 
-
     // Check pulse from flow
 
     const np=nodePulse[n.id];
@@ -3282,28 +3220,31 @@ function draw(){
     const R=n.r*pulse*(isHov?1.2:1)*(isPulsing?1+pulseExtra*.15:1);
 
 
-
     // Outer glow
 
     const glowColor=isPulsing?np.color:n.glow;
 
     const g=X.createRadialGradient(p.x,p.y,R*.2,p.x,p.y,R*(isHov?3:2.5));
 
-    g.addColorStop(0,isPulsing?(np.color+'88'):n.glow);g.addColorStop(1,'transparent');
+    g.addColorStop(0,isPulsing?(np.color+'88'):glowColor);g.addColorStop(1,'transparent');
+
 
     X.globalAlpha=dimmed?.2:1;
 
     X.fillStyle=g;X.beginPath();X.arc(p.x,p.y,R*(isHov?3:2.5),0,6.28);X.fill();
 
 
-
     if(isHov||isPulsing){
+
 
       X.strokeStyle=isPulsing?np.color:n.color;
 
+
       X.lineWidth=isPulsing?2:1.5;
 
+
       X.globalAlpha=isPulsing?.5:.3;
+
 
       X.beginPath();X.arc(p.x,p.y,R*1.6,0,6.28);X.stroke();
 
@@ -3311,13 +3252,12 @@ function draw(){
 
     }
 
-
-
     const cg=X.createRadialGradient(p.x-R*.2,p.y-R*.25,R*.1,p.x,p.y,R);
 
     cg.addColorStop(0,'rgba(255,255,255,.25)');cg.addColorStop(.4,n.color);cg.addColorStop(1,n.color+'99');
 
     X.fillStyle=cg;
+
 
     X.globalAlpha=dimmed?.25:(isHov?1:.8);
 
@@ -3326,14 +3266,12 @@ function draw(){
     X.globalAlpha=1;
 
 
-
     X.strokeStyle=dimmed?'rgba(255,255,255,.04)':(isHov?'rgba(255,255,255,.6)':isPulsing?'rgba(255,255,255,.35)':'rgba(255,255,255,.1)');
+
 
     X.lineWidth=isHov?2:isPulsing?1.5:1;
 
     X.beginPath();X.arc(p.x,p.y,R+1,0,6.28);X.stroke();
-
-
 
     const fontSize=n.kind==='orchestrator'?15:n.kind==='agent'?14:12;
 
@@ -3348,7 +3286,6 @@ function draw(){
   }
 
 
-
   requestAnimationFrame(draw);
 
 }
@@ -3356,8 +3293,8 @@ function draw(){
 requestAnimationFrame(draw);
 
 
-
 /* ── Interaction: drag & hover ── */
+
 
 function hitTest(ex,ey){
 
@@ -3374,7 +3311,6 @@ function hitTest(ex,ey){
   return null;
 
 }
-
 
 
 C.addEventListener('mousedown',e=>{
@@ -3402,7 +3338,6 @@ C.addEventListener('mousedown',e=>{
   }
 
 });
-
 
 
 C.addEventListener('mousemove',e=>{
@@ -3493,19 +3428,51 @@ C.addEventListener('mouseleave',()=>{
 
 });
 
+const _injected=${injectedData};
+
+if(_injected&&_injected.nodes){
+
+  NODES=_injected.nodes;
+
+  EDGES=_injected.edges||[];
+
+
+  NODES.forEach(function(n){n.vx=0;n.vy=0;n.hx=n.hx??n.x;n.hy=n.hy??n.y;});
+
+  if(LOADER)LOADER.style.display='none';
+
+  setTimeout(function(){triggerFlows('inbound_received');},800);
+
+  setTimeout(function(){triggerFlows('run_agent_start');},1600);
+
+  setTimeout(function(){triggerFlows('run_agent_done');},2600);
+
+}else if(LOADER){
+
+  LOADER.textContent='Animación no disponible';
+
+}
+
+poll();
+
+setInterval(poll,10000);
+
+requestAnimationFrame(draw);
+
 </script>
 
 </body>
 
 </html>`;
 
-}
+
 
 
 
 function renderPublicConstellationHtml(graphData, publicDataPath) {
 
   const injectedData = graphData ? JSON.stringify(graphData) : 'null';
+  const injectedEmpresas = JSON.stringify(empresasList);
 
   return `<!doctype html>
 
@@ -3515,7 +3482,7 @@ function renderPublicConstellationHtml(graphData, publicDataPath) {
 
 <meta charset="utf-8">
 
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 
 <title>Kapso Visual</title>
 
@@ -3549,9 +3516,9 @@ canvas{display:block;position:absolute;top:0;left:0}
 
 #legend{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);z-index:20;display:flex;gap:20px;font-size:12px;color:rgba(255,255,255,.35);background:rgba(8,4,28,.6);border:1px solid rgba(255,255,255,.06);border-radius:12px;padding:10px 24px;backdrop-filter:blur(12px)}
 
-#legend span{display:flex;align-items:center;gap:8px}
+#legend span{display:flex;align-items:center;gap:6px}
 
-#legend i{width:8px;height:8px;border-radius:999px;display:inline-block}
+#legend i{width:10px;height:10px;border-radius:50%;display:inline-block}
 
 </style>
 
@@ -3559,25 +3526,33 @@ canvas{display:block;position:absolute;top:0;left:0}
 
 <body>
 
+<a href="/debug/kapso" id="back">Panel</a>
+
+<div id="header">
+
+  <h1>Monica Brain</h1>
+
+  <p>Neural Architecture Map</p>
+
+</div>
+
 <canvas id="c"></canvas>
 
 <div id="loader">Cargando animación…</div>
-
-<div id="header"><h1>Monica Brain</h1><p>Neural Architecture Map</p></div>
 
 <div id="tooltip"></div>
 
 <div id="legend">
 
-  <span><i style="background:#a78bfa"></i>Orquestador</span>
+  <span><i style="background:#a78bfa"></i> Orquestador</span>
 
-  <span><i style="background:#fb923c"></i>Agente</span>
+  <span><i style="background:#fb923c"></i> Agente</span>
 
-  <span><i style="background:#34d399"></i>Herramienta</span>
+  <span><i style="background:#34d399"></i> Herramienta</span>
 
-  <span><i style="background:#60a5fa"></i>Externo</span>
+  <span><i style="background:#60a5fa"></i> Externo</span>
 
-  <span><i style="background:#f472b6"></i>Base de datos</span>
+  <span><i style="background:#f472b6"></i> Base de datos</span>
 
 </div>
 
@@ -3982,11 +3957,11 @@ function draw(){
 
     const pulseExtra=isPulsing?1+.25*Math.sin((nowTs-np.until+800)/800*Math.PI):0;
 
-    const R=n.r*pulse*(isPulsing?1+pulseExtra*.15:1);
+    const R=n.r*pulse*(isHov?1.2:1)*(isPulsing?1+pulseExtra*.15:1);
 
     const glowColor=isPulsing?np.color:n.glow;
 
-    const g=X.createRadialGradient(p.x,p.y,R*.2,p.x,p.y,R*2.5);
+    const g=X.createRadialGradient(p.x,p.y,R*.2,p.x,p.y,R*(isHov?3:2.5));
 
     g.addColorStop(0,isPulsing?(np.color+'88'):glowColor);g.addColorStop(1,'transparent');
 
@@ -4051,6 +4026,11 @@ function draw(){
 
 }
 
+requestAnimationFrame(draw);
+
+/* ── Interaction: drag & hover ── */
+
+
 C.addEventListener('mousedown',e=>{
 
   const hit=hitTest(e.clientX,e.clientY);
@@ -4087,9 +4067,9 @@ C.addEventListener('mousemove',e=>{
 
     dragging.y=(my-dragOff.y)/H;
 
-    dragging.vx=0.7*dragVx+0.3*(mx-prevMx)/W;
+    dragVx=0.7*dragVx+0.3*(mx-prevMx)/W;
 
-    dragging.vy=0.7*dragVy+0.3*(my-prevMy)/H;
+    dragVy=0.7*dragVy+0.3*(my-prevMy)/H;
 
     prevMx=mx;prevMy=my;
 
@@ -4196,6 +4176,7 @@ setInterval(poll,10000);
 
 requestAnimationFrame(draw);
 
+
 </script>
 
 </body>
@@ -4204,10 +4185,7 @@ requestAnimationFrame(draw);
 
 }
 
-
-
 function renderKapsoDebugHtml() {
-
   return `<!doctype html>
 
 <html lang="es">
@@ -4326,6 +4304,16 @@ function renderKapsoDebugHtml() {
 
     .sp{width:12px;height:12px;border:2px solid #334155;border-top-color:#fbbf24;border-radius:50%;animation:sp .7s linear infinite;display:inline-block}
 
+    .msgw{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
+
+    .msgc{color:#e2e8f0;white-space:pre-wrap;word-break:break-word}
+
+    .msgc.is-collapsed{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:4;overflow:hidden}
+
+    .msg-toggle{appearance:none;background:none;border:none;padding:0;color:#60a5fa;font-size:11px;font-weight:600;cursor:pointer}
+
+    .msg-toggle:hover{text-decoration:underline}
+
     /* Modal */
 
     .ov{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:200;display:none;align-items:flex-start;justify-content:center;padding:20px;overflow-y:auto}
@@ -4376,7 +4364,7 @@ function renderKapsoDebugHtml() {
 
     .msgl{font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:.1em;font-weight:700;margin-bottom:7px}
 
-    .msgt{color:#f1f5f9;font-size:13px;line-height:1.6;white-space:pre-wrap;word-break:break-word}
+    .msgt{color:#f1f5f9;font-size:13px;line-height:1.6;white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto;padding-right:4px}
 
     .resp{background:#0a1628;border-radius:8px;padding:13px;margin-top:12px;border-left:3px solid #3b82f6}
 
@@ -4580,13 +4568,29 @@ function fetchDebug(path,init){
 
 const esc=s=>String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 
+const MESSAGE_PREVIEW_MAX_CHARS=180;
+
+const MESSAGE_PREVIEW_MAX_LINES=4;
+
+function msgNeedsToggle(s){
+  const text=String(s||'');
+  return text.length>MESSAGE_PREVIEW_MAX_CHARS||text.split(/\r?\n/).length>MESSAGE_PREVIEW_MAX_LINES;
+}
+
+function renderMsgPreview(s,key){
+  if(!s)return'<span class="muted">—</span>';
+  const text=String(s);
+  if(!msgNeedsToggle(text))return'<div class="msgc">'+esc(text)+'</div>';
+  return '<div class="msgw"><div class="msgc is-collapsed" data-msg-content="'+key+'">'+esc(text)+'</div><button type="button" class="msg-toggle" data-msg-target="'+key+'" aria-expanded="false">Ver más</button></div>';
+}
+
 const trunc=(s,n=45)=>!s?'<span class="muted">—</span>':s.length>n?esc(s.slice(0,n))+'&hellip;':esc(s);
 
 function rel(t){if(!t)return'—';const d=Date.now()-new Date(t);if(d<60e3)return Math.round(d/1e3)+'s';if(d<3600e3)return Math.round(d/60e3)+'m ago';return new Date(t).toLocaleTimeString();}
 
 function fms(ms){if(!ms&&ms!==0)return'—';if(ms<1e3)return Math.round(ms)+'ms';return(ms/1e3).toFixed(1)+'s';}
 
-function tcls(ms){if(!ms)return'';if(ms<1500)return'tf';if(ms<4e3)return'tm';return'ts';}
+function tcls(ms){if(ms==null)return'';if(ms<25e3)return'tf';if(ms<=30e3)return'tm';return'ts';}
 
 function sBadge(s){if(s==='ok')return'<span class="bok"><span class="dot"></span>OK</span>';if(s==='error')return'<span class="berr"><span class="dot"></span>Error</span>';return'<span class="bprc"><span class="sp"></span></span>';}
 
@@ -4647,7 +4651,7 @@ function renderTable(items){
 
       '<td class="muted">'+esc(it.message_type||'text')+'</td>'+
 
-      '<td style="max-width:180px">'+trunc(it.message_text)+'</td>'+
+      '<td style="max-width:180px">'+renderMsgPreview(it.message_text,'msg-'+i)+'</td>'+
 
       '<td><div style="color:#e2e8f0">'+esc(it.agent_name||'—')+'</div><div class="muted">#'+(it.agent_id||'?')+'</div></td>'+
 
@@ -4668,6 +4672,30 @@ function renderTable(items){
   document.querySelectorAll('#tbody tr[data-row-idx]').forEach(row=>{
 
     row.addEventListener('click',()=>openM(Number(row.dataset.rowIdx)));
+
+  });
+
+  tbody.querySelectorAll('button[data-msg-target]').forEach(btn=>{
+
+    btn.addEventListener('click',ev=>{
+
+      ev.stopPropagation();
+
+      const target=btn.dataset.msgTarget;
+
+      const content=tbody.querySelector('[data-msg-content="'+target+'"]');
+
+      if(!content)return;
+
+      const expanded=btn.getAttribute('aria-expanded')==='true';
+
+      btn.setAttribute('aria-expanded',expanded?'false':'true');
+
+      btn.textContent=expanded?'Ver más':'Ver menos';
+
+      content.classList.toggle('is-collapsed',expanded);
+
+    });
 
   });
 

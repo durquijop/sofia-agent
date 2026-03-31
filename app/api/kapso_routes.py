@@ -1768,18 +1768,25 @@ async def kapso_inbound(
                     empresa_id=empresa_id,
                 )
         else:
-            final_reply_text = _ensure_reply_text(conversational_result.response)
-            suppress_send = _should_suppress_kapso_send(final_reply_text)
-            if final_reply_text != str(conversational_result.response or "").strip():
-                add_kapso_debug_event(
-                    "fastapi",
-                    "empty_reply_fallback",
-                    {
-                        "message_id": request.message_id,
-                        "conversation_id": conversational_result.conversation_id,
-                        "fallback_text": final_reply_text,
-                    },
-                )
+            raw_response = str(conversational_result.response or "").strip()
+            # Si el LLM no generó texto pero sí hay reacción, suprimimos el envío de texto
+            # para que solo se envíe la reacción sin un mensaje vacío o fallback forzado.
+            if not raw_response and reaction_emoji:
+                final_reply_text = ""
+                suppress_send = True
+            else:
+                final_reply_text = _ensure_reply_text(conversational_result.response)
+                suppress_send = _should_suppress_kapso_send(final_reply_text)
+                if final_reply_text != raw_response:
+                    add_kapso_debug_event(
+                        "fastapi",
+                        "empty_reply_fallback",
+                        {
+                            "message_id": request.message_id,
+                            "conversation_id": conversational_result.conversation_id,
+                            "fallback_text": final_reply_text,
+                        },
+                    )
 
             if conversacion_db_id and final_reply_text:
                 await db.insertar_mensaje(
