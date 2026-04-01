@@ -881,6 +881,7 @@ async def _run_both_agents(
             memory_window=8,
             contacto_id=contacto_id,
             empresa_id=empresa_id,
+            channel="whatsapp",  # Activa tools y fast-paths exclusivos de WhatsApp/Kapso
         )
     )
 
@@ -1486,6 +1487,31 @@ async def kapso_inbound(
                 started_at=started_at,
             )
 
+        # ── Guard: contacto inactivo ─────────────────────────────────────────
+        # Si is_active es explícitamente False, no se procesa ni responde.
+        # Aplica a cualquier canal (WhatsApp, webhook, etc.).
+        # is_active = None (campo no seteado) NO bloquea — solo False explícito.
+        if contacto and contacto.get("is_active") is False:
+            logger.info(
+                "kapso.inbound_blocked contacto_id=%s is_active=False — sin respuesta",
+                contacto.get("id"),
+            )
+            add_kapso_debug_event(
+                "fastapi",
+                "inbound_blocked",
+                {"reason": "contacto_inactivo", "contacto_id": contacto.get("id")},
+            )
+            return _build_command_response(
+                request=request,
+                conversation_id=conversation_id,
+                agent_id=int(agente_id),
+                agent_name=agent.get("nombre_agente") or str(agente_id),
+                model_used=agent.get("llm") or settings.DEFAULT_MODEL,
+                reply_text="❌ contacto_inactivo",  # suppress_send=True vía _should_suppress_kapso_send
+                started_at=started_at,
+            )
+        # ────────────────────────────────────────────────────────────────────
+
         contacto_id = int(contacto["id"]) if contacto and contacto.get("id") is not None else None
         conversacion_db_id = int(conversacion_db["id"]) if conversacion_db and conversacion_db.get("id") is not None else None
         prompt_context_data = await db.load_kapso_prompt_context(
@@ -2017,6 +2043,13 @@ async def _retry_single_stuck_message(msg: dict) -> bool:
 
     # Get contact
     contacto = await db.get_contacto(int(contacto_id)) if contacto_id else None
+
+    # Guard: contacto inactivo — no reintentar, marcar como enviado para no volver a procesar
+    if contacto and contacto.get("is_active") is False:
+        logger.info("retry_stuck: contacto_id=%s is_active=False — reintento cancelado", contacto_id)
+        await db.actualizar_mensaje(int(msg_id), {"status": "enviado"})
+        return True
+
     phone_number_id = metadata.get("phone_number_id", "")
 
     # Get numero for phone resolution

@@ -19,6 +19,14 @@ class ChatRequest(BaseModel):
     memory_window: Optional[int] = 8
     contacto_id: Optional[int] = None
     empresa_id: Optional[int] = None
+    channel: str = Field(
+        default="generic",
+        description=(
+            "Canal de entrada del mensaje. "
+            "Define qué tools built-in se inyectan en el agente. "
+            "Valores conocidos: 'whatsapp' (Kapso), 'webhook', 'api', 'generic'."
+        ),
+    )
 
 
 class ToolCall(BaseModel):

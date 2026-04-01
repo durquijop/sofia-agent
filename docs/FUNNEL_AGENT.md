@@ -1,273 +1,240 @@
-# AG ENTE DE EMBUDO (Funnel Agent) - Documentación de Implementación
+# Agente de Embudo (Funnel Agent)
 
-## 📋 Resumen
+## Resumen
 
-Se ha implementado un **Agente de Embudo** que ejecuta **de manera asincrónica** y carga el contexto completo del prospecto en paralelo, similar a la arquitectura Deno que proporcionaste.
+El **Funnel Agent** analiza el estado del contacto en el embudo comercial y ejecuta acciones automáticamente:
 
----
+- Detecta si el contacto cambió de etapa y actualiza la BD
+- Registra información capturada en la conversación como metadata
+- Responde con un resumen de máximo 3 líneas para uso interno del equipo
 
-## 🎯 Características Principales
-
-### 1. **Carga de Contexto en Paralelo**
-- Contacto + Etapas del embudo + Conversación + Mensajes
-- Todo se carga con `asyncio.gather()` para máxima velocidad
-- Ubicado en: [app/db/queries.py](app/db/queries.py) → `load_funnel_context()`
-
-### 2. **Agente Asincrónico con LangGraph** 
-- Ejecuta análisis del estado del contacto
-- Herramientas disponibles:
-  - `update_etapa_embudo`: Cambiar la etapa actual
-  - `update_metadata`: Registrar información capturada
-- Ubicado en: [app/agents/funnel.py](app/agents/funnel.py)
-
-### 3. **Contexto Inteligente**
-- **System Prompt**: Incluye identidad, datos claves, historial de conversación y checklist
-- **User Message**: Análisis diferenciado por contacto
-- Respuesta orientada al **equipo interno** (máx 3 líneas)
-
-### 4. **Endpoint REST**
-- **POST** `/api/v1/funnel/analyze`
-- Request: `FunnelAgentRequest` (contacto_id, empresa_id, agente_id, etc)
-- Response: `FunnelAgentResponse` (respuesta, etapa_anterior, etapa_nueva, timing, agent_runs)
+Se ejecuta en paralelo con el agente conversacional cada vez que entra un mensaje de WhatsApp.
 
 ---
 
-## 📁 Archivos Creados/Modificados
-
-### Nuevos Archivos
-
-1. **[app/agents/funnel.py](app/agents/funnel.py)**
-   - Agente principal con lógica de embudo
-   - Funciones helpers para formatear contexto
-   - Grafo LangGraph con nodos: `agent` → `tools`
-   - Función principal: `run_funnel_agent()`
-
-2. **[app/schemas/funnel.py](app/schemas/funnel.py)**
-   - Schemas Pydantic para request/response
-   - `FunnelAgentRequest`, `FunnelAgentResponse`
-   - `FunnelContextResponse`, `FunnelStageInfo`, etc
-
-3. **[app/api/funnel_routes.py](app/api/funnel_routes.py)**
-   - Endpoint FastAPI para ejecutar agente
-   - Ruta: `POST /api/v1/funnel/analyze`
-
-### Archivos Modificados
-
-1. **[app/db/queries.py](app/db/queries.py)**
-   - `actualizar_etapa_contacto()` - Actualiza etapa en BD
-   - `actualizar_metadata_contacto()` - Actualiza metadata con merge
-   - `get_conversacion_con_mensajes()` - Carga en paralelo
-   - `load_funnel_context()` - Orquestador principal
-
-2. **[main.py](main.py)**
-   - Import del router: `from app.api.funnel_routes import router as funnel_router`
-   - Registro en FastAPI: `app.include_router(funnel_router)`
-   - Actualización de documentación
-
----
-
-## 🔄 Flujo de Ejecución
+## Endpoint
 
 ```
 POST /api/v1/funnel/analyze
-         ↓
-FunnelAgentRequest {contacto_id, empresa_id, agente_id, conversacion_id}
-         ↓
-load_funnel_context() [PARALELO]
-  ├─ get_contacto()
-  ├─ get_empresa_embudo()
-  └─ get_conversacion_con_mensajes()
-         ↓
-_build_graph() construye LangGraph
-  ├─ Nodo "agent": Invoca LLM con contexto
-  └─ Nodo "tools": Ejecuta update_etapa_embudo / update_metadata
-         ↓
-Respuesta: max 3 líneas orientadas al equipo
-         ↓
-FunnelAgentResponse {respuesta, etapa_anterior, etapa_nueva, tools_used, timing}
 ```
 
----
+### Request
 
-## 🛠️ Herramientas del Agente
-
-### 1. `update_etapa_embudo`
-```python
-@tool
-async def update_etapa_embudo(nueva_etapa_orden: int, razon: str = "...") -> str:
-    """Actualiza la etapa del embudo del contacto."""
-```
-**Usa:** ID de orden de la nueva etapa
-**Retorna:** Confirmación del cambio
-**IMPORTANTE:** La etapa anterior se rastrea automáticamente
-
-### 2. `update_metadata`
-```python
-@tool
-async def update_metadata(campos: dict, descripcion: str = "...") -> str:
-    """Actualiza la metadata del contacto (merge con datos existentes)."""
-```
-**Usa:** Diccionario con campos a actualizar
-**Retorna:** Confirmación de actualización
-**SMART MERGE:** Preserva datos existentes, agrega nuevos
-
----
-
-## 📊 System Prompt Template
-
-El sistema construye dinámicamente el system prompt con:
-
-```
-# IDENTIDAD Y MISIÓN
-Eres un analista conversacional...
-
-# Datos claves
-El contacto {nombre} se encuentra en la etapa {etapa}
-
-# CONTEXTO DEL EMBUDO
-[Todas las etapas + etapa actual + metadata]
-
-# HISTORIAL DE CONVERSACIÓN
-[Últimos mensajes con timestamps]
-
-# CHECKLIST FINAL
-- ¿Cambió de etapa? → update_etapa_embudo
-- ¿Registré información? → update_metadata
-- ¿Respuesta máximo 3 líneas?
+```json
+{
+  "contacto_id": 1234,
+  "empresa_id": 5,
+  "agente_id": 10,
+  "conversacion_id": 999,
+  "max_tokens": 512,
+  "temperature": 0.5
+}
 ```
 
----
+| Campo | Tipo | Requerido | Descripción |
+|-------|------|-----------|-------------|
+| `contacto_id` | `int` | Sí | ID del contacto |
+| `empresa_id` | `int` | Sí | ID de la empresa |
+| `agente_id` | `int` | Sí | ID del agente |
+| `conversacion_id` | `int` | No | ID de conversación específica |
+| `max_tokens` | `int` | No | Default: 512 |
+| `temperature` | `float` | No | Default: 0.5 |
 
-## 🔌 Cómo Usar
+> El modelo LLM está fijo en `x-ai/grok-4.1-fast`. El campo `model` en el request es ignorado.
 
-### Ejemplo de Request
-
-```bash
-curl -X POST "http://localhost:8080/api/v1/funnel/analyze" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "contacto_id": 1234,
-    "empresa_id": 5,
-    "agente_id": 10,
-    "conversacion_id": 999,
-    "model": "x-ai/grok-4.1-fast",
-    "max_tokens": 512,
-    "temperature": 0.5
-  }'
-```
-
-### Ejemplo de Response
+### Response
 
 ```json
 {
   "success": true,
-  "respuesta": "Lead escalado a 'Calificado' por alto presupuesto. Requiere demo técnica. Asignar al equipo gris.",
+  "respuesta": "Lead escalado a Calificado por presupuesto confirmado. Próximo paso: agendar demo técnica.",
   "etapa_anterior": "Interesado",
   "etapa_nueva": 3,
   "metadata_actualizada": {
-    "presupuesto": "50000-100000 USD",
-    "urgencia": "esta_semana"
+    "info_reg_1": "2026-03-31 10:30 AM",
+    "info_reg_2": "¿Cuánto cuesta el tratamiento?",
+    "info_reg_3": "Presupuesto: 50000-100000 USD"
   },
   "tools_used": [
     {
       "tool_name": "update_etapa_embudo",
-      "status": "ok",
-      "duration_ms": 45.2
+      "tool_input": { "orden_etapa": 3, "razon": "Presupuesto confirmado" },
+      "tool_output": "✓ Etapa actualizada a 3: Presupuesto confirmado",
+      "duration_ms": 42.5,
+      "status": "ok"
     },
     {
       "tool_name": "update_metadata",
-      "status": "ok",
-      "duration_ms": 38.7
+      "tool_input": {
+        "informacion_capturada": { "info_reg_1": "...", "info_reg_2": "..." },
+        "seccion": "etapa_actual"
+      },
+      "tool_output": "✓ Metadata registrada: 3 campos capturados",
+      "duration_ms": 198.7,
+      "status": "ok"
     }
   ],
   "timing": {
-    "total_ms": 1250.3,
-    "llm_ms": 890.5,
-    "tool_execution_ms": 84.0,
-    "graph_build_ms": 45.1
+    "total_ms": 1450.2,
+    "llm_ms": 950.0,
+    "tool_execution_ms": 241.2,
+    "graph_build_ms": 45.3
   }
 }
 ```
 
 ---
 
-## ⚡ Rendimiento
+## Herramientas del agente
 
-- **Carga de contexto**: Paralela (3-4 queries simultáneas)
-- **Típicas métricas**:
-  - Contexto: 100-300ms
-  - LLM: 800-1500ms
-  - Herramientas: 50-200ms
-  - **Total**: 1-2.5 segundos
+### 1. `update_etapa_embudo`
 
----
+Actualiza la etapa del embudo del contacto en la base de datos.
 
-## 🔐 Validaciones
-
-- ✅ Contacto debe existir en empresa
-- ✅ Empresa debe tener embudo configurado
-- ✅ Metadata usa merge (no sobrescribe datos existentes)
-- ✅ Etapa nueva debe ser válida en el embudo
-- ✅ Respuesta limitada a 3 líneas
-
----
-
-## 📚 Diagrama de Clases
-
+```python
+update_etapa_embudo(orden_etapa: int, razon: str = "Cambio identificado por agente") -> str
 ```
-FunnelAgentRequest
-  ├─ contacto_id (int)
-  ├─ empresa_id (int)
-  ├─ agente_id (int)
-  ├─ conversacion_id (int, optional)
-  ├─ model (str, optional)
-  ├─ max_tokens (int, optional)
-  └─ temperature (float, optional)
 
-FunnelContextResponse
-  ├─ contacto: ContactInfo
-  ├─ etapa_actual: FunnelCurrentStage
-  ├─ todas_etapas: List[FunnelStageInfo]
-  ├─ tiene_embudo: bool
-  ├─ conversacion_resumen: str
-  └─ ultimos_mensajes: List[dict]
+| Parámetro | Tipo | Descripción |
+|-----------|------|-------------|
+| `orden_etapa` | `int` | Número de orden de la nueva etapa (ej: 1, 2, 3). Debe ser un valor válido del contexto |
+| `razon` | `str` | Razón del cambio de etapa |
 
+**Importante:** `orden_etapa` es el número de orden de la etapa (no su ID en BD). Los valores válidos se extraen del contexto del embudo cargado antes de la ejecución.
+
+**Efecto:** `UPDATE wp_contactos SET etapa_embudo = {orden_etapa} WHERE id = {contacto_id}`
+
+### 2. `update_metadata`
+
+Registra información capturada en la conversación como metadata del contacto.
+
+```python
+update_metadata(informacion_capturada: dict, seccion: str = "etapa_actual") -> str
+```
+
+| Parámetro | Tipo | Descripción |
+|-----------|------|-------------|
+| `informacion_capturada` | `dict` | Campos capturados (claves: `info_reg_1`, `info_reg_2`, etc.) |
+| `seccion` | `str` | Sección de metadata donde guardar. Default: `"etapa_actual"` |
+
+**Efecto:** POST a Supabase Edge Function `actualizar-metadata-v3` con merge inteligente (preserva datos existentes).
+
+**Formato del payload enviado:**
+
+```json
+{
+  "contacto_id": 1234,
+  "empresa_id": 5,
+  "agente_id": 10,
+  "metadata": "{\"etapa_actual\": {\"informacion_capturada\": {...}, \"actualizado_en\": \"...\"}}"
+}
+```
+
+---
+
+## Flujo de ejecución
+
+```text
+POST /api/v1/funnel/analyze
+         ↓
+load_funnel_context() [en paralelo]
+  ├─ get_contacto()
+  ├─ get_empresa_embudo()
+  └─ get_conversacion_con_mensajes()
+         ↓
+_build_graph() → LangGraph con 2 nodos
+         ↓
+agent_node → analiza contexto con LLM
+         ↓ (si necesita tools)
+tool_node → ejecuta update_etapa_embudo y/o update_metadata
+         ↓
+agent_node → análisis final (máx 2 iteraciones LLM total)
+         ↓
 FunnelAgentResponse
-  ├─ success: bool
-  ├─ respuesta: str
-  ├─ etapa_anterior: str
-  ├─ etapa_nueva: int
-  ├─ metadata_actualizada: dict
-  ├─ tools_used: List[ToolCall]
-  ├─ timing: TimingInfo
-  ├─ agent_runs: List[AgentRunTrace]
-  └─ error: str (optional)
 ```
 
 ---
 
-## 🚀 Próximas Mejoras (Opcionales)
+## Grafo LangGraph
 
-- [ ] Integración con Kapso para análisis automático de leads
-- [ ] Historial de cambios de etapa (audit log)
-- [ ] Recomendaciones inteligentes por etapa
-- [ ] Metricas de conversión por embudo
-- [ ] Webhooks para notificar cambios de etapa
-
----
-
-## 📞 Endpoints Disponibles
-
-Ahora la aplicación tiene:
-
-```
-GET  /                                  → Info y endpoints
-POST /api/v1/chat                      → Agente Conversacional
-POST /api/v1/funnel/analyze ⭐ NUEVO  → Agente de Embudo
-POST /api/v1/kapso/inbound            → Kapso WhatsApp
-GET  /docs                             → Swagger UI
+```text
+START → agent
+  ├─ si hay tool_calls y < 2 iteraciones → tools → agent
+  └─ si no hay tool_calls o >= 2 iteraciones → END
 ```
 
 ---
 
-✅ **Implementación Completa y Lista para Usar**
+## Context del sistema (system prompt)
+
+El agente recibe dinámicamente:
+
+- Identidad y misión del analista
+- Datos del contacto (nombre, etapa actual)
+- Contexto completo del embudo (todas las etapas con nombres y órdenes)
+- Metadata existente del contacto
+- Historial de la conversación (últimos mensajes)
+- Checklist de validaciones antes de responder
+- Contexto temporal (fecha, hora)
+
+---
+
+## Validaciones implementadas
+
+- Contacto debe existir en la empresa
+- Empresa debe tener embudo configurado
+- `orden_etapa` debe ser un valor válido del contexto del embudo
+- Metadata usa merge (no sobrescribe datos existentes)
+- Respuesta limitada a 3 líneas
+- Máximo 2 iteraciones LLM para evitar loops
+
+---
+
+## Rendimiento esperado
+
+| Fase | Tiempo típico |
+|------|---------------|
+| Carga de contexto (paralela) | 100–300 ms |
+| Construcción del grafo | 40–80 ms |
+| Inferencia LLM | 800–1500 ms |
+| Ejecución de tools | 50–250 ms |
+| **Total** | **1–2.5 segundos** |
+
+---
+
+## Debug
+
+Ver las últimas 50 ejecuciones del funnel agent:
+
+```
+GET http://localhost:8080/api/v1/funnel/debug
+```
+
+Ver eventos en JSON:
+
+```
+GET http://localhost:8080/api/v1/funnel/debug/events?limit=20
+```
+
+Ver detalles en: `docs/FUNNEL_DEBUG_DASHBOARD.md`
+
+---
+
+## Archivos relevantes
+
+| Archivo | Descripción |
+|---------|-------------|
+| `app/agents/funnel.py` | Implementación del agente |
+| `app/schemas/funnel.py` | Schemas Pydantic de request/response |
+| `app/api/funnel_routes.py` | Endpoints FastAPI + debug dashboard |
+| `app/db/queries.py` | Funciones de carga de contexto y actualización |
+| `app/core/funnel_debug.py` | Buffer de debug en memoria |
+
+---
+
+## Próximas mejoras
+
+- [ ] Integración directa con Kapso para disparo automático por nuevos mensajes
+- [ ] Historial de cambios de etapa persistente (audit log en BD)
+- [ ] Métricas de conversión por embudo
+- [ ] Webhooks para notificar cambios de etapa a sistemas externos

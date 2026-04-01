@@ -745,9 +745,12 @@ async def run_agent(request: ChatRequest) -> ChatResponse:
     conversation_id = request.conversation_id or str(uuid.uuid4())
     memory_session_id = request.memory_session_id.strip() if request.memory_session_id else None
     memory_window = max(1, request.memory_window or 8)
-    reaction_only_request = _is_reaction_only_request(request.message)
+    # Fast-paths de reacción solo aplican en WhatsApp (send_reaction es Kapso-específico)
+    reaction_only_request = is_whatsapp and _is_reaction_only_request(request.message)
 
-    logger.info(f"run_agent: model={model}, max_tokens={max_tokens}")
+    # Canal del request — determina qué tools built-in se inyectan
+    is_whatsapp = getattr(request, "channel", "generic") == "whatsapp"
+    logger.info(f"run_agent: model={model}, max_tokens={max_tokens}, channel={getattr(request, 'channel', 'generic')}")
 
     if reaction_only_request:
         emoji = _infer_reaction_emoji(request.message)
@@ -804,8 +807,8 @@ async def run_agent(request: ChatRequest) -> ChatResponse:
             agent_runs=agent_runs,
         )
 
-    # ── Fast-path: closing followup (reaction-only, no text) ──
-    closing_followup = _is_closing_followup(request.message)
+    # ── Fast-path: closing followup — solo en WhatsApp ──
+    closing_followup = is_whatsapp and _is_closing_followup(request.message)
     if closing_followup:
         emoji = _infer_closing_emoji(request.message)
         available_tools = _describe_available_tools([send_reaction])
@@ -888,17 +891,22 @@ async def run_agent(request: ChatRequest) -> ChatResponse:
         logger.info("Omitiendo carga de herramientas MCP para solicitud enfocada en reacción")
 
     # Agregar tools built-in si hay contacto_id
+    # guardar_nota y marcar_calificado son agnósticas al canal (escriben en BD)
+    # ejecutar_comando es exclusiva de WhatsApp/Kapso (multimedia bridge)
     if request.contacto_id and not reaction_only_request:
         nota_tool = _create_guardar_nota_tool(request.contacto_id)
         calificado_tool = _create_marcar_calificado_tool(request.contacto_id)
-        comandos_tool = _create_comandos_tool(request.contacto_id)
         tools.append(nota_tool)
         tools.append(calificado_tool)
-        tools.append(comandos_tool)
+        if is_whatsapp:
+            # Tool de multimedia Kapso: genera JSON `{"__comando__": true, ...}`
+            # que solo el bridge de WhatsApp sabe interpretar
+            comandos_tool = _create_comandos_tool(request.contacto_id)
+            tools.append(comandos_tool)
         if request.empresa_id:
             spam_tool = _create_desactivar_contacto_spam_tool(request.contacto_id, request.empresa_id)
             tools.append(spam_tool)
-        logger.info("Tools built-in agregadas para contacto_id=%s", request.contacto_id)
+        logger.info("Tools built-in agregadas para contacto_id=%s channel=%s", request.contacto_id, getattr(request, "channel", "generic"))
 
     mcp_discovery_ms = (time.perf_counter() - t_mcp) * 1000
     available_tools = _describe_available_tools(tools)

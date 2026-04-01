@@ -2,67 +2,66 @@
 
 ## Prioridad alta
 
-- **Medir `tool_execution_ms` real en producción**
-  - hoy existe en el schema, pero no se calcula de forma explícita en `run_agent()`
-  - conviene medirlo para mejorar observabilidad
+- **Agregar tracing por nodo de LangGraph**
+  - tiempo por nodo
+  - inputs y outputs resumidos por transición
+  - errores por nodo
+  - persistir trazas en BD para observabilidad histórica (hoy solo en memoria)
 
-- **Definir una estrategia clara de errores por tool**
-  - timeout por tool
-  - retries controlados
+- **Definir estrategia de errores por tool**
+  - timeout configurable por tool
+  - retries controlados con backoff
   - fallback cuando una tool falle
   - mensajes internos más accionables
 
 - **Unificar identificadores internos para tools**
-  - definir si las tools internas deben trabajar con `contacto_id`, `conversacion_id` o ambos
-  - evitar ambigüedades entre contextos y prompts
+  - definir explícitamente si las tools internas deben trabajar con `contacto_id`, `conversacion_id` o ambos
+  - fijar el identificador en el schema de tools y en el prompt para evitar ambigüedades
 
 - **Endurecer el manejo del contexto de embudo**
-  - si `etapa_actual` viene `null` pero la metadata indica una etapa válida, definir una regla de reconciliación
+  - si `etapa_actual` viene `null` pero la metadata indica una etapa válida, definir una regla de reconciliación explícita
 
 ## Prioridad media
 
-- **Agregar tracing por nodo de LangGraph**
-  - tiempo por nodo
-  - inputs y outputs resumidos
-  - errores por transición
+- **Agregar tests automatizados**
+  - tests de schemas Pydantic
+  - tests de rutas HTTP (con mocks)
+  - tests de construcción del grafo
+  - test de carga de tools MCP con mocks
+  - test end-to-end del flujo Kapso + multi-agente
 
-- **Crear un flujo multi-agente productivo explícito**
-  - separar formalmente agente de embudo y agente procesador
-  - compartir estado de manera controlada
-
-- **Mover benchmarks históricos a una zona de research o archive**
-  - hoy siguen en `benchmarks/`
-  - si ya no se usan activamente, pueden reubicarse luego
+- **Persistir historial del funnel debug**
+  - hoy el buffer se pierde al reiniciar
+  - agregar tabla `funnel_debug_runs` en BD
+  - modificar `add_funnel_debug_run()` para guardar en BD opcionalmente
 
 - **Alinear la documentación con ejemplos reales de negocio**
-  - requests de embudo
+  - requests de embudo con datos reales anonimizados
   - requests con MCP reales
-  - ejemplos de trazabilidad
+  - ejemplos de trazabilidad con tool calls
 
 ## Prioridad baja
 
+- **Mover benchmarks históricos a archive**
+  - `benchmarks/` ya no se usa activamente
+  - mover a `archive/benchmarks/` para no contaminar la raíz del proyecto
+
 - **Separar utilidades operativas de benchmarks**
-  - `scripts/` para utilidades Python del stack principal
-  - `benchmarks/` solo para investigación
+  - `scripts/` solo para utilidades del stack principal
+  - `benchmarks/` solo para investigación histórica
 
-- **Agregar tests automáticos básicos**
-  - schemas
-  - rutas
-  - construcción del grafo
-  - tool loading con mocks
+- **Preparar runbooks operativos**
+  - reinicio local del bridge y FastAPI
+  - validación de variables de entorno
+  - troubleshooting MCP (tool no responde, timeout)
+  - troubleshooting OpenRouter (rate limit, modelo no disponible)
+  - troubleshooting Kapso (webhook no llega, mensajes atascados)
 
-- **Preparar carpeta de runbooks operativos**
-  - reinicio local
-  - validación de variables
-  - troubleshooting MCP
-  - troubleshooting OpenRouter
+## Orden de ejecución sugerido
 
-## Recomendación de ejecución
-
-Orden sugerido:
-
-1. medir `tool_execution_ms`
-2. robustecer errores/retries
-3. formalizar flujo multi-agente productivo
-4. agregar tracing fino
-5. archivar comparativos históricos cuando ya no hagan falta
+1. Tests automatizados básicos (schemas + rutas)
+2. Tracing por nodo (persistencia en BD)
+3. Estrategia de errores y retries por tool
+4. Persistir historial funnel debug
+5. Runbooks operativos
+6. Archivar benchmarks cuando ya no sean necesarios

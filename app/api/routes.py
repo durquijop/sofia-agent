@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException
 from app.core.cache import response_cache
 from app.schemas.chat import ChatRequest, ChatResponse
 from app.agents.conversational import run_agent
+from app.db import queries as db
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,24 @@ async def chat(request: ChatRequest):
     - temperature: (opcional) Temperatura del modelo (0-2)
     """
     try:
+        # Guard: contacto inactivo — aplica a webhook y cualquier canal que use /chat directamente
+        if request.contacto_id:
+            try:
+                contacto = await db.get_contacto(request.contacto_id)
+                if contacto and contacto.get("is_active") is False:
+                    logger.warning(
+                        "chat: contacto_id=%s is_active=False — request bloqueado",
+                        request.contacto_id,
+                    )
+                    raise HTTPException(status_code=403, detail="Contacto inactivo")
+            except HTTPException:
+                raise
+            except Exception as exc:
+                logger.warning(
+                    "chat: no se pudo verificar is_active para contacto_id=%s: %s",
+                    request.contacto_id, exc,
+                )
+
         logger.info(f"Chat request - model: {request.model}, mcp_servers: {len(request.mcp_servers)}, max_tokens: {request.max_tokens}")
         response = await run_agent(request)
         logger.info(f"Chat response - tools_used: {len(response.tools_used)}, total_ms: {response.timing.total_ms}")

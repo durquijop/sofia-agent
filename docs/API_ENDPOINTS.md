@@ -1,7 +1,6 @@
 # URPE AI Lab - Documentación de Endpoints
 
 **Base URL:** `http://localhost:8080`
-**Versión:** 1.0.0
 **Swagger UI:** `http://localhost:8080/docs`
 **ReDoc:** `http://localhost:8080/redoc`
 
@@ -9,15 +8,14 @@
 
 - `docs/PROJECT_CONTEXT.md`
 - `docs/architecture/OVERVIEW.md`
-- `docs/NEXT_STEPS.md`
+- `docs/FUNNEL_AGENT.md`
+- `docs/RAILWAY_KAPSO_DEPLOY.md`
 
 ---
 
 ## 1. GET `/`
 
 **Descripción:** Información general del servicio.
-
-**Autenticación:** No requerida
 
 ### Response `200 OK`
 
@@ -29,8 +27,10 @@
     "endpoints": {
         "chat": "/api/v1/chat",
         "health": "/api/v1/health",
-        "db_health": "/api/v1/db/health",
-        "db_docs": "/docs#/database"
+        "funnel": "/api/v1/funnel/analyze",
+        "funnel_debug": "/api/v1/funnel/debug",
+        "kapso_inbound": "/api/v1/kapso/inbound",
+        "db_health": "/api/v1/db/health"
     }
 }
 ```
@@ -39,9 +39,7 @@
 
 ## 2. GET `/api/v1/health`
 
-**Descripción:** Health check del servicio. Útil para monitoreo y load balancers.
-
-**Autenticación:** No requerida
+**Descripción:** Health check del servicio.
 
 ### Response `200 OK`
 
@@ -57,98 +55,97 @@
 
 ## 3. POST `/api/v1/chat`
 
-**Descripción:** Endpoint principal del sistema multi-agente. Envía un mensaje al agente configurado con el system prompt de la empresa via OpenRouter. Opcionalmente conecta MCP servers para herramientas dinámicas.
+**Descripción:** Agente conversacional genérico. Recibe system prompt y mensaje, ejecuta el agente LangGraph con herramientas MCP opcionales.
 
-**Autenticación:** No requerida (pendiente de implementar)
 **Content-Type:** `application/json`
 
 ### Request Body
 
 | Campo | Tipo | Requerido | Descripción |
-| ----- | ---- | --------- | ----------- |
-| `system_prompt` | `string` | Si | System prompt que define el comportamiento del agente para la empresa |
-| `message` | `string` | Si | Mensaje del usuario |
-| `model` | `string` | No | Modelo LLM via OpenRouter (ej: `x-ai/grok-4.1-fast`). Default: config en `.env` |
-| `mcp_servers` | `array[MCPServerConfig]` | No | Lista de MCP servers para herramientas dinámicas. Default: `[]` |
-| `conversation_id` | `string` | No | ID de conversación para mantener contexto. Si no se envía, se genera uno automáticamente |
-| `max_tokens` | `integer` | No | Máximo de tokens en la respuesta. Menor = más rápido. Default: `1024` |
+|-------|------|-----------|-------------|
+| `system_prompt` | `string` | Sí | System prompt que define el comportamiento del agente |
+| `message` | `string` | Sí | Mensaje del usuario |
+| `model` | `string` | No | Modelo via OpenRouter. Default: `x-ai/grok-4.1-fast` |
+| `mcp_servers` | `array[MCPServerConfig]` | No | Servidores MCP para herramientas dinámicas |
+| `conversation_id` | `string` | No | ID de conversación para mantener contexto |
+| `max_tokens` | `integer` | No | Máximo tokens en la respuesta. Default: `1024` |
 | `temperature` | `float` | No | Temperatura del modelo (0-2). Default: `0.7` |
 
-#### Objeto MCPServerConfig
+#### MCPServerConfig
 
 | Campo | Tipo | Requerido | Descripción |
-| ----- | ---- | --------- | ----------- |
-| `url` | `string` | Si | URL completa del MCP server (ej: `https://marketia.app.n8n.cloud/mcp/aa0f6b46-...`) |
-| `name` | `string` | No | Nombre identificador del MCP server. Default: `""` |
+|-------|------|-----------|-------------|
+| `url` | `string` | Sí | URL del MCP server |
+| `name` | `string` | No | Nombre identificador del server |
 
-### Response 200 OK
-
-| Campo | Tipo | Descripción |
-| ----- | ---- | ----------- |
-| `response` | `string` | Respuesta generada por el agente |
-| `conversation_id` | `string` | ID de la conversación (generado o el enviado en el request) |
-| `model_used` | `string` | Modelo LLM que se utilizó |
-| `tools_used` | `array[ToolCall]` | Lista de herramientas que el agente usó durante la generación |
-| `timing` | `TimingInfo` | Métricas de tiempo de cada fase del procesamiento |
-
-#### Objeto ToolCall
+### Response `200 OK`
 
 | Campo | Tipo | Descripción |
-| ----- | ---- | ----------- |
-| `tool_name` | `string` | Nombre de la herramienta ejecutada |
-| `tool_input` | `object` | Parámetros enviados a la herramienta |
-| `tool_output` | `string` | Resultado devuelto por la herramienta (truncado a 500 chars) |
+|-------|------|-------------|
+| `response` | `string` | Respuesta del agente |
+| `conversation_id` | `string` | ID de la conversación |
+| `model_used` | `string` | Modelo LLM utilizado |
+| `tools_used` | `array[ToolCall]` | Herramientas ejecutadas |
+| `timing` | `TimingInfo` | Métricas de tiempo por fase |
+| `agent_runs` | `array[AgentRunTrace]` | Trazas de ejecución del agente |
 
-#### Objeto TimingInfo
+#### ToolCall
 
 | Campo | Tipo | Descripción |
-| ----- | ---- | ----------- |
-| `total_ms` | `float` | Tiempo total de procesamiento en milisegundos |
-| `llm_ms` | `float` | Tiempo de la llamada al LLM en milisegundos |
-| `mcp_discovery_ms` | `float` | Tiempo descubriendo herramientas MCP en milisegundos |
-| `graph_build_ms` | `float` | Tiempo construyendo el grafo LangGraph en milisegundos |
-| `tool_execution_ms` | `float` | Tiempo ejecutando herramientas en milisegundos |
+|-------|------|-------------|
+| `tool_name` | `string` | Nombre de la herramienta |
+| `tool_input` | `object` | Parámetros enviados |
+| `tool_output` | `string` | Resultado (truncado a 500 chars) |
+| `duration_ms` | `float` | Duración de la ejecución |
+| `status` | `string` | `ok` o `error` |
 
-### Response 500 Internal Server Error
+#### TimingInfo
+
+| Campo | Tipo | Descripción |
+|-------|------|-------------|
+| `total_ms` | `float` | Tiempo total |
+| `llm_ms` | `float` | Tiempo de inferencia LLM |
+| `mcp_discovery_ms` | `float` | Tiempo de descubrimiento MCP |
+| `graph_build_ms` | `float` | Tiempo de compilación del grafo |
+| `tool_execution_ms` | `float` | Tiempo de ejecución de tools |
+
+### Response `500 Internal Server Error`
 
 ```json
-{
-    "detail": "Error procesando la solicitud: <descripción del error>"
-}
+{ "detail": "Error procesando la solicitud: <descripción>" }
 ```
 
 ### Ejemplos
 
-#### Chat simple (sin herramientas)
+#### Chat simple
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/chat \
   -H "Content-Type: application/json" \
   -d '{
-    "system_prompt": "Eres un asistente de ventas de TechCorp. Responde de forma profesional y concisa.",
+    "system_prompt": "Eres un asistente de ventas de TechCorp.",
     "message": "¿Cuáles son los planes de precios?"
   }'
 ```
 
-**Response:**
+#### Chat con MCP servers
 
-```json
-{
-    "response": "En TechCorp ofrecemos tres planes...",
-    "conversation_id": "80715e22-6c6c-4b69-8eff-cf9294cff385",
-    "model_used": "x-ai/grok-4.1-fast",
-    "tools_used": [],
-    "timing": {
-        "total_ms": 4200.5,
-        "llm_ms": 4050.3,
-        "mcp_discovery_ms": 0.0,
-        "graph_build_ms": 3.2,
-        "tool_execution_ms": 0.0
-    }
-}
+```bash
+curl -X POST http://localhost:8080/api/v1/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "system_prompt": "Eres el asistente de Marketia. Tienes acceso al CRM.",
+    "message": "Busca los clientes activos del último mes",
+    "mcp_servers": [
+      {
+        "url": "https://marketia.app.n8n.cloud/mcp/aa0f6b46-ba2f-urpe-Monica",
+        "name": "marketia-crm"
+      }
+    ]
+  }'
 ```
 
-#### Chat con modelo específico y max_tokens
+#### Chat con modelo y tokens específicos
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/chat \
@@ -161,73 +158,139 @@ curl -X POST http://localhost:8080/api/v1/chat \
   }'
 ```
 
-#### Chat con MCP servers (herramientas dinámicas)
+---
+
+## 4. POST `/api/v1/funnel/analyze`
+
+**Descripción:** Ejecuta el funnel agent. Analiza el estado del contacto en el embudo comercial y actualiza etapa y/o metadata si corresponde.
+
+**Content-Type:** `application/json`
+
+### Request Body
+
+| Campo | Tipo | Requerido | Descripción |
+|-------|------|-----------|-------------|
+| `contacto_id` | `integer` | Sí | ID del contacto en Supabase |
+| `empresa_id` | `integer` | Sí | ID de la empresa |
+| `agente_id` | `integer` | Sí | ID del agente |
+| `conversacion_id` | `integer` | No | ID de conversación específica |
+| `model` | `string` | No | Ignorado: el agente usa `x-ai/grok-4.1-fast` fijo |
+| `max_tokens` | `integer` | No | Default: `512` |
+| `temperature` | `float` | No | Default: `0.5` |
+
+### Response `200 OK`
+
+| Campo | Tipo | Descripción |
+|-------|------|-------------|
+| `success` | `boolean` | Resultado de la ejecución |
+| `respuesta` | `string` | Análisis del agente (máx 3 líneas) |
+| `etapa_anterior` | `string` | Nombre de la etapa antes del análisis |
+| `etapa_nueva` | `integer` | Número de la nueva etapa (si cambió) |
+| `metadata_actualizada` | `object` | Metadata registrada (si aplica) |
+| `tools_used` | `array[ToolCall]` | Herramientas ejecutadas |
+| `timing` | `TimingInfo` | Métricas de tiempo |
+| `agent_runs` | `array[AgentRunTrace]` | Trazas del agente |
+| `error` | `string` | Descripción del error (si `success=false`) |
+
+### Ejemplo
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/chat \
+curl -X POST http://localhost:8080/api/v1/funnel/analyze \
   -H "Content-Type: application/json" \
   -d '{
-    "system_prompt": "Eres el asistente de Marketia. Tienes acceso a herramientas del CRM.",
-    "message": "Busca los clientes activos del último mes",
-    "mcp_servers": [
-      {
-        "url": "https://marketia.app.n8n.cloud/mcp/aa0f6b46-ba2f-urpe-Monica",
-        "name": "marketia-crm"
-      }
-    ]
+    "contacto_id": 1234,
+    "empresa_id": 5,
+    "agente_id": 10,
+    "conversacion_id": 999
   }'
 ```
 
-#### Chat con múltiples MCP servers
+**Response:**
 
-```bash
-curl -X POST http://localhost:8080/api/v1/chat \
-  -H "Content-Type: application/json" \
-  -d '{
-    "system_prompt": "Eres el asistente integral de la empresa.",
-    "message": "¿Cuánto debe el cliente Juan Pérez?",
-    "mcp_servers": [
-      {
-        "url": "https://empresa.n8n.cloud/mcp/crm-server",
-        "name": "crm"
-      },
-      {
-        "url": "https://empresa.n8n.cloud/mcp/billing-server",
-        "name": "facturacion"
-      }
-    ]
-  }'
+```json
+{
+  "success": true,
+  "respuesta": "Lead escalado a Calificado por presupuesto confirmado. Próximo paso: agendar demo técnica.",
+  "etapa_anterior": "Interesado",
+  "etapa_nueva": 3,
+  "metadata_actualizada": { "info_reg_1": "2026-03-31", "info_reg_2": "Presupuesto: USD 50k+" },
+  "tools_used": [
+    { "tool_name": "update_etapa_embudo", "status": "ok", "duration_ms": 45.2 },
+    { "tool_name": "update_metadata", "status": "ok", "duration_ms": 198.7 }
+  ],
+  "timing": { "total_ms": 1450.2, "llm_ms": 950.0, "tool_execution_ms": 241.2, "graph_build_ms": 45.3 }
+}
 ```
 
 ---
 
-## 4. GET `/api/v1/db/health`
+## 5. GET `/api/v1/funnel/debug`
+
+**Descripción:** Dashboard HTML con las últimas 50 ejecuciones del funnel agent. Muestra estadísticas, timing, herramientas usadas y cambios de etapa.
+
+**Acceso directo:** `http://localhost:8080/api/v1/funnel/debug`
+
+---
+
+## 6. GET `/api/v1/funnel/debug/events`
+
+**Descripción:** Eventos de debug del funnel agent en formato JSON.
+
+**Query params:** `?limit=20` (default: 50)
+
+### Response `200 OK`
+
+```json
+{
+  "runs": [
+    {
+      "timestamp": "2026-03-31T15:30:00+00:00",
+      "contacto_id": 1234,
+      "empresa_id": 5,
+      "success": true,
+      "respuesta": "...",
+      "etapa_anterior": "Interesado",
+      "etapa_nueva": 3,
+      "timing": { "total_ms": 1450.2 },
+      "tools_used": [...]
+    }
+  ],
+  "stats": {
+    "total_runs": 45,
+    "successful": 43,
+    "failed": 2,
+    "avg_duration_ms": 2850.5
+  }
+}
+```
+
+---
+
+## 7. POST `/api/v1/kapso/inbound`
+
+**Descripción:** Endpoint interno para el bridge de Kapso. Recibe mensajes de WhatsApp, ejecuta los agentes en paralelo y devuelve la respuesta al bridge.
+
+**Autenticación:** Token interno (`KAPSO_INTERNAL_TOKEN` en header)
+
+> No consumir directamente. Este endpoint es llamado por `kapso-bridge/server.mjs`.
+
+---
+
+## 8. GET `/api/v1/db/health`
 
 **Descripción:** Verifica la conectividad a Supabase.
 
 ### Response `200 OK`
 
 ```json
-{
-    "status": "ok",
-    "supabase": "connected",
-    "empresas_count": 28
-}
-```
-
-### Response `500 Internal Server Error`
-
-```json
-{
-    "detail": "Supabase error: <descripción del error>"
-}
+{ "status": "ok", "supabase": "connected", "empresas_count": 28 }
 ```
 
 ---
 
-## 5. Endpoints de consulta `/api/v1/db/*`
+## 9. Endpoints de consulta `/api/v1/db/*`
 
-Estos endpoints exponen consultas auxiliares de lectura sobre Supabase.
+Endpoints utilitarios de lectura sobre Supabase. Útiles para inspección y debugging.
 
 ### Empresa
 
@@ -254,36 +317,27 @@ Estos endpoints exponen consultas auxiliares de lectura sobre Supabase.
 
 - `GET /api/v1/db/numero/{numero_id}`
 
-### Códigos comunes
-
-- `200` solicitud exitosa
-- `404` recurso no encontrado
-- `500` error interno o error de Supabase
-
 ---
 
-## 6. DELETE `/api/v1/cache`
+## 10. DELETE `/api/v1/cache`
 
 **Descripción:** Limpia el cache de respuestas en memoria.
 
-### Response 200 OK
+### Response `200 OK`
 
 ```json
-{
-    "status": "ok",
-    "message": "Cache limpiado"
-}
+{ "status": "ok", "message": "Cache limpiado" }
 ```
 
 ---
 
-## 7. Modelos disponibles (OpenRouter)
+## 11. Modelos disponibles (OpenRouter)
 
-El campo `model` acepta cualquier modelo disponible en [OpenRouter](https://openrouter.ai/models). Ejemplos:
+El campo `model` acepta cualquier modelo de [OpenRouter](https://openrouter.ai/models). Ejemplos comunes:
 
 | Modelo | ID |
-| ------ | -- |
-| Grok 4.1 Fast | `x-ai/grok-4.1-fast` |
+|--------|----|
+| Grok 4.1 Fast (default) | `x-ai/grok-4.1-fast` |
 | GPT-4o | `openai/gpt-4o` |
 | GPT-4o Mini | `openai/gpt-4o-mini` |
 | Claude 3.5 Sonnet | `anthropic/claude-3.5-sonnet` |
@@ -292,24 +346,32 @@ El campo `model` acepta cualquier modelo disponible en [OpenRouter](https://open
 
 ---
 
-## 8. Variables de Entorno
+## 12. Variables de entorno
 
 | Variable | Requerida | Descripción |
-| -------- | --------- | ----------- |
-| `OPENROUTER_API_KEY` | Si | API key de OpenRouter |
-| `OPENROUTER_BASE_URL` | No | URL base de OpenRouter. Default: `https://openrouter.ai/api/v1` |
-| `DEFAULT_MODEL` | No | Modelo por defecto. Default: `x-ai/grok-4.1-fast` |
-| `SUPABASE_URL` | Si | URL base del proyecto Supabase |
-| `SUPABASE_SERVICE_KEY` | Si | Service role key usada por endpoints y benchmarks que consumen contexto |
-| `APP_NAME` | No | Nombre visible del servicio FastAPI |
-| `DEBUG` | No | Activa comportamiento de depuración |
+|----------|-----------|-------------|
+| `OPENROUTER_API_KEY` | Sí | API key de OpenRouter |
+| `OPENROUTER_BASE_URL` | No | Default: `https://openrouter.ai/api/v1` |
+| `DEFAULT_MODEL` | No | Default: `x-ai/grok-4.1-fast` |
+| `SUPABASE_URL` | Sí | URL del proyecto Supabase |
+| `SUPABASE_SERVICE_KEY` | Sí | Service role key de Supabase |
+| `SUPABASE_EDGE_FUNCTION_URL` | Sí | URL base de las Edge Functions |
+| `SUPABASE_EDGE_FUNCTION_TOKEN` | No | Token de autorización para Edge Functions |
+| `KAPSO_API_KEY` | Sí (Kapso) | API key de Kapso |
+| `KAPSO_WEBHOOK_SECRET` | Sí (Kapso) | Secret para validar webhooks de Kapso |
+| `KAPSO_INTERNAL_TOKEN` | Sí (Kapso) | Token interno bridge → FastAPI |
+| `KAPSO_BASE_URL` | No | Default: `https://api.kapso.ai/meta/whatsapp` |
+| `INTERNAL_AGENT_API_URL` | Sí (Kapso) | URL del endpoint interno de Kapso |
+| `ERROR_WEBHOOK_URL` | No | URL para notificaciones de errores HTTP 500+ |
+| `APP_NAME` | No | Nombre del servicio en FastAPI |
+| `DEBUG` | No | Activa modo debug |
 
 ---
 
-## 9. Códigos de Estado HTTP
+## 13. Códigos de Estado HTTP
 
 | Código | Descripción |
-| ------ | ----------- |
+|--------|-------------|
 | `200` | Solicitud exitosa |
-| `422` | Error de validación (campos requeridos faltantes o formato inválido) |
+| `422` | Error de validación (campos faltantes o formato inválido) |
 | `500` | Error interno del servidor |

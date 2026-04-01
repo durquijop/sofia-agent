@@ -2707,6 +2707,9 @@ function processSingleEvent(e){
 
   seenEventKeys.add(key);
 
+  // Tab is in background: mark as seen but skip animation to avoid burst on return
+  if(document.hidden)return;
+
   if(STAGE_FLOWS[e.stage] || DYNAMIC_STAGES.includes(e.stage)){
 
     triggerFlows(e.stage, e.payload);
@@ -2854,13 +2857,27 @@ function connectSSE(){
 
 
 
-// Start SSE + initial load of existing events
+// Start SSE + initial seed of seen events (no animation replay on page load)
 
 connectSSE();
 
+// When user returns to this tab, drop any particles that built up while hidden
+document.addEventListener('visibilitychange',function(){
+  if(!document.hidden){
+    flowParticles.length=0;
+  }
+});
+
 fetch(debugPath('/debug/kapso/data')).then(function(r){return r.json();}).then(function(data){
 
-  processNewEvents(data.fastapi_events);
+  // Only seed seenEventKeys — the demo burst below provides the visual intro
+  const evts=data.fastapi_events;
+  if(Array.isArray(evts)){
+    evts.forEach(function(e){
+      if(!e||!e.stage)return;
+      seenEventKeys.add((e.timestamp||'')+'|'+(e.stage||'')+'|'+(e.source||''));
+    });
+  }
 
 }).catch(function(){});
 

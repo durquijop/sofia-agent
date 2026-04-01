@@ -6,18 +6,22 @@ trazas de agente directamente desde el backend FastAPI.
 
 Fuente de datos: tabla ``debug_events`` en Supabase (persistente)
 + eventos en memoria del proceso actual (para los más recientes).
+
+El dashboard usa SSE (/debug/kapso/stream) para actualizaciones
+en tiempo real, con polling de 5s como fallback si SSE se desconecta.
 """
 
+import asyncio
 import json
 import logging
 import os
 from html import escape
 
 from fastapi import APIRouter, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 
 from app.core.config import get_settings
-from app.core.kapso_debug import get_kapso_debug_events, mask_secret
+from app.core.kapso_debug import get_kapso_debug_events, mask_secret, subscribe_sse, unsubscribe_sse
 from app.db.client import get_supabase
 
 logger = logging.getLogger(__name__)
@@ -215,7 +219,7 @@ def _render_dashboard_html(config: dict) -> str:
       <button onclick="loadData()">⟳ Refrescar</button>
       <a href="/debug/kapso/data" target="_blank">Ver JSON</a>
       <a href="/docs" target="_blank">API Docs</a>
-      <span class="auto-refresh" id="autoLabel"></span>
+      <span class="auto-refresh" id="autoLabel">Conectando...</span>
       <span id="newBadge" style="display:none"></span>
     </div>
   </div>
@@ -406,21 +410,34 @@ def _render_dashboard_html(config: dict) -> str:
     }).join('');
   }
 
-  let refreshInterval = 5;
-  let countdown = refreshInterval;
-  const label = document.getElementById('autoLabel');
+  const label    = document.getElementById('autoLabel');
   const newBadge = document.getElementById('newBadge');
   let knownMessageIds = new Set();
-  let isFirstLoad = true;
+  let isFirstLoad     = true;
+  let sseConnected    = false;
+  let sseSource       = null;
+  let fallbackTimer   = null;
+  let debounceTimer   = null;
 
+  // ── Indicador de estado ──────────────────────────────────────────────
+  function updateLiveIndicator() {
+    if (sseConnected) {
+      label.textContent  = '🟢 En vivo';
+      label.style.color  = '#4ade80';
+    } else {
+      label.textContent  = '🟡 Polling (5s)';
+      label.style.color  = '#fbbf24';
+    }
+  }
+
+  // ── Carga de datos completa ──────────────────────────────────────────
   async function loadData() {
-    countdown = refreshInterval;
     try {
-      const r = await fetch('/debug/kapso/data', {cache: 'no-store'});
+      const r    = await fetch('/debug/kapso/data', {cache: 'no-store'});
       const data = await r.json();
       const interactions = data.interactions || [];
 
-      // Detect new messages
+      // Detectar mensajes nuevos
       const currentIds = new Set(interactions.map(i => i.message_id).filter(Boolean));
       let newIds = new Set();
       if (!isFirstLoad) {
@@ -432,10 +449,10 @@ def _render_dashboard_html(config: dict) -> str:
       renderInteractions(interactions, newIds);
       renderEvents(data.fastapi_events || []);
 
-      // Show badge for new messages
+      // Badge de mensajes nuevos
       if (newIds.size > 0) {
         newBadge.textContent = '+' + newIds.size + ' nuevo' + (newIds.size > 1 ? 's' : '');
-        newBadge.className = 'new-badge';
+        newBadge.className   = 'new-badge';
         newBadge.style.display = 'inline-block';
         setTimeout(() => { newBadge.style.display = 'none'; }, 4000);
       }
@@ -446,14 +463,38 @@ def _render_dashboard_html(config: dict) -> str:
     }
   }
 
-  setInterval(() => {
-    countdown--;
-    if (label) label.textContent = 'Auto-refresh en ' + countdown + 's';
-    if (countdown <= 0) loadData();
-  }, 1000);
+  // ── SSE: actualizaciones en tiempo real ──────────────────────────────
+  function startSSE() {
+    if (sseSource) { sseSource.close(); sseSource = null; }
 
-  // Initial load
-  loadData();
+    sseSource = new EventSource('/debug/kapso/stream');
+
+    sseSource.onopen = () => {
+      sseConnected = true;
+      updateLiveIndicator();
+      // Cancelar el fallback polling si SSE vuelve a conectarse
+      if (fallbackTimer) { clearInterval(fallbackTimer); fallbackTimer = null; }
+    };
+
+    sseSource.onmessage = () => {
+      // Debounce: si llegan varios eventos seguidos solo recargamos una vez
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(loadData, 250);
+    };
+
+    sseSource.onerror = () => {
+      sseConnected = false;
+      updateLiveIndicator();
+      // Activar polling de respaldo mientras SSE esté caído
+      if (!fallbackTimer) {
+        fallbackTimer = setInterval(loadData, 5000);
+      }
+    };
+  }
+
+  // ── Arranque ─────────────────────────────────────────────────────────
+  loadData();   // Carga inicial inmediata
+  startSSE();   // Abre SSE (carga en tiempo real desde ahora)
   </script>
 </body>
 </html>"""
@@ -465,6 +506,33 @@ async def debug_kapso_dashboard():
     """Dashboard visual de debug para Kapso."""
     config = _get_debug_config()
     return _render_dashboard_html(config)
+
+
+@router.get("/debug/kapso/stream")
+async def debug_kapso_stream():
+    """SSE endpoint para el debug dashboard — emite eventos en tiempo real."""
+
+    q = subscribe_sse()
+
+    async def _generate():
+        try:
+            while True:
+                entry = await q.get()
+                yield f"data: {json.dumps(entry, ensure_ascii=False)}\n\n"
+        except asyncio.CancelledError:
+            pass
+        finally:
+            unsubscribe_sse(q)
+
+    return StreamingResponse(
+        _generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",   # Evita que nginx bufferice el stream
+            "Connection": "keep-alive",
+        },
+    )
 
 
 @router.get("/debug/kapso/data")
