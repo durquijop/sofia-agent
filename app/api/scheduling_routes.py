@@ -40,13 +40,13 @@ router = APIRouter(prefix="/api/v1/scheduling", tags=["scheduling"])
 # ════════════════════════════════════════════════════════════
 
 
-async def _get_asesores_by_empresa(empresa_id: int) -> list[dict[str, Any]]:
+async def _get_asesores_by_empresa(enterprise_id: int) -> list[dict[str, Any]]:
     """Obtiene asesores activos con calendario de una empresa."""
     db = await get_supabase()
     asesores = await db.query(
-        "wp_team_humano",
+        "dim_team_member",
         select="id,nombre,apellido,email,grant_id,timezone,duracion_cita_minutos,disponibilidad",
-        filters={"empresa_id": empresa_id, "is_active": True, "acepta_citas": True},
+        filters={"enterprise_id": enterprise_id, "is_active": True, "acepta_citas": True},
     )
     if not asesores or not isinstance(asesores, list):
         return []
@@ -56,21 +56,21 @@ async def _get_asesores_by_empresa(empresa_id: int) -> list[dict[str, Any]]:
 async def _get_asesor_by_id(asesor_id: int) -> dict[str, Any] | None:
     db = await get_supabase()
     return await db.query(
-        "wp_team_humano",
+        "dim_team_member",
         select="id,nombre,apellido,email,grant_id,timezone,duracion_cita_minutos,disponibilidad",
         filters={"id": asesor_id, "is_active": True, "acepta_citas": True},
         single=True,
     )
 
 
-async def _get_asesor_fijo_de_contacto(contacto_id: int) -> dict[str, Any] | None:
+async def _get_asesor_fijo_de_contacto(person_id: int) -> dict[str, Any] | None:
     """Si el contacto tiene cita 'Realizada', retorna su asesor fijo."""
     db = await get_supabase()
     # Buscar cita realizada más reciente
     cita = await db.query(
-        "wp_citas",
+        "fact_appointment",
         select="team_humano_id",
-        filters={"contacto_id": contacto_id},
+        filters={"person_id": person_id},
         order="fecha_hora",
         order_desc=True,
         limit=20,
@@ -81,9 +81,9 @@ async def _get_asesor_fijo_de_contacto(contacto_id: int) -> dict[str, Any] | Non
         # Need to filter by estado containing "realizada" — PostgREST ilike not easily done
         # So we fetch citas and filter manually
         citas_all = await db.query(
-            "wp_citas",
+            "fact_appointment",
             select="team_humano_id,estado",
-            filters={"contacto_id": contacto_id},
+            filters={"person_id": person_id},
             order="fecha_hora",
             order_desc=True,
             limit=20,
@@ -101,11 +101,11 @@ async def _get_asesor_fijo_de_contacto(contacto_id: int) -> dict[str, Any] | Non
     if not _asesor_grant_habilitado(asesor):
         return None
 
-    logger.info("🔒 Contacto %s tiene asesor fijo: %s %s", contacto_id, asesor["nombre"], asesor.get("apellido", ""))
+    logger.info("🔒 Contacto %s tiene asesor fijo: %s %s", person_id, asesor["nombre"], asesor.get("apellido", ""))
     return asesor
 
 
-async def _get_conteo_citas_por_asesor(empresa_id: int, tz_name: str = "America/New_York") -> dict[int, int]:
+async def _get_conteo_citas_por_asesor(enterprise_id: int, tz_name: str = "America/New_York") -> dict[int, int]:
     """Cuenta citas confirmadas de HOY por asesor (día actual en hora de Georgia/EST)."""
     db = await get_supabase()
     tz = ZoneInfo(tz_name)
@@ -116,12 +116,12 @@ async def _get_conteo_citas_por_asesor(empresa_id: int, tz_name: str = "America/
     # PostgREST range filters (duplicated key requires list of tuples)
     params = [
         ("select", "team_humano_id"),
-        ("empresa_id", f"eq.{empresa_id}"),
+        ("enterprise_id", f"eq.{enterprise_id}"),
         ("estado", "eq.confirmada"),
         ("fecha_hora", f"gte.{inicio_dia}"),
         ("fecha_hora", f"lt.{fin_dia}"),
     ]
-    r = await db._http.get("/wp_citas", params=params)
+    r = await db._http.get("/fact_appointment", params=params)
     r.raise_for_status()
     citas = r.json()
 
@@ -134,12 +134,12 @@ async def _get_conteo_citas_por_asesor(empresa_id: int, tz_name: str = "America/
     return conteo
 
 
-async def _get_cita_contacto(contacto_id: int) -> dict[str, Any]:
+async def _get_cita_contacto(person_id: int) -> dict[str, Any]:
     db = await get_supabase()
     citas = await db.query(
-        "wp_citas",
-        select="id,fecha_hora,titulo,ubicacion,estado,team_humano_id,empresa_id,event_id",
-        filters={"contacto_id": contacto_id},
+        "fact_appointment",
+        select="id,fecha_hora,titulo,ubicacion,estado,team_humano_id,enterprise_id,event_id",
+        filters={"person_id": person_id},
         order="fecha_hora",
         order_desc=True,
         limit=5,
@@ -155,13 +155,13 @@ async def _get_cita_contacto(contacto_id: int) -> dict[str, Any]:
         cita = citas[0]
 
     empresa_nombre = ""
-    if cita.get("empresa_id"):
-        emp = await db.query("wp_empresa_perfil", select="nombre", filters={"id": cita["empresa_id"]}, single=True)
+    if cita.get("enterprise_id"):
+        emp = await db.query("dim_enterprise", select="nombre", filters={"id": cita["enterprise_id"]}, single=True)
         empresa_nombre = (emp or {}).get("nombre", "")
 
     asesor_nombre = ""
     if cita.get("team_humano_id"):
-        ase = await db.query("wp_team_humano", select="nombre,apellido", filters={"id": cita["team_humano_id"]}, single=True)
+        ase = await db.query("dim_team_member", select="nombre,apellido", filters={"id": cita["team_humano_id"]}, single=True)
         if ase:
             asesor_nombre = f"{ase['nombre']} {(ase.get('apellido') or '')[:1]}"
 
@@ -184,10 +184,10 @@ async def _guardar_cita_en_supabase(params: dict[str, Any]) -> int | None:
     event_id = params["eventId"]
 
     # Verificar si ya existe
-    existente = await db.query("wp_citas", select="id", filters={"event_id": event_id}, single=True)
+    existente = await db.query("fact_appointment", select="id", filters={"event_id": event_id}, single=True)
 
     if existente:
-        await db.update("wp_citas", {"id": existente["id"]}, {
+        await db.update("fact_appointment", {"id": existente["id"]}, {
             "team_humano_id": params["asesorId"],
             "fecha_hora": params["fechaHora"],
             "duracion": params["duracion"],
@@ -197,12 +197,12 @@ async def _guardar_cita_en_supabase(params: dict[str, Any]) -> int | None:
             "updated_at": ahora,
             "sincronizacion": "sincronizado",
         })
-        logger.info("✅ wp_citas actualizado (id: %s)", existente["id"])
+        logger.info("✅ fact_appointment actualizado (id: %s)", existente["id"])
         return existente["id"]
     else:
-        nueva = await db.insert("wp_citas", {
-            "contacto_id": params["contactoId"],
-            "empresa_id": params["empresaId"],
+        nueva = await db.insert("fact_appointment", {
+            "person_id": params["contactoId"],
+            "enterprise_id": params["empresaId"],
             "team_humano_id": params["asesorId"],
             "event_id": event_id,
             "fecha_hora": params["fechaHora"],
@@ -214,23 +214,23 @@ async def _guardar_cita_en_supabase(params: dict[str, Any]) -> int | None:
             "updated_at": ahora,
             "sincronizacion": "sincronizado",
         })
-        logger.info("✅ wp_citas insertado (id: %s)", nueva.get("id"))
+        logger.info("✅ fact_appointment insertado (id: %s)", nueva.get("id"))
         return nueva.get("id")
 
 
 async def _actualizar_estado_cita(event_id: str, nuevo_estado: str) -> bool:
     db = await get_supabase()
     ahora = datetime.now(timezone.utc).isoformat()
-    await db.update("wp_citas", {"event_id": event_id}, {"estado": nuevo_estado, "updated_at": ahora})
+    await db.update("fact_appointment", {"event_id": event_id}, {"estado": nuevo_estado, "updated_at": ahora})
     logger.info("✅ Estado de cita actualizado a: %s", nuevo_estado)
     return True
 
 
-async def _actualizar_asesor_en_contacto(contacto_id: int, asesor_id: int):
+async def _actualizar_asesor_en_contacto(person_id: int, asesor_id: int):
     db = await get_supabase()
     ahora = datetime.now(timezone.utc).isoformat()
-    await db.update("wp_contactos", {"id": contacto_id}, {"team_humano_id": asesor_id, "updated_at": ahora})
-    logger.info("✅ wp_contactos actualizado — asesor %s asignado a contacto %s", asesor_id, contacto_id)
+    await db.update("dim_person", {"id": person_id}, {"team_humano_id": asesor_id, "updated_at": ahora})
+    logger.info("✅ dim_person actualizado — asesor %s asignado a contacto %s", asesor_id, person_id)
 
 
 # ════════════════════════════════════════════════════════════
@@ -387,7 +387,7 @@ async def _asesor_ocupado(nylas, asesor: dict, start_unix: int, end_unix: int,
 
 
 async def _seleccionar_mejor_asesor(
-    empresa_id: int, fecha_hora_iso: str, tz_name: str, contacto_id: int | None = None,
+    enterprise_id: int, fecha_hora_iso: str, tz_name: str, person_id: int | None = None,
     duracion_min: int | None = None, exclude_event_id: str | None = None,
 ) -> dict[str, Any] | None:
     """Selecciona el mejor asesor: disponible en horario + menos citas pendientes.
@@ -401,8 +401,8 @@ async def _seleccionar_mejor_asesor(
     start_unix = int(dt.timestamp())
 
     # Si hay contacto, verificar asesor fijo
-    if contacto_id:
-        asesor_fijo = await _get_asesor_fijo_de_contacto(contacto_id)
+    if person_id:
+        asesor_fijo = await _get_asesor_fijo_de_contacto(person_id)
         if asesor_fijo:
             dur = duracion_min or asesor_fijo.get("duracion_cita_minutos") or 30
             end_unix = start_unix + (dur * 60)
@@ -417,7 +417,7 @@ async def _seleccionar_mejor_asesor(
             return {"asesor": asesor_fijo, "citas_pendientes": 0, "total_disponibles": 1, "es_asesor_fijo": True}
 
     # Sin asesor fijo — lógica normal
-    asesores = await _get_asesores_by_empresa(empresa_id)
+    asesores = await _get_asesores_by_empresa(enterprise_id)
     if not asesores:
         return None
 
@@ -438,7 +438,7 @@ async def _seleccionar_mejor_asesor(
         return None
 
     # Ordenar por menos citas pendientes (solo cuenta citas de HOY)
-    conteo = await _get_conteo_citas_por_asesor(empresa_id, tz_name)
+    conteo = await _get_conteo_citas_por_asesor(enterprise_id, tz_name)
     disponibles.sort(key=lambda a: conteo.get(a["id"], 0))
 
     return {
@@ -479,18 +479,18 @@ async def disponibilidad_agenda(req: DisponibilidadRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
     # Asesor fijo
-    asesor_fijo = await _get_asesor_fijo_de_contacto(req.contacto_id)
-    cita_info = await _get_cita_contacto(req.contacto_id)
+    asesor_fijo = await _get_asesor_fijo_de_contacto(req.person_id)
+    cita_info = await _get_cita_contacto(req.person_id)
 
     if asesor_fijo:
         asesores = [asesor_fijo]
     else:
-        asesores = await _get_asesores_by_empresa(req.empresa_id)
+        asesores = await _get_asesores_by_empresa(req.enterprise_id)
 
     if not asesores:
         return DisponibilidadResponse(
-            contacto_id=req.contacto_id,
-            empresa_id=req.empresa_id,
+            person_id=req.person_id,
+            enterprise_id=req.enterprise_id,
             time_zone=tz_name,
             hora_actual=_ahora_en_tz(tz_name).isoformat(),
             total_asesores=0,
@@ -524,8 +524,8 @@ async def disponibilidad_agenda(req: DisponibilidadRequest):
 
     if not asesores_ok:
         return DisponibilidadResponse(
-            contacto_id=req.contacto_id,
-            empresa_id=req.empresa_id,
+            person_id=req.person_id,
+            enterprise_id=req.enterprise_id,
             time_zone=tz_name,
             hora_actual=ahora.isoformat(),
             total_asesores=len(asesores),
@@ -628,8 +628,8 @@ async def disponibilidad_agenda(req: DisponibilidadRequest):
     return DisponibilidadResponse(
         cita_actual=cita_info,
         asesor_fijo=asesor_fijo_info,
-        contacto_id=req.contacto_id,
-        empresa_id=req.empresa_id,
+        person_id=req.person_id,
+        enterprise_id=req.enterprise_id,
         time_zone=tz_name,
         hora_actual=ahora.isoformat(),
         total_asesores=len(asesores),
@@ -655,18 +655,18 @@ async def crear_evento_calendario(req: CrearEventoRequest):
     nylas = await get_nylas()
     db = await get_supabase()
 
-    logger.info("📅 Crear evento — Contacto: %s, Empresa: %s, Horario: %s", req.contacto_id, req.empresa_id, req.start)
+    logger.info("📅 Crear evento — Contacto: %s, Empresa: %s, Horario: %s", req.person_id, req.enterprise_id, req.start)
 
-    # Obtener empresa_id si no viene
-    empresa_id = req.empresa_id
-    if not empresa_id:
-        contacto = await db.query("wp_contactos", select="empresa_id", filters={"id": req.contacto_id}, single=True)
-        empresa_id = (contacto or {}).get("empresa_id")
-    if not empresa_id:
+    # Obtener enterprise_id si no viene
+    enterprise_id = req.enterprise_id
+    if not enterprise_id:
+        contacto = await db.query("dim_person", select="enterprise_id", filters={"id": req.person_id}, single=True)
+        enterprise_id = (contacto or {}).get("enterprise_id")
+    if not enterprise_id:
         return CrearEventoResponse(error="No se pudo determinar la empresa del contacto")
 
     # Seleccionar mejor asesor
-    seleccion = await _seleccionar_mejor_asesor(empresa_id, req.start, tz_name, req.contacto_id)
+    seleccion = await _seleccionar_mejor_asesor(enterprise_id, req.start, tz_name, req.person_id)
     if not seleccion:
         return CrearEventoResponse(error="No hay asesores disponibles en ese horario")
     if seleccion.get("error"):
@@ -734,8 +734,8 @@ async def crear_evento_calendario(req: CrearEventoRequest):
 
     # Persistir en Supabase
     await _guardar_cita_en_supabase({
-        "contactoId": req.contacto_id,
-        "empresaId": empresa_id,
+        "contactoId": req.person_id,
+        "empresaId": enterprise_id,
         "asesorId": asesor["id"],
         "eventId": evento["id"],
         "fechaHora": fecha_inicio.isoformat(),
@@ -744,14 +744,14 @@ async def crear_evento_calendario(req: CrearEventoRequest):
         "ubicacion": meet_link or ("Virtual" if es_virtual else "Presencial"),
         "estado": "confirmada",
     })
-    await _actualizar_asesor_en_contacto(req.contacto_id, asesor["id"])
+    await _actualizar_asesor_en_contacto(req.person_id, asesor["id"])
 
     inicio_local = fecha_inicio.astimezone(ZoneInfo(tz_name)).strftime("%d/%m/%Y %I:%M %p")
 
     return CrearEventoResponse(
         success=True,
         event_id=evento["id"],
-        contacto_id=req.contacto_id,
+        person_id=req.person_id,
         asesor_id=asesor["id"],
         asesor=f"{asesor['nombre']} {asesor.get('apellido', '')}".strip(),
         asesor_email=asesor["email"],
@@ -781,18 +781,18 @@ async def reagendar_evento(req: ReagendarEventoRequest):
     logger.info("📅 Reagendar evento: %s → %s", req.event_id, req.start)
 
     # Buscar cita actual
-    cita = await db.query("wp_citas", select="team_humano_id,empresa_id,contacto_id", filters={"event_id": req.event_id}, single=True)
+    cita = await db.query("fact_appointment", select="team_humano_id,enterprise_id,person_id", filters={"event_id": req.event_id}, single=True)
     if not cita:
         return ReagendarEventoResponse(error="No se encontró la cita con ese event_id")
 
-    empresa_id = req.empresa_id or cita.get("empresa_id")
-    contacto_id = req.contacto_id or cita.get("contacto_id")
+    enterprise_id = req.enterprise_id or cita.get("enterprise_id")
+    person_id = req.person_id or cita.get("person_id")
 
     # Asesor actual
     asesor_actual = await _get_asesor_by_id(cita["team_humano_id"]) if cita.get("team_humano_id") else None
 
     # Seleccionar mejor asesor para nuevo horario (excluir evento actual para no auto-bloquearse)
-    seleccion = await _seleccionar_mejor_asesor(empresa_id, req.start, tz_name, contacto_id,
+    seleccion = await _seleccionar_mejor_asesor(enterprise_id, req.start, tz_name, person_id,
                                                  exclude_event_id=req.event_id)
     if not seleccion:
         return ReagendarEventoResponse(error="No hay asesores disponibles en ese horario")
@@ -903,8 +903,8 @@ async def reagendar_evento(req: ReagendarEventoRequest):
 
     # Persistir
     await _guardar_cita_en_supabase({
-        "contactoId": contacto_id,
-        "empresaId": empresa_id,
+        "contactoId": person_id,
+        "empresaId": enterprise_id,
         "asesorId": asesor_nuevo["id"],
         "eventId": evento["id"],
         "fechaHora": fecha_inicio.isoformat(),
@@ -914,8 +914,8 @@ async def reagendar_evento(req: ReagendarEventoRequest):
         "estado": "confirmada",
     })
 
-    if cambio_asesor and contacto_id:
-        await _actualizar_asesor_en_contacto(contacto_id, asesor_nuevo["id"])
+    if cambio_asesor and person_id:
+        await _actualizar_asesor_en_contacto(person_id, asesor_nuevo["id"])
 
     inicio_local = fecha_inicio.astimezone(ZoneInfo(tz_name)).strftime("%d/%m/%Y %I:%M %p")
 
@@ -923,7 +923,7 @@ async def reagendar_evento(req: ReagendarEventoRequest):
         success=True,
         event_id=evento["id"],
         event_id_anterior=req.event_id if cambio_asesor else None,
-        contacto_id=contacto_id,
+        person_id=person_id,
         asesor_anterior=f"{asesor_actual['nombre']} {asesor_actual.get('apellido', '')}".strip() if cambio_asesor and asesor_actual else None,
         asesor_id=asesor_nuevo["id"],
         asesor=f"{asesor_nuevo['nombre']} {asesor_nuevo.get('apellido', '')}".strip(),
@@ -956,13 +956,13 @@ async def eliminar_evento(req: EliminarEventoRequest):
     logger.info("🗑️ Eliminar evento: %s", req.event_id)
 
     # Buscar cita
-    cita = await db.query("wp_citas", select="team_humano_id,empresa_id,contacto_id", filters={"event_id": req.event_id}, single=True)
+    cita = await db.query("fact_appointment", select="team_humano_id,enterprise_id,person_id", filters={"event_id": req.event_id}, single=True)
     if not cita:
         return EliminarEventoResponse(error="No se encontró la cita con ese event_id")
 
     # Obtener asesor
     asesor = await db.query(
-        "wp_team_humano",
+        "dim_team_member",
         select="id,nombre,apellido,email,grant_id",
         filters={"id": cita["team_humano_id"]},
         single=True,
@@ -975,7 +975,7 @@ async def eliminar_evento(req: EliminarEventoRequest):
         return EliminarEventoResponse(
             success=True,
             event_id=req.event_id,
-            contacto_id=req.contacto_id or cita.get("contacto_id"),
+            person_id=req.person_id or cita.get("person_id"),
             asesor=f"{asesor['nombre']} {asesor.get('apellido', '')}".strip(),
             asesor_email=asesor["email"],
             eliminado_en_nylas=False,
@@ -1000,7 +1000,7 @@ async def eliminar_evento(req: EliminarEventoRequest):
     return EliminarEventoResponse(
         success=True,
         event_id=req.event_id,
-        contacto_id=req.contacto_id or cita.get("contacto_id"),
+        person_id=req.person_id or cita.get("person_id"),
         asesor=f"{asesor['nombre']} {asesor.get('apellido', '')}".strip(),
         asesor_email=asesor["email"],
         eliminado_en_nylas=eliminado_en_nylas,

@@ -27,21 +27,21 @@ async def chat(request: ChatRequest):
     """
     try:
         # Guard: contacto inactivo — aplica a webhook y cualquier canal que use /chat directamente
-        if request.contacto_id:
+        if request.person_id:
             try:
-                contacto = await db.get_contacto(request.contacto_id)
+                contacto = await db.get_contacto(request.person_id)
                 if contacto and contacto.get("is_active") is False:
                     logger.warning(
-                        "chat: contacto_id=%s is_active=False — request bloqueado",
-                        request.contacto_id,
+                        "chat: person_id=%s is_active=False — request bloqueado",
+                        request.person_id,
                     )
                     raise HTTPException(status_code=403, detail="Contacto inactivo")
             except HTTPException:
                 raise
             except Exception as exc:
                 logger.warning(
-                    "chat: no se pudo verificar is_active para contacto_id=%s: %s",
-                    request.contacto_id, exc,
+                    "chat: no se pudo verificar is_active para person_id=%s: %s",
+                    request.person_id, exc,
                 )
 
         logger.info(f"Chat request - model: {request.model}, mcp_servers: {len(request.mcp_servers)}, max_tokens: {request.max_tokens}")

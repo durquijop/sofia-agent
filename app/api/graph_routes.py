@@ -54,10 +54,10 @@ def _parse_mcp_urls(raw) -> list[dict]:
 # Graph introspection helpers
 # ---------------------------------------------------------------------------
 
-async def _build_graph_schema(empresa_id: int | None = None) -> dict:
+async def _build_graph_schema(enterprise_id: int | None = None) -> dict:
     """Build the full graph schema by introspecting actual agent definitions.
     
-    If empresa_id is provided, fetches agent data from Supabase to enrich
+    If enterprise_id is provided, fetches agent data from Supabase to enrich
     the MCP and LLM details dynamically.
     """
 
@@ -70,9 +70,9 @@ async def _build_graph_schema(empresa_id: int | None = None) -> dict:
     llm_model = "grok-4.1-fast"
     manejo_herramientas = ""
 
-    if empresa_id:
+    if enterprise_id:
         try:
-            agentes = await db.get_agentes_por_empresa(empresa_id)
+            agentes = await db.get_agentes_por_empresa(enterprise_id)
             if agentes:
                 # Use first agent (primary) — fetch full details
                 agent_data = await db.get_agente(agentes[0]["id"])
@@ -112,7 +112,7 @@ async def _build_graph_schema(empresa_id: int | None = None) -> dict:
     nodes.append({
         "id": "supabase", "label": "Supabase", "kind": "database",
         "desc": "Supabase (PostgreSQL + REST)",
-        "detail": "Tablas principales:\n· wp_contactos (perfil + metadata)\n· agent_memory (memoria conversacional)\n· wp_conversaciones\n· wp_mensajes\n· wp_citas\n· wp_contactos_nota\n· wp_multimedia\n· debug_events (realtime)",
+        "detail": "Tablas principales:\n· dim_person (perfil + metadata)\n· agent_memory (memoria conversacional)\n· fact_conversation\n· fact_interaction\n· fact_appointment\n· dim_person_nota\n· fact_media\n· debug_events (realtime)",
     })
 
     # ── Supabase Storage ──
@@ -133,7 +133,7 @@ async def _build_graph_schema(empresa_id: int | None = None) -> dict:
     nodes.append({
         "id": "edge_fn", "label": "Edge Functions", "kind": "external",
         "desc": "Supabase Edge Functions",
-        "detail": "Funciones:\n· crear-multimedia-inicial-v1\n  → Registra en wp_multimedia\n· guardar-multimedia-v4\n  → Procesa y almacena contenido\nEjecución async (fire-and-forget)",
+        "detail": "Funciones:\n· crear-multimedia-inicial-v1\n  → Registra en fact_media\n· guardar-multimedia-v4\n  → Procesa y almacena contenido\nEjecución async (fire-and-forget)",
     })
 
     # ── Orchestrator ──
@@ -149,7 +149,7 @@ async def _build_graph_schema(empresa_id: int | None = None) -> dict:
     edges.append({"from": "orch", "to": "vision", "label": "describe imagen", "dash": True})
     edges.append({"from": "vision", "to": "openrouter", "label": "Gemini 2.5 Flash"})
     edges.append({"from": "orch", "to": "edge_fn", "label": "multimedia pipeline", "dash": True})
-    edges.append({"from": "edge_fn", "to": "supabase", "label": "wp_multimedia"})
+    edges.append({"from": "edge_fn", "to": "supabase", "label": "fact_media"})
 
     # ── Conversational Agent — with live LLM model ──
     conv_detail = (
@@ -200,7 +200,7 @@ async def _build_graph_schema(empresa_id: int | None = None) -> dict:
     nodes.append({
         "id": "t_nota", "label": "guardar_nota", "kind": "tool",
         "desc": "Herramienta: guardar_nota",
-        "detail": "Memoria persistente del contacto\nAPPEND-only en wp_contactos.notas\nGuarda acuerdos, contexto, resultados\nFormato: [FECHA] CATEGORÍA: detalles",
+        "detail": "Memoria persistente del contacto\nAPPEND-only en dim_person.notas\nGuarda acuerdos, contexto, resultados\nFormato: [FECHA] CATEGORÍA: detalles",
     })
     edges.append({"from": "conv", "to": "t_nota", "label": ""})
     edges.append({"from": "t_nota", "to": "supabase", "label": "PATCH notas"})
@@ -208,7 +208,7 @@ async def _build_graph_schema(empresa_id: int | None = None) -> dict:
     nodes.append({
         "id": "t_calificado", "label": "marcar_calificado", "kind": "tool",
         "desc": "Herramienta: marcar_prospecto_calificado",
-        "detail": "Marca si el prospecto es calificado\nActualiza wp_contactos.es_calificado\nValores: 'si' o 'no'\nAfecta seguimiento y remarketing",
+        "detail": "Marca si el prospecto es calificado\nActualiza dim_person.is_qualified\nValores: 'si' o 'no'\nAfecta seguimiento y remarketing",
     })
     edges.append({"from": "conv", "to": "t_calificado", "label": ""})
     edges.append({"from": "t_calificado", "to": "supabase", "label": "PATCH calificado"})
@@ -226,7 +226,7 @@ async def _build_graph_schema(empresa_id: int | None = None) -> dict:
     nodes.append({
         "id": "t_spam", "label": "desactivar_spam", "kind": "tool",
         "desc": "Herramienta: desactivar_contacto_spam",
-        "detail": "Marca contacto como spam y lo desactiva\nLlama Edge Function: apagar-contacto-spam-v1\nActualiza wp_contactos vía Supabase\nEvita seguimiento y mensajes futuros",
+        "detail": "Marca contacto como spam y lo desactiva\nLlama Edge Function: apagar-contacto-spam-v1\nActualiza dim_person vía Supabase\nEvita seguimiento y mensajes futuros",
     })
     edges.append({"from": "conv", "to": "t_spam", "label": ""})
     edges.append({"from": "t_spam", "to": "supabase", "label": "desactivar spam"})
@@ -244,7 +244,7 @@ async def _build_graph_schema(empresa_id: int | None = None) -> dict:
     nodes.append({
         "id": "t_metadata", "label": "update_metadata", "kind": "tool",
         "desc": "Herramienta: update_metadata",
-        "detail": "Registra información capturada\nParámetros: informacion_capturada, seccion,\nid_etapa (opcional), razon_etapa\nEscribe en wp_contactos.metadata",
+        "detail": "Registra información capturada\nParámetros: informacion_capturada, seccion,\nid_etapa (opcional), razon_etapa\nEscribe en dim_person.metadata",
     })
     edges.append({"from": "funnel", "to": "t_metadata", "label": ""})
     edges.append({"from": "t_metadata", "to": "supabase", "label": "PATCH metadata"})
@@ -262,7 +262,7 @@ async def _build_graph_schema(empresa_id: int | None = None) -> dict:
     nodes.append({
         "id": "t_update", "label": "update_contact", "kind": "tool",
         "desc": "Herramienta: update_contact_info",
-        "detail": f"Actualiza columnas de wp_contactos\nCampos: {fields_str}",
+        "detail": f"Actualiza columnas de dim_person\nCampos: {fields_str}",
     })
     edges.append({"from": "contact", "to": "t_update", "label": ""})
     edges.append({"from": "t_update", "to": "supabase", "label": "PATCH contacto"})
@@ -339,9 +339,9 @@ def _enrich_node(node: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 @router.get("/schema")
-async def get_graph_schema(empresa_id: Optional[int] = Query(None, description="ID de empresa para obtener datos reales del agente")):
+async def get_graph_schema(enterprise_id: Optional[int] = Query(None, description="ID de empresa para obtener datos reales del agente")):
     """Return the full graph schema for the constellation visualization."""
-    schema = await _build_graph_schema(empresa_id=empresa_id)
+    schema = await _build_graph_schema(enterprise_id=enterprise_id)
     schema["nodes"] = [_enrich_node(n) for n in schema["nodes"]]
     # Ensure every edge has a dash field
     for e in schema["edges"]:

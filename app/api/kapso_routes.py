@@ -266,7 +266,7 @@ async def _upload_audio_to_storage(audio_url: str, filename: str) -> str | None:
         return None
 
 
-async def _multimedia_pipeline(contacto_id: int, archivo_url: str, transcript: str | None) -> None:
+async def _multimedia_pipeline(person_id: int, archivo_url: str, transcript: str | None) -> None:
     """Async fire-and-forget pipeline: crear-multimedia → guardar-multimedia.
 
     Step 1: Call crear-multimedia-inicial-v1 to register in wp_multimedia.
@@ -283,7 +283,7 @@ async def _multimedia_pipeline(contacto_id: int, archivo_url: str, transcript: s
             # --- Step 1: crear-multimedia-inicial ---
             crear_url = f"{settings.SUPABASE_URL}/functions/v1/{SUPABASE_EDGE_CREAR_MULTIMEDIA}"
             crear_payload = {
-                "contacto_id": contacto_id,
+                "person_id": person_id,
                 "tipo": "multimedia",
                 "archivo_url": archivo_url,
             }
@@ -297,7 +297,7 @@ async def _multimedia_pipeline(contacto_id: int, archivo_url: str, transcript: s
             resp1_data = resp1.json()
             logger.info(
                 "Edge crear-multimedia ok: contacto=%s url=%s resp=%s",
-                contacto_id, archivo_url, str(resp1_data)[:200],
+                person_id, archivo_url, str(resp1_data)[:200],
             )
 
             # Extract multimedia_id from response
@@ -310,10 +310,10 @@ async def _multimedia_pipeline(contacto_id: int, archivo_url: str, transcript: s
 
             # --- Step 2: guardar-multimedia ---
             guardar_url = f"{settings.SUPABASE_URL}/functions/v1/{SUPABASE_EDGE_GUARDAR_MULTIMEDIA}"
-            contenido = transcript or f"Archivo multimedia: {archivo_url}"
+            content_text_val = transcript or f"Archivo multimedia: {archivo_url}"
             guardar_payload = {
                 "multimedia_id": multimedia_id,
-                "contenido": contenido,
+                "content_text": content_text_val,
             }
             resp2 = await http.post(guardar_url, json=guardar_payload, headers=auth_headers)
             if resp2.status_code >= 400:
@@ -330,7 +330,7 @@ async def _multimedia_pipeline(contacto_id: int, archivo_url: str, transcript: s
         logger.error("Multimedia pipeline error: %s", exc, exc_info=True)
 
 
-async def _process_audio_message(inbound: KapsoInboundRequest, contacto_id: int | None = None) -> tuple[str | None, str | None]:
+async def _process_audio_message(inbound: KapsoInboundRequest, person_id: int | None = None) -> tuple[str | None, str | None]:
     """Process an audio message: extract transcript and upload to storage.
 
     Returns (transcript, storage_url).
@@ -360,8 +360,8 @@ async def _process_audio_message(inbound: KapsoInboundRequest, contacto_id: int 
         logger.warning("Audio message but no audio_url found. Raw text: %s", text[:200])
 
     # Register multimedia via edge functions (async, non-blocking)
-    if storage_url and contacto_id:
-        asyncio.create_task(_multimedia_pipeline(contacto_id, storage_url, transcript))
+    if storage_url and person_id:
+        asyncio.create_task(_multimedia_pipeline(person_id, storage_url, transcript))
 
     return transcript, storage_url
 
@@ -397,7 +397,7 @@ def _extract_media_url_from_raw(inbound: KapsoInboundRequest) -> tuple[str | Non
 
 async def _process_image_message(
     inbound: KapsoInboundRequest,
-    contacto_id: int | None = None,
+    person_id: int | None = None,
     instrucciones_multimedia: str | None = None,
 ) -> tuple[str | None, str | None]:
     """Process an image message: upload to storage, describe via vision model.
@@ -437,16 +437,16 @@ async def _process_image_message(
         description = fallback_desc
 
     # Multimedia pipeline (async, non-blocking)
-    if storage_url and contacto_id:
+    if storage_url and person_id:
         contenido_for_edge = description or f"Imagen: {storage_url}"
-        asyncio.create_task(_multimedia_pipeline(contacto_id, storage_url, contenido_for_edge))
+        asyncio.create_task(_multimedia_pipeline(person_id, storage_url, contenido_for_edge))
 
     return description, storage_url
 
 
 async def _process_document_message(
     inbound: KapsoInboundRequest,
-    contacto_id: int | None = None,
+    person_id: int | None = None,
 ) -> tuple[str | None, str | None]:
     """Process a document message: upload to storage.
 
@@ -477,8 +477,8 @@ async def _process_document_message(
         doc_ref += f"\nURL del documento: {storage_url}"
 
     # Multimedia pipeline (async, non-blocking)
-    if storage_url and contacto_id:
-        asyncio.create_task(_multimedia_pipeline(contacto_id, storage_url, doc_ref))
+    if storage_url and person_id:
+        asyncio.create_task(_multimedia_pipeline(person_id, storage_url, doc_ref))
 
     return doc_ref, storage_url
 
@@ -511,7 +511,7 @@ def _separate_message_parts(inbound: KapsoInboundRequest) -> list[dict[str, str]
     urls = _extract_multimedia_urls(message)
 
     if not urls and not inbound.has_media:
-        return [{"contenido": message, "tipo": "texto"}] if message else []
+        return [{"content_text": message, "tipo": "texto"}] if message else []
 
     parts: list[dict[str, str]] = []
     if urls:
@@ -520,26 +520,26 @@ def _separate_message_parts(inbound: KapsoInboundRequest) -> list[dict[str, str]
             text_with_placeholders = text_with_placeholders.replace(url, f"(link-{index})")
         text_with_placeholders = re.sub(r"\n\s*\n+", "\n", text_with_placeholders).strip()
         if text_with_placeholders:
-            parts.append({"contenido": text_with_placeholders, "tipo": "texto"})
+            parts.append({"content_text": text_with_placeholders, "tipo": "texto"})
         for url in urls:
-            parts.append({"contenido": url, "tipo": "multimedia"})
+            parts.append({"content_text": url, "tipo": "multimedia"})
     elif message:
-        parts.append({"contenido": message, "tipo": "texto"})
+        parts.append({"content_text": message, "tipo": "texto"})
 
     if inbound.has_media:
         media_reference = _extract_media_reference(inbound)
-        if media_reference and media_reference not in {part["contenido"] for part in parts}:
-            parts.append({"contenido": media_reference, "tipo": "multimedia"})
+        if media_reference and media_reference not in {part["content_text"] for part in parts}:
+            parts.append({"content_text": media_reference, "tipo": "multimedia"})
 
     return parts
 
 
 def _build_user_message(inbound: KapsoInboundRequest, message_parts: list[dict[str, str]]) -> str:
-    text_parts = [part["contenido"].strip() for part in message_parts if part["tipo"] == "texto" and part["contenido"].strip()]
+    text_parts = [part["content_text"].strip() for part in message_parts if part["tipo"] == "texto" and part["content_text"].strip()]
     multimedia_parts = [
-        part["contenido"].strip()
+        part["content_text"].strip()
         for part in message_parts
-        if part["tipo"] == "multimedia" and part["contenido"].strip()
+        if part["tipo"] == "multimedia" and part["content_text"].strip()
     ]
 
     sections: list[str] = []
@@ -662,7 +662,7 @@ def _merge_agent_runs(conversational_runs: list[AgentRunTrace], funnel_runs: lis
 def _build_funnel_error_response(
     *,
     model: str | None,
-    conversacion_db_id: int | None,
+    conversation_db_id: int | None,
     error_text: str,
     timing: TimingInfo | None = None,
     tools_used: list[ToolCall] | None = None,
@@ -672,7 +672,7 @@ def _build_funnel_error_response(
         agent_key="funnel_agent",
         agent_name="Agente de Embudo",
         agent_kind="analysis_error",
-        conversation_id=str(conversacion_db_id) if conversacion_db_id else None,
+        conversation_id=str(conversation_db_id) if conversation_db_id else None,
         memory_session_id=None,
         model_used=model or get_settings().DEFAULT_MODEL,
         system_prompt="",
@@ -695,8 +695,8 @@ def _build_funnel_error_response(
 def _build_contact_update_error_response(
     *,
     model: str | None,
-    conversacion_db_id: int | None,
-    contacto_id: int | None,
+    conversation_db_id: int | None,
+    person_id: int | None,
     error_text: str,
     timing: TimingInfo | None = None,
     tools_used: list[ToolCall] | None = None,
@@ -706,8 +706,8 @@ def _build_contact_update_error_response(
         agent_key="contact_update_agent",
         agent_name="Agente de Actualización de Contacto",
         agent_kind="analysis_error",
-        conversation_id=str(conversacion_db_id) if conversacion_db_id else None,
-        memory_session_id=str(contacto_id) if contacto_id else None,
+        conversation_id=str(conversation_db_id) if conversation_db_id else None,
+        memory_session_id=str(person_id) if person_id else None,
         model_used=model or get_settings().DEFAULT_MODEL,
         system_prompt="",
         user_prompt="",
@@ -745,17 +745,17 @@ async def _run_both_agents(
     mcp_servers: list[MCPServerConfig],
     conversation_id: str,
     memory_session_id: str,
-    contacto_id: int | None,
-    empresa_id: int | None,
-    agente_id: int,
-    conversacion_db_id: int | None,
+    person_id: int | None,
+    enterprise_id: int | None,
+    agent_id: int,
+    conversation_db_id: int | None,
 ):
     # ── Phase 1: Run funnel + contact_update in parallel (BEFORE conversational) ──
     funnel_result = None
     contact_update_result = None
 
-    run_funnel = contacto_id is not None and empresa_id is not None and _should_run_funnel_agent(raw_user_text)
-    run_contact_update = contacto_id is not None and empresa_id is not None
+    run_funnel = person_id is not None and enterprise_id is not None and _should_run_funnel_agent(raw_user_text)
+    run_contact_update = person_id is not None and enterprise_id is not None
 
     if run_funnel or run_contact_update:
         analysis_tasks: list[asyncio.Task] = []
@@ -767,10 +767,10 @@ async def _run_both_agents(
                     asyncio.wait_for(
                         run_funnel_agent(
                             FunnelAgentRequest(
-                                contacto_id=contacto_id,
-                                empresa_id=empresa_id,
-                                agente_id=agente_id,
-                                conversacion_id=conversacion_db_id,
+                                person_id=person_id,
+                                enterprise_id=enterprise_id,
+                                agent_id=agent_id,
+                                conversation_id=conversation_db_id,
                                 memory_session_id=memory_session_id,
                                 memory_window=20,
                                 model=model,
@@ -788,10 +788,10 @@ async def _run_both_agents(
                     asyncio.wait_for(
                         run_contact_update_agent(
                             ContactUpdateAgentRequest(
-                                contacto_id=contacto_id,
-                                empresa_id=empresa_id,
-                                agente_id=agente_id,
-                                conversacion_id=conversacion_db_id,
+                                person_id=person_id,
+                                enterprise_id=enterprise_id,
+                                agent_id=agent_id,
+                                conversation_id=conversation_db_id,
                                 model=model,
                             )
                         ),
@@ -814,7 +814,7 @@ async def _run_both_agents(
         logger.warning("Kapso inbound: funnel agent fallo pero la respuesta conversacional continua: %s", funnel_result, exc_info=True)
         funnel_result = _build_funnel_error_response(
             model=model,
-            conversacion_db_id=conversacion_db_id,
+            conversation_db_id=conversation_db_id,
             error_text=str(funnel_result),
         )
 
@@ -823,7 +823,7 @@ async def _run_both_agents(
         if not funnel_result.agent_runs:
             funnel_result = _build_funnel_error_response(
                 model=model,
-                conversacion_db_id=conversacion_db_id,
+                conversation_db_id=conversation_db_id,
                 error_text=funnel_result.error or "Funnel agent devolvio success=false",
                 timing=funnel_result.timing,
                 tools_used=funnel_result.tools_used,
@@ -838,8 +838,8 @@ async def _run_both_agents(
         )
         contact_update_result = _build_contact_update_error_response(
             model=model,
-            conversacion_db_id=conversacion_db_id,
-            contacto_id=contacto_id,
+            conversation_db_id=conversation_db_id,
+            person_id=person_id,
             error_text=str(contact_update_result),
         )
 
@@ -848,8 +848,8 @@ async def _run_both_agents(
         if not contact_update_result.agent_runs:
             contact_update_result = _build_contact_update_error_response(
                 model=model,
-                conversacion_db_id=conversacion_db_id,
-                contacto_id=contacto_id,
+                conversation_db_id=conversation_db_id,
+                person_id=person_id,
                 error_text=contact_update_result.error or "Contact update agent devolvio success=false",
                 timing=contact_update_result.timing,
                 tools_used=contact_update_result.tools_used,
@@ -879,8 +879,8 @@ async def _run_both_agents(
             conversation_id=conversation_id,
             memory_session_id=memory_session_id,
             memory_window=8,
-            contacto_id=contacto_id,
-            empresa_id=empresa_id,
+            person_id=person_id,
+            enterprise_id=enterprise_id,
             channel="whatsapp",  # Activa tools y fast-paths exclusivos de WhatsApp/Kapso
         )
     )
@@ -1072,7 +1072,7 @@ async def kapso_debug_empresas(
     _require_kapso_debug_access(request, x_kapso_internal_token, x_kapso_debug_token)
     try:
         db = await get_supabase()
-        rows = await db.query("wp_empresa_perfil", select="id,nombre")
+        rows = await db.query("dim_enterprise", select="id,nombre")
         if isinstance(rows, list):
             return {"empresas": [{"id": r["id"], "nombre": r.get("nombre") or f"Empresa {r['id']}"} for r in rows]}
     except Exception as exc:
@@ -1154,9 +1154,9 @@ async def kapso_inbound(
         )
         raise HTTPException(status_code=401, detail="Unauthorized Kapso bridge")
     try:
-        # 1. Buscar primero por teléfono (columna telefono) en wp_numeros
+        # 1. Buscar primero por teléfono (columna phone_e164) en dim_channel
         numero = await db.get_numero_por_telefono(request.phone_number_id)
-        resolved_via = "telefono" if numero else None
+        resolved_via = "phone_e164" if numero else None
 
         # 2. Si no coincide como teléfono, buscar por id_kapso
         if not numero:
@@ -1172,19 +1172,19 @@ async def kapso_inbound(
                     "phone_number_id": request.phone_number_id,
                     "message_id": request.message_id,
                     "from_phone": request.from_phone,
-                    "error": "No se encontró ningún número en wp_numeros que coincida "
-                             "con telefono o id_kapso. Registrar el número en la BD.",
+                    "error": "No se encontró ningún número en dim_channel que coincida "
+                             "con phone_e164 o id_kapso. Registrar el número en la BD.",
                 },
             )
             logger.error(
-                "Kapso inbound: phone_number_id=%s no coincide con ningún registro en wp_numeros "
-                "(ni por telefono ni por id_kapso). Mensaje descartado para evitar responder con agente incorrecto.",
+                "Kapso inbound: phone_number_id=%s no coincide con ningún registro en dim_channel "
+                "(ni por phone_e164 ni por id_kapso). Mensaje descartado para evitar responder con agente incorrecto.",
                 request.phone_number_id,
             )
             raise HTTPException(
                 status_code=404,
                 detail=f"Número no configurado: phone_number_id={request.phone_number_id} "
-                       f"no existe en wp_numeros. Registrar el número antes de recibir mensajes.",
+                       f"no existe en dim_channel. Registrar el número antes de recibir mensajes.",
             )
 
         if resolved_via:
@@ -1193,113 +1193,113 @@ async def kapso_inbound(
                 f"numero_resuelto_por_{resolved_via}",
                 {
                     "phone_number_id": request.phone_number_id,
-                    "resolved_numero_id": numero.get("id"),
-                    "resolved_agente_id": numero.get("agente_id"),
-                    "resolved_empresa_id": numero.get("empresa_id"),
+                    "resolved_channel_id": numero.get("id"),
+                    "resolved_agent_id": numero.get("agent_id"),
+                    "resolved_enterprise_id": numero.get("enterprise_id"),
                     "message_id": request.message_id,
                 },
             )
 
-        if not numero.get("agente_id"):
+        if not numero.get("agent_id"):
             add_kapso_debug_event(
                 "fastapi",
                 "numero_sin_agente",
                 {
-                    "numero_id": numero.get("id"),
+                    "channel_id": numero.get("id"),
                     "phone_number_id": request.phone_number_id,
                     "message_id": request.message_id,
-                    "error": "El número existe en wp_numeros pero no tiene agente_id asignado.",
+                    "error": "El número existe en dim_channel pero no tiene agent_id asignado.",
                 },
             )
             logger.error(
-                "Kapso inbound: número id=%s (tel=%s) no tiene agente_id asignado.",
+                "Kapso inbound: número id=%s (tel=%s) no tiene agent_id asignado.",
                 numero.get("id"),
-                numero.get("telefono"),
+                numero.get("phone_e164"),
             )
             raise HTTPException(
                 status_code=404,
                 detail=f"Número id={numero.get('id')} no tiene agente asignado. "
-                       f"Configurar agente_id en wp_numeros.",
+                       f"Configurar agent_id en dim_channel.",
             )
 
-        agente_id = numero.get("agente_id")
+        agent_id = numero.get("agent_id")
 
-        numero_id = int(numero["id"]) if numero and numero.get("id") is not None else None
-        empresa_id = int(numero["empresa_id"]) if numero and numero.get("empresa_id") is not None else None
+        channel_id = int(numero["id"]) if numero and numero.get("id") is not None else None
+        enterprise_id = int(numero["enterprise_id"]) if numero and numero.get("enterprise_id") is not None else None
         normalized_from_phone = _normalize_phone(request.from_phone) or request.from_phone
         slash_command = _extract_slash_command(request.text)
         contacto = None
-        contacto_creado = False
-        conversacion_db = None
+        person_created = False
+        conversation_db = None
 
-        if not slash_command and empresa_id and numero_id:
-            contacto, contacto_creado = await db.upsert_contacto_canal(
+        if not slash_command and enterprise_id and channel_id:
+            contacto, person_created = await db.upsert_contacto_canal(
                 normalized_from_phone,
-                empresa_id,
+                enterprise_id,
                 canal=str(numero.get("canal") or channel_message.channel or "whatsapp"),
             )
             if contacto and contacto.get("id") is not None:
-                conversacion_db = await db.get_conversacion_activa(int(contacto["id"]), numero_id)
-                if conversacion_db and conversacion_db.get("agente_id"):
-                    conv_agente_id = conversacion_db["agente_id"]
+                conversation_db = await db.get_conversacion_activa(int(contacto["id"]), channel_id)
+                if conversation_db and conversation_db.get("agent_id"):
+                    conv_agent_id = conversation_db["agent_id"]
                     # Validar que el agente de la conversación pertenezca a la misma empresa
-                    conv_agent = await db.get_agente(int(conv_agente_id))
-                    if conv_agent and conv_agent.get("empresa_id") == empresa_id:
-                        agente_id = conv_agente_id
+                    conv_agent = await db.get_agente(int(conv_agent_id))
+                    if conv_agent and conv_agent.get("enterprise_id") == enterprise_id:
+                        agent_id = conv_agent_id
                     else:
                         logger.warning(
-                            "Conversación %s tiene agente_id=%s de empresa_id=%s, "
-                            "pero el número pertenece a empresa_id=%s. Ignorando agente de conversación.",
-                            conversacion_db.get("id"),
-                            conv_agente_id,
-                            conv_agent.get("empresa_id") if conv_agent else "N/A",
-                            empresa_id,
+                            "Conversación %s tiene agent_id=%s de enterprise_id=%s, "
+                            "pero el número pertenece a enterprise_id=%s. Ignorando agente de conversación.",
+                            conversation_db.get("id"),
+                            conv_agent_id,
+                            conv_agent.get("enterprise_id") if conv_agent else "N/A",
+                            enterprise_id,
                         )
 
-        agent = await db.get_agente(int(agente_id))
-        # Si la conversación sobreescribió agente_id pero no existe, volver al del número
-        if not agent and numero and numero.get("agente_id") and int(numero.get("agente_id")) != int(agente_id):
-            agente_id = int(numero.get("agente_id"))
-            agent = await db.get_agente(int(agente_id))
+        agent = await db.get_agente(int(agent_id))
+        # Si la conversación sobreescribió agent_id pero no existe, volver al del número
+        if not agent and numero and numero.get("agent_id") and int(numero.get("agent_id")) != int(agent_id):
+            agent_id = int(numero.get("agent_id"))
+            agent = await db.get_agente(int(agent_id))
         if not agent:
             logger.error(
-                "Kapso inbound: agente_id=%s no encontrado en wp_agentes para phone_number_id=%s",
-                agente_id,
+                "Kapso inbound: agent_id=%s no encontrado en dim_agent para phone_number_id=%s",
+                agent_id,
                 request.phone_number_id,
             )
             raise HTTPException(
                 status_code=404,
-                detail=f"Agente id={agente_id} no encontrado en wp_agentes. "
+                detail=f"Agente id={agent_id} no encontrado en dim_agent. "
                        f"Verificar configuración del número.",
             )
 
-        if empresa_id is None and agent.get("empresa_id") is not None:
-            empresa_id = int(agent["empresa_id"])
-        if contacto is None and empresa_id and normalized_from_phone:
+        if enterprise_id is None and agent.get("enterprise_id") is not None:
+            enterprise_id = int(agent["enterprise_id"])
+        if contacto is None and enterprise_id and normalized_from_phone:
             if slash_command:
-                contacto = await db.get_contacto_por_telefono(normalized_from_phone, empresa_id)
-                contacto_creado = False
+                contacto = await db.get_contacto_por_telefono(normalized_from_phone, enterprise_id)
+                person_created = False
             else:
-                contacto, contacto_creado = await db.upsert_contacto_canal(
+                contacto, person_created = await db.upsert_contacto_canal(
                     normalized_from_phone,
-                    empresa_id,
+                    enterprise_id,
                     canal=str(numero.get("canal") or channel_message.channel or "whatsapp"),
                 )
-            if numero_id and contacto and contacto.get("id") is not None:
-                conversacion_db = await db.get_conversacion_activa(int(contacto["id"]), numero_id)
-        if not slash_command and empresa_id and numero_id and contacto and contacto.get("id") is not None and conversacion_db is None:
+            if channel_id and contacto and contacto.get("id") is not None:
+                conversation_db = await db.get_conversacion_activa(int(contacto["id"]), channel_id)
+        if not slash_command and enterprise_id and channel_id and contacto and contacto.get("id") is not None and conversation_db is None:
             try:
-                conversacion_db = await db.insertar_conversacion(
+                conversation_db = await db.insertar_conversacion(
                     contacto_id=int(contacto["id"]),
-                    agente_id=int(agente_id),
-                    empresa_id=empresa_id,
-                    numero_id=numero_id,
+                    agente_id=int(agent_id),
+                    empresa_id=enterprise_id,
+                    numero_id=channel_id,
                     canal=str(numero.get("canal") or "whatsapp"),
                     metadata=None,
                 )
             except Exception:
-                conversacion_db = await db.get_conversacion_activa(int(contacto["id"]), numero_id)
-                if conversacion_db is None:
+                conversation_db = await db.get_conversacion_activa(int(contacto["id"]), channel_id)
+                if conversation_db is None:
                     raise
 
         model = agent.get("llm") or None
@@ -1315,8 +1315,8 @@ async def kapso_inbound(
         audio_storage_url: str | None = None
         is_audio = str(request.message_type or "").strip().lower() == "audio"
         if is_audio:
-            contacto_id_for_audio = contacto.get("id") if contacto else None
-            audio_transcript, audio_storage_url = await _process_audio_message(request, contacto_id_for_audio)
+            person_id_for_audio = contacto.get("id") if contacto else None
+            audio_transcript, audio_storage_url = await _process_audio_message(request, person_id_for_audio)
             add_kapso_debug_event(
                 "fastapi",
                 "audio_processing",
@@ -1328,9 +1328,9 @@ async def kapso_inbound(
             )
             if audio_transcript:
                 # Replace message_parts with clean transcript as text
-                message_parts = [{"contenido": audio_transcript, "tipo": "texto"}]
+                message_parts = [{"content_text": audio_transcript, "tipo": "texto"}]
                 if audio_storage_url:
-                    message_parts.append({"contenido": audio_storage_url, "tipo": "multimedia"})
+                    message_parts.append({"content_text": audio_storage_url, "tipo": "multimedia"})
                 logger.info(
                     "Audio procesado → transcript=%s... storage_url=%s",
                     audio_transcript[:60],
@@ -1345,10 +1345,10 @@ async def kapso_inbound(
         is_document = msg_type_lower == "document"
 
         if is_image:
-            contacto_id_for_media = contacto.get("id") if contacto else None
+            person_id_for_media = contacto.get("id") if contacto else None
             instrucciones_mm = agent.get("instrucciones_multimedia") or None
             img_description, img_storage_url = await _process_image_message(
-                request, contacto_id_for_media, instrucciones_mm,
+                request, person_id_for_media, instrucciones_mm,
             )
             add_kapso_debug_event(
                 "fastapi",
@@ -1374,13 +1374,13 @@ async def kapso_inbound(
 
                 new_parts: list[dict[str, str]] = []
                 if caption_clean:
-                    new_parts.append({"contenido": caption_clean, "tipo": "texto"})
+                    new_parts.append({"content_text": caption_clean, "tipo": "texto"})
                 new_parts.append({
-                    "contenido": f"[Descripción de la imagen enviada]: {img_description}",
+                    "content_text": f"[Descripción de la imagen enviada]: {img_description}",
                     "tipo": "texto",
                 })
                 if img_storage_url:
-                    new_parts.append({"contenido": img_storage_url, "tipo": "multimedia"})
+                    new_parts.append({"content_text": img_storage_url, "tipo": "multimedia"})
                 message_parts = new_parts
                 logger.info(
                     "Imagen procesada → description=%s... storage_url=%s caption=%s",
@@ -1391,8 +1391,8 @@ async def kapso_inbound(
 
         # Procesar documento: subir a Storage (referencia para el agente)
         if is_document:
-            contacto_id_for_media = contacto.get("id") if contacto else None
-            doc_ref, doc_storage_url = await _process_document_message(request, contacto_id_for_media)
+            person_id_for_media = contacto.get("id") if contacto else None
+            doc_ref, doc_storage_url = await _process_document_message(request, person_id_for_media)
             add_kapso_debug_event(
                 "fastapi",
                 "document_processing",
@@ -1403,9 +1403,9 @@ async def kapso_inbound(
                 },
             )
             if doc_ref:
-                message_parts = [{"contenido": doc_ref, "tipo": "texto"}]
+                message_parts = [{"content_text": doc_ref, "tipo": "texto"}]
                 if doc_storage_url:
-                    message_parts.append({"contenido": doc_storage_url, "tipo": "multimedia"})
+                    message_parts.append({"content_text": doc_storage_url, "tipo": "multimedia"})
                 logger.info(
                     "Documento procesado → ref=%s... storage_url=%s",
                     doc_ref[:80],
@@ -1416,7 +1416,7 @@ async def kapso_inbound(
         if contacto and contacto.get("id") is not None and not contacto.get("origen"):
             try:
                 supabase = await get_supabase()
-                await supabase.update("wp_contactos", filters={"id": int(contacto["id"])}, data={"origen": "Whatsapp"})
+                await supabase.update("dim_person", filters={"id": int(contacto["id"])}, data={"origen": "Whatsapp"})
             except Exception as e:
                 logger.warning("No se pudo actualizar origen del contacto %s: %s", contacto["id"], e)
 
@@ -1431,8 +1431,8 @@ async def kapso_inbound(
                 {
                     "message_id": request.message_id,
                     "command": slash_command,
-                    "contacto_id": contacto.get("id") if contacto else None,
-                    "conversation_db_id": conversacion_db.get("id") if conversacion_db else None,
+                    "person_id": contacto.get("id") if contacto else None,
+                    "conversation_db_id": conversation_db.get("id") if conversation_db else None,
                 },
             )
 
@@ -1471,7 +1471,7 @@ async def kapso_inbound(
                 {
                     "message_id": request.message_id,
                     "command": slash_command,
-                    "contacto_id": contacto.get("id") if contacto else None,
+                    "person_id": contacto.get("id") if contacto else None,
                     "memory_session_id": memory_session_id,
                     "reply_text": reply_text,
                 },
@@ -1480,8 +1480,8 @@ async def kapso_inbound(
             return _build_command_response(
                 request=request,
                 conversation_id=conversation_id,
-                agent_id=int(agente_id),
-                agent_name=agent.get("nombre_agente") or str(agente_id),
+                agent_id=int(agent_id),
+                agent_name=agent.get("agent_name") or str(agent_id),
                 model_used=agent.get("llm") or settings.DEFAULT_MODEL,
                 reply_text=reply_text,
                 started_at=started_at,
@@ -1493,31 +1493,31 @@ async def kapso_inbound(
         # is_active = None (campo no seteado) NO bloquea — solo False explícito.
         if contacto and contacto.get("is_active") is False:
             logger.info(
-                "kapso.inbound_blocked contacto_id=%s is_active=False — sin respuesta",
+                "kapso.inbound_blocked person_id=%s is_active=False — sin respuesta",
                 contacto.get("id"),
             )
             add_kapso_debug_event(
                 "fastapi",
                 "inbound_blocked",
-                {"reason": "contacto_inactivo", "contacto_id": contacto.get("id")},
+                {"reason": "contacto_inactivo", "person_id": contacto.get("id")},
             )
             return _build_command_response(
                 request=request,
                 conversation_id=conversation_id,
-                agent_id=int(agente_id),
-                agent_name=agent.get("nombre_agente") or str(agente_id),
+                agent_id=int(agent_id),
+                agent_name=agent.get("agent_name") or str(agent_id),
                 model_used=agent.get("llm") or settings.DEFAULT_MODEL,
                 reply_text="❌ contacto_inactivo",  # suppress_send=True vía _should_suppress_kapso_send
                 started_at=started_at,
             )
         # ────────────────────────────────────────────────────────────────────
 
-        contacto_id = int(contacto["id"]) if contacto and contacto.get("id") is not None else None
-        conversacion_db_id = int(conversacion_db["id"]) if conversacion_db and conversacion_db.get("id") is not None else None
+        person_id = int(contacto["id"]) if contacto and contacto.get("id") is not None else None
+        conversation_db_id = int(conversation_db["id"]) if conversation_db and conversation_db.get("id") is not None else None
         prompt_context_data = await db.load_kapso_prompt_context(
-            contacto_id=contacto_id,
-            empresa_id=empresa_id,
-            conversacion_id=conversacion_db_id,
+            contacto_id=person_id,
+            empresa_id=enterprise_id,
+            conversacion_id=conversation_db_id,
             team_id=int(contacto["team_humano_id"]) if contacto and contacto.get("team_humano_id") is not None else None,
             agente_id=int(agent["id"]) if agent.get("id") is not None else None,
             agente_rol_id=int(agent["id_rol"]) if agent.get("id_rol") is not None else None,
@@ -1557,8 +1557,8 @@ async def kapso_inbound(
             "prompt_context_built",
             {
                 "message_id": request.message_id,
-                "contacto_id": contacto_id,
-                "conversation_db_id": conversacion_db_id,
+                "person_id": person_id,
+                "conversation_db_id": conversation_db_id,
                 "timezone_empresa": prompt_extras.get("timezone_empresa"),
                 "stage_actual": prompt_extras.get("funnel_stage"),
                 "usuario_interno": prompt_extras.get("es_usuario_interno"),
@@ -1573,18 +1573,18 @@ async def kapso_inbound(
             {
                 "message_id": request.message_id,
                 "normalized_from_phone": normalized_from_phone,
-                "empresa_id": empresa_id,
-                "numero_id": numero_id,
-                "contacto_id": contacto.get("id") if contacto else None,
-                "contacto_creado": contacto_creado,
-                "conversacion_db_id": conversacion_db.get("id") if conversacion_db else None,
+                "enterprise_id": enterprise_id,
+                "channel_id": channel_id,
+                "person_id": contacto.get("id") if contacto else None,
+                "person_created": person_created,
+                "conversation_db_id": conversation_db.get("id") if conversation_db else None,
                 "message_parts": message_parts,
             },
         )
 
         mensajes_guardados: list[dict] = []
         inbound_message_ids: list[int] = []
-        if conversacion_db and conversacion_db.get("id") is not None:
+        if conversation_db and conversation_db.get("id") is not None:
             metadata_base = {
                 "canal": str(numero.get("canal") or channel_message.channel or "whatsapp"),
                 "channel_provider": channel_message.provider,
@@ -1598,16 +1598,16 @@ async def kapso_inbound(
                 "message_type": request.message_type,
                 "has_media": request.has_media,
             }
-            for part in message_parts or [{"contenido": user_message, "tipo": "texto"}]:
+            for part in message_parts or [{"content_text": user_message, "tipo": "texto"}]:
                 mensajes_guardados.append(
                     await db.insertar_mensaje(
-                        conversacion_id=int(conversacion_db["id"]),
-                        contenido=part["contenido"],
+                        conversacion_id=int(conversation_db["id"]),
+                        contenido=part["content_text"],
                         remitente="usuario",
                         tipo=part["tipo"],
                         status="buffer",
                         metadata=metadata_base,
-                        empresa_id=empresa_id,
+                        empresa_id=enterprise_id,
                     )
                 )
                 inserted_message = mensajes_guardados[-1]
@@ -1619,7 +1619,7 @@ async def kapso_inbound(
             "inbound_messages_persisted",
             {
                 "message_id": request.message_id,
-                "conversacion_db_id": conversacion_db.get("id") if conversacion_db else None,
+                "conversation_db_id": conversation_db.get("id") if conversation_db else None,
                 "saved_messages": [
                     {
                         "id": item.get("id"),
@@ -1636,8 +1636,8 @@ async def kapso_inbound(
             "memory_session_resolved",
             {
                 "memory_session_id": memory_session_id,
-                "memory_source": "contacto_id" if contacto and contacto.get("id") is not None else "from_phone",
-                "contacto_id": contacto.get("id") if contacto else None,
+                "memory_source": "person_id" if contacto and contacto.get("id") is not None else "from_phone",
+                "person_id": contacto.get("id") if contacto else None,
                 "from": normalized_from_phone,
                 "message_id": request.message_id,
             },
@@ -1647,7 +1647,7 @@ async def kapso_inbound(
             "fastapi",
             "run_agent_start",
             {
-                "agent_id": int(agente_id),
+                "agent_id": int(agent_id),
                 "resolved_via": resolved_via,
                 "phone_number_id": request.phone_number_id,
                 "message_id": request.message_id,
@@ -1659,7 +1659,7 @@ async def kapso_inbound(
         )
         logger.info(
             "Kapso inbound procesando agent_id=%s resolved_via=%s phone_number_id=%s from=%s message_type=%s",
-            agente_id,
+            agent_id,
             resolved_via,
             request.phone_number_id,
             request.from_phone,
@@ -1677,10 +1677,10 @@ async def kapso_inbound(
             mcp_servers=mcp_servers,
             conversation_id=conversation_id,
             memory_session_id=memory_session_id,
-            contacto_id=contacto_id,
-            empresa_id=empresa_id,
-            agente_id=int(agente_id),
-            conversacion_db_id=conversacion_db_id,
+            person_id=person_id,
+            enterprise_id=enterprise_id,
+            agent_id=int(agent_id),
+            conversation_db_id=conversation_db_id,
         )
 
         reaction_emoji: str | None = None
@@ -1700,9 +1700,9 @@ async def kapso_inbound(
             "fastapi",
             "run_funnel_done",
             {
-                "agent_id": int(agente_id),
-                "contacto_id": contacto_id,
-                "conversation_db_id": conversacion_db_id,
+                "agent_id": int(agent_id),
+                "person_id": person_id,
+                "conversation_db_id": conversation_db_id,
                 "message_id": request.message_id,
                 "success": bool(funnel_result and funnel_result.success),
                 "error": funnel_result.error if funnel_result else None,
@@ -1718,9 +1718,9 @@ async def kapso_inbound(
             "fastapi",
             "run_contact_update_done",
             {
-                "agent_id": int(agente_id),
-                "contacto_id": contacto_id,
-                "conversation_db_id": conversacion_db_id,
+                "agent_id": int(agent_id),
+                "person_id": person_id,
+                "conversation_db_id": conversation_db_id,
                 "message_id": request.message_id,
                 "success": bool(contact_update_result and contact_update_result.success),
                 "error": contact_update_result.error if contact_update_result else None,
@@ -1736,9 +1736,9 @@ async def kapso_inbound(
             "fastapi",
             "run_agent_done",
             {
-                "agent_id": int(agente_id),
-                "agent_name": agent.get("nombre_agente") or str(agente_id),
-                "empresa_id": empresa_id,
+                "agent_id": int(agent_id),
+                "agent_name": agent.get("agent_name") or str(agent_id),
+                "enterprise_id": enterprise_id,
                 "conversation_id": conversational_result.conversation_id,
                 "model_used": conversational_result.model_used,
                 "response_chars": len(conversational_result.response or ""),
@@ -1752,7 +1752,7 @@ async def kapso_inbound(
         )
         logger.info(
             "Kapso inbound completado agent_id=%s conversation_id=%s model=%s response_chars=%s funnel_success=%s",
-            agente_id,
+            agent_id,
             conversational_result.conversation_id,
             conversational_result.model_used,
             len(conversational_result.response or ""),
@@ -1775,23 +1775,23 @@ async def kapso_inbound(
                 },
             )
             # Save in Supabase for review (tipo="closing_followup")
-            if conversacion_db_id:
+            if conversation_db_id:
                 await db.insertar_mensaje(
-                    conversacion_id=int(conversacion_db_id),
+                    conversacion_id=int(conversation_db_id),
                     contenido=f"[closing_followup] reacción: {reaction_emoji or '👍'}",
-                    remitente="agente",
+                    remitente="assistant",
                     tipo="texto",
                     status="closing_followup",
                     modelo_llm=conversational_result.model_used,
                     metadata={
                         "source": "kapso_outbound",
                         "message_id": request.message_id,
-                        "agent_id": int(agente_id),
+                        "agent_id": int(agent_id),
                         "closing_followup": True,
                         "user_message": (request.text or "")[:500],
                         "reaction_emoji": reaction_emoji,
                     },
-                    empresa_id=empresa_id,
+                    empresa_id=enterprise_id,
                 )
         else:
             final_reply_text = _ensure_reply_text(conversational_result.response)
@@ -1807,21 +1807,21 @@ async def kapso_inbound(
                     },
                 )
 
-            if conversacion_db_id and final_reply_text:
+            if conversation_db_id and final_reply_text:
                 await db.insertar_mensaje(
-                    conversacion_id=int(conversacion_db_id),
+                    conversacion_id=int(conversation_db_id),
                     contenido=final_reply_text,
-                    remitente="agente",
+                    remitente="assistant",
                     tipo="texto",
                     status="suppressed" if suppress_send else "enviado",
                     modelo_llm=conversational_result.model_used,
                     metadata={
                         "source": "kapso_outbound",
                         "message_id": request.message_id,
-                        "agent_id": int(agente_id),
+                        "agent_id": int(agent_id),
                         "kapso_send_suppressed": suppress_send,
                     },
-                    empresa_id=empresa_id,
+                    empresa_id=enterprise_id,
                 )
             if suppress_send:
                 add_kapso_debug_event(
@@ -1874,18 +1874,18 @@ async def kapso_inbound(
             # "monica" keeps reply_type="text" — the agent response IS the analysis
             logger.info("Comando detectado: cmd=%s reply_type=%s url=%s", cmd, reply_type, cmd_url[:80] if cmd_url else "")
 
-            # Append multimedia note to contact's notas in wp_contactos
-            if contacto_id and cmd in ("image", "audio", "video"):
+            # Append multimedia note to contact's notas in dim_person
+            if person_id and cmd in ("image", "audio", "video"):
                 try:
-                    contacto_actual = await db.get_contacto(contacto_id)
+                    contacto_actual = await db.get_contacto(person_id)
                     notas_prev = (contacto_actual or {}).get("notas") or ""
                     nota_multimedia = f"Multimedia enviada: {cmd} de {cmd_extra}" if cmd_extra else f"Multimedia enviada: {cmd}"
                     nuevas_notas = f"{notas_prev}; {nota_multimedia}" if notas_prev else nota_multimedia
                     sb = await get_supabase()
-                    await sb.update("wp_contactos", {"id": contacto_id}, {"notas": nuevas_notas})
-                    logger.info("Notas multimedia actualizadas contacto_id=%s", contacto_id)
+                    await sb.update("dim_person", {"id": person_id}, {"notas": nuevas_notas})
+                    logger.info("Notas multimedia actualizadas person_id=%s", person_id)
                 except Exception:
-                    logger.exception("Error actualizando notas multimedia contacto_id=%s", contacto_id)
+                    logger.exception("Error actualizando notas multimedia person_id=%s", person_id)
 
         return KapsoInboundResponse(
             reply_type=reply_type,
@@ -1902,8 +1902,8 @@ async def kapso_inbound(
             phone_number_id=request.phone_number_id,
             message_id=request.message_id,
             conversation_id=conversational_result.conversation_id,
-            agent_id=int(agente_id),
-            agent_name=agent.get("nombre_agente") or str(agente_id),
+            agent_id=int(agent_id),
+            agent_name=agent.get("agent_name") or str(agent_id),
             model_used=conversational_result.model_used,
             timing=merged_timing,
             tools_used=merged_tools,
@@ -2002,63 +2002,63 @@ async def _dispatch_to_bridge(reply_payload: dict) -> dict | None:
 async def _retry_single_stuck_message(msg: dict) -> bool:
     """Re-process a single stuck inbound message and send the response via the bridge."""
     msg_id = msg.get("id")
-    conversacion_id = msg.get("conversacion_id")
-    contenido = msg.get("contenido") or ""
+    conversation_id_val = msg.get("conversation_id")
+    content_text = msg.get("content_text") or ""
     metadata = msg.get("metadata") or {}
     timestamp = msg.get("timestamp") or ""
 
-    if not conversacion_id:
-        logger.warning("retry_stuck: msg %s has no conversacion_id, skipping", msg_id)
-        await db.actualizar_mensaje(int(msg_id), {"status": "error", "metadata": {**metadata, "retry_error": "no conversacion_id"}})
+    if not conversation_id_val:
+        logger.warning("retry_stuck: msg %s has no conversation_id, skipping", msg_id)
+        await db.actualizar_mensaje(int(msg_id), {"status": "error", "metadata": {**metadata, "retry_error": "no conversation_id"}})
         return False
 
     # Check if there's already an agent response after this message (avoid duplicates)
-    if timestamp and await db.has_agent_response_after(int(conversacion_id), timestamp):
+    if timestamp and await db.has_agent_response_after(int(conversation_id_val), timestamp):
         logger.info("retry_stuck: msg %s already has agent response, marking enviado", msg_id)
         await db.actualizar_mensaje(int(msg_id), {"status": "enviado"})
         return True
 
     # Get conversation context
-    conversacion = await db.get_conversacion(int(conversacion_id))
+    conversacion = await db.get_conversacion(int(conversation_id_val))
     if not conversacion:
-        logger.warning("retry_stuck: conversacion %s not found for msg %s", conversacion_id, msg_id)
+        logger.warning("retry_stuck: conversacion %s not found for msg %s", conversation_id_val, msg_id)
         await db.actualizar_mensaje(int(msg_id), {"status": "error", "metadata": {**metadata, "retry_error": "conversacion not found"}})
         return False
 
-    contacto_id = conversacion.get("contacto_id")
-    agente_id = conversacion.get("agente_id")
-    empresa_id = conversacion.get("empresa_id")
-    numero_id = conversacion.get("numero_id")
+    person_id = conversacion.get("person_id")
+    agent_id = conversacion.get("agent_id")
+    enterprise_id = conversacion.get("enterprise_id")
+    channel_id = conversacion.get("channel_id")
 
-    if not agente_id:
-        logger.warning("retry_stuck: no agente_id in conversacion %s", conversacion_id)
-        await db.actualizar_mensaje(int(msg_id), {"status": "error", "metadata": {**metadata, "retry_error": "no agente_id"}})
+    if not agent_id:
+        logger.warning("retry_stuck: no agent_id in conversacion %s", conversation_id_val)
+        await db.actualizar_mensaje(int(msg_id), {"status": "error", "metadata": {**metadata, "retry_error": "no agent_id"}})
         return False
 
-    agent = await db.get_agente(int(agente_id))
+    agent = await db.get_agente(int(agent_id))
     if not agent:
-        logger.warning("retry_stuck: agent %s not found", agente_id)
+        logger.warning("retry_stuck: agent %s not found", agent_id)
         await db.actualizar_mensaje(int(msg_id), {"status": "error", "metadata": {**metadata, "retry_error": "agent not found"}})
         return False
 
     # Get contact
-    contacto = await db.get_contacto(int(contacto_id)) if contacto_id else None
+    contacto = await db.get_contacto(int(person_id)) if person_id else None
 
     # Guard: contacto inactivo — no reintentar, marcar como enviado para no volver a procesar
     if contacto and contacto.get("is_active") is False:
-        logger.info("retry_stuck: contacto_id=%s is_active=False — reintento cancelado", contacto_id)
+        logger.info("retry_stuck: person_id=%s is_active=False — reintento cancelado", person_id)
         await db.actualizar_mensaje(int(msg_id), {"status": "enviado"})
         return True
 
     phone_number_id = metadata.get("phone_number_id", "")
 
     # Get numero for phone resolution
-    numero = await db.get_numero(int(numero_id)) if numero_id else None
+    numero = await db.get_numero(int(channel_id)) if channel_id else None
 
     # Resolve phone
     from_phone = ""
-    if contacto and contacto.get("telefono"):
-        from_phone = contacto["telefono"]
+    if contacto and contacto.get("phone_e164"):
+        from_phone = contacto["phone_e164"]
     elif metadata.get("contact_name"):
         from_phone = metadata.get("contact_name", "")
 
@@ -2068,8 +2068,8 @@ async def _retry_single_stuck_message(msg: dict) -> bool:
         return False
 
     # Build memory session ID
-    memory_session_id = str(contacto_id) if contacto_id else from_phone
-    conversation_id_str = f"kapso:{metadata.get('kapso_conversation_id', conversacion_id)}"
+    memory_session_id = str(person_id) if person_id else from_phone
+    conversation_id_str = f"kapso:{metadata.get('kapso_conversation_id', conversation_id_val)}"
 
     # Build system prompt
     model = agent.get("llm") or None
@@ -2077,9 +2077,9 @@ async def _retry_single_stuck_message(msg: dict) -> bool:
 
     try:
         prompt_context_data = await db.load_kapso_prompt_context(
-            contacto_id=int(contacto_id) if contacto_id else None,
-            empresa_id=int(empresa_id) if empresa_id else None,
-            conversacion_id=int(conversacion_id),
+            contacto_id=int(person_id) if person_id else None,
+            empresa_id=int(enterprise_id) if enterprise_id else None,
+            conversacion_id=int(conversation_id_val),
             team_id=int(contacto["team_humano_id"]) if contacto and contacto.get("team_humano_id") is not None else None,
             agente_id=int(agent["id"]) if agent.get("id") is not None else None,
             agente_rol_id=int(agent["id_rol"]) if agent.get("id_rol") is not None else None,
@@ -2091,10 +2091,10 @@ async def _retry_single_stuck_message(msg: dict) -> bool:
             **{"from": from_phone},
             contact_name=metadata.get("contact_name"),
             phone_number_id=phone_number_id,
-            kapso_conversation_id=str(metadata.get("kapso_conversation_id", conversacion_id)),
+            kapso_conversation_id=str(metadata.get("kapso_conversation_id", conversation_id_val)),
             message_id=metadata.get("kapso_message_id", f"retry_{msg_id}"),
             message_type=metadata.get("message_type", "text"),
-            text=contenido,
+            text=content_text,
             timestamp=timestamp,
             has_media=metadata.get("has_media", False),
         )
@@ -2126,7 +2126,7 @@ async def _retry_single_stuck_message(msg: dict) -> bool:
             rol_agente=prompt_context_data.get("rol_agente"),
         )
 
-        user_message = contenido.strip() or "El usuario envió un mensaje sin contenido legible."
+        user_message = content_text.strip() or "El usuario envió un mensaje sin contenido legible."
         started_at = time.perf_counter()
 
         await db.actualizar_mensaje(int(msg_id), {"status": "procesando"})
@@ -2135,15 +2135,15 @@ async def _retry_single_stuck_message(msg: dict) -> bool:
             started_at=started_at,
             system_prompt=system_prompt,
             user_message=user_message,
-            raw_user_text=contenido,
+            raw_user_text=content_text,
             model=model,
             mcp_servers=mcp_servers,
             conversation_id=conversation_id_str,
             memory_session_id=memory_session_id,
-            contacto_id=int(contacto_id) if contacto_id else None,
-            empresa_id=int(empresa_id) if empresa_id else None,
-            agente_id=int(agente_id),
-            conversacion_db_id=int(conversacion_id),
+            person_id=int(person_id) if person_id else None,
+            enterprise_id=int(enterprise_id) if enterprise_id else None,
+            agent_id=int(agent_id),
+            conversation_db_id=int(conversation_id_val),
         )
 
         final_reply_text = _ensure_reply_text(conversational_result.response)
@@ -2151,19 +2151,19 @@ async def _retry_single_stuck_message(msg: dict) -> bool:
 
         # Save agent response in DB (no duplicate: we only save if no response exists yet)
         await db.insertar_mensaje(
-            conversacion_id=int(conversacion_id),
+            conversacion_id=int(conversation_id_val),
             contenido=final_reply_text,
-            remitente="agente",
+            remitente="assistant",
             tipo="texto",
             status="suppressed" if suppress_send else "enviado",
             modelo_llm=conversational_result.model_used,
             metadata={
                 "source": "retry_stuck",
                 "original_message_id": msg_id,
-                "agent_id": int(agente_id),
+                "agent_id": int(agent_id),
                 "kapso_send_suppressed": suppress_send,
             },
-            empresa_id=int(empresa_id) if empresa_id else None,
+            enterprise_id=int(enterprise_id) if enterprise_id else None,
         )
 
         # Mark original inbound message as enviado
@@ -2187,8 +2187,8 @@ async def _retry_single_stuck_message(msg: dict) -> bool:
             "retry_stuck_success",
             {
                 "original_message_id": msg_id,
-                "conversacion_id": conversacion_id,
-                "contacto_id": contacto_id,
+                "conversation_id": conversation_id_val,
+                "person_id": person_id,
                 "response_chars": len(final_reply_text),
                 "response_preview": final_reply_text[:200],
                 "suppressed": suppress_send,

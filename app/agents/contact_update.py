@@ -1,4 +1,4 @@
-"""Agente de actualización de contacto - analiza conversación y actualiza wp_contactos."""
+"""Agente de actualización de contacto - analiza conversación y actualiza dim_person."""
 import asyncio
 from datetime import datetime, timezone
 import re
@@ -22,13 +22,13 @@ logger = logging.getLogger(__name__)
 CONTACT_UPDATE_MODEL = "x-ai/grok-4.1-fast"
 MAX_CONTACT_UPDATE_ITERATIONS = 2
 ALLOWED_CONTACT_FIELDS = {
-    "nombre",
-    "apellido",
+    "canonical_name",
+    "last_name",
     "email",
-    "telefono",
+    "phone_e164",
     "etapa_emocional",
     "timezone",
-    "es_calificado",
+    "is_qualified",
     "estado",
 }
 
@@ -83,8 +83,8 @@ def _build_messages_summary(messages: list[dict]) -> str:
     lines: list[str] = []
     for msg in messages:
         hora = str(msg.get("hora") or msg.get("fecha_hora") or msg.get("timestamp") or "?").strip()
-        remitente = str(msg.get("remitente") or "desconocido").strip().lower()
-        contenido = str(msg.get("mensaje") or msg.get("contenido") or "").strip()
+        remitente = str(msg.get("direction") or "desconocido").strip().lower()
+        contenido = str(msg.get("mensaje") or msg.get("content_text") or "").strip()
         if not contenido:
             continue
         lines.append(f"- [{hora}] {remitente}: {contenido}")
@@ -135,7 +135,7 @@ REGLAS CRÍTICAS:
 
 def _build_contact_update_user_prompt(contacto: dict, mensajes: list[dict], citas: list[dict]) -> str:
     total_mensajes = len(mensajes)
-    ultimo_remitente = str(mensajes[-1].get("remitente") or "desconocido") if mensajes else "desconocido"
+    ultimo_remitente = str(mensajes[-1].get("direction") or "desconocido") if mensajes else "desconocido"
     proximas_citas = 0
     now = datetime.now(timezone.utc)
     for cita in citas:
@@ -176,22 +176,22 @@ def _build_contact_update_user_prompt(contacto: dict, mensajes: list[dict], cita
     )
 
 
-async def _load_contact_update_context(contacto_id: int, empresa_id: int, conversacion_id: int | None) -> tuple[dict, list[dict], list[dict]]:
+async def _load_contact_update_context(person_id: int, enterprise_id: int, conversation_id: int | None) -> tuple[dict, list[dict], list[dict]]:
     contexto_local_task = db.load_contexto_completo_local(
-        contacto_id=contacto_id,
-        empresa_id=empresa_id,
+        contacto_id=person_id,
+        empresa_id=enterprise_id,
         agente_id=None,
-        conversacion_id=conversacion_id,
+        conversacion_id=conversation_id,
         limite_mensajes=20,
     )
-    citas_task = db.get_citas_contacto_detalladas(contacto_id, limit=5)
+    citas_task = db.get_citas_contacto_detalladas(person_id, limit=5)
     contexto_local, citas = await asyncio.gather(contexto_local_task, citas_task)
     contexto_data = (contexto_local.get("contexto_embudo") or {}).get("data") or {}
     conversacion_data = (contexto_local.get("conversacion_memoria") or {}).get("data") or {}
     contacto = contexto_data.get("informacion_contacto") or {}
     mensajes = list(conversacion_data.get("mensajes") or [])
     if not contacto:
-        raise ValueError(f"Contacto {contacto_id} no encontrado")
+        raise ValueError(f"Contacto {person_id} no encontrado")
     return contacto, mensajes, list(citas or [])
 
 
@@ -237,9 +237,9 @@ def _build_graph(llm_with_tools, current_contact: dict, request: ContactUpdateAg
                 if not changed_fields:
                     result = "⚪ OK Sin acción - sin campos nuevos válidos"
                 else:
-                    updated_contact = await db.actualizar_campos_contacto(request.contacto_id, changed_fields)
+                    updated_contact = await db.actualizar_campos_contacto(request.person_id, changed_fields)
                     if not updated_contact:
-                        result = "Error al actualizar wp_contactos"
+                        result = "Error al actualizar dim_person"
                     else:
                         updated_fields = list(changed_fields.keys())
                         contact_updates = changed_fields
@@ -266,7 +266,7 @@ def _build_graph(llm_with_tools, current_contact: dict, request: ContactUpdateAg
                     status=status,
                     error=error_text,
                     source="contact_update",
-                    description="Actualiza columnas permitidas de wp_contactos",
+                    description="Actualiza columnas permitidas de dim_person",
                 )
             )
 
@@ -307,7 +307,7 @@ async def run_contact_update_agent(request: ContactUpdateAgentRequest) -> Contac
     available_tools = [
         ToolDefinition(
             tool_name="update_contact_info",
-            description="Actualiza columnas permitidas de wp_contactos sin duplicar datos",
+            description="Actualiza columnas permitidas de dim_person sin duplicar datos",
             source="contact_update",
         )
     ]
@@ -315,39 +315,39 @@ async def run_contact_update_agent(request: ContactUpdateAgentRequest) -> Contac
 
     try:
         contacto, mensajes, citas = await _load_contact_update_context(
-            contacto_id=request.contacto_id,
-            empresa_id=request.empresa_id,
-            conversacion_id=request.conversacion_id,
+            person_id=request.person_id,
+            enterprise_id=request.enterprise_id,
+            conversation_id=request.conversation_id,
         )
 
         @tool
         async def update_contact_info(
-            nombre: str | None = None,
-            apellido: str | None = None,
+            canonical_name: str | None = None,
+            last_name: str | None = None,
             email: str | None = None,
-            telefono: str | None = None,
+            phone_e164: str | None = None,
             etapa_emocional: str | None = None,
             timezone: str | None = None,
-            es_calificado: str | None = None,
+            is_qualified: str | None = None,
             estado: str | None = None,
         ) -> str:
-            """Actualiza columnas permitidas de wp_contactos solo cuando hay datos nuevos y explícitos."""
+            """Actualiza columnas permitidas de dim_person solo cuando hay datos nuevos y explícitos."""
             proposed_updates = {
-                "nombre": nombre,
-                "apellido": apellido,
+                "canonical_name": canonical_name,
+                "last_name": last_name,
                 "email": email,
-                "telefono": telefono,
+                "phone_e164": phone_e164,
                 "etapa_emocional": etapa_emocional,
                 "timezone": timezone,
-                "es_calificado": es_calificado,
+                "is_qualified": is_qualified,
                 "estado": estado,
             }
             changed_fields = _filter_changed_fields(contacto, proposed_updates)
             if not changed_fields:
                 return "⚪ OK Sin acción - sin campos nuevos válidos"
-            updated_contact = await db.actualizar_campos_contacto(request.contacto_id, changed_fields)
+            updated_contact = await db.actualizar_campos_contacto(request.person_id, changed_fields)
             if not updated_contact:
-                return "Error al actualizar wp_contactos"
+                return "Error al actualizar dim_person"
             contacto.update(changed_fields)
             return f"✅ OK Guardado - {', '.join(changed_fields.keys())}"
 
@@ -399,8 +399,8 @@ async def run_contact_update_agent(request: ContactUpdateAgentRequest) -> Contac
                 agent_key="contact_update_agent",
                 agent_name="Agente de Actualización de Contacto",
                 agent_kind="analysis",
-                conversation_id=str(request.conversacion_id) if request.conversacion_id else None,
-                memory_session_id=str(request.contacto_id),
+                conversation_id=str(request.conversation_id) if request.conversation_id else None,
+                memory_session_id=str(request.person_id),
                 model_used=model,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
@@ -442,8 +442,8 @@ async def run_contact_update_agent(request: ContactUpdateAgentRequest) -> Contac
             agent_key="contact_update_agent",
             agent_name="Agente de Actualización de Contacto",
             agent_kind="analysis_error",
-            conversation_id=str(request.conversacion_id) if request.conversacion_id else None,
-            memory_session_id=str(request.contacto_id),
+            conversation_id=str(request.conversation_id) if request.conversation_id else None,
+            memory_session_id=str(request.person_id),
             model_used=model,
             system_prompt=system_prompt,
             user_prompt=user_prompt,

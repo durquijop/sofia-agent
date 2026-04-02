@@ -210,8 +210,8 @@ def render_debug_html():
     else:
         for run in runs:
             timestamp = escape_html(run.get('timestamp', ''))
-            contacto_id = run.get('contacto_id', '?')
-            empresa_id = run.get('empresa_id', '?')
+            person_id = run.get('person_id', '?')
+            enterprise_id = run.get('enterprise_id', '?')
             success = run.get('success', True)
             respuesta = escape_html(run.get('respuesta', '')[:150])
             etapa_anterior = escape_html(run.get('etapa_anterior', '—') or '—')
@@ -228,8 +228,8 @@ def render_debug_html():
                 <div class="run-header">
                     <div class="run-primary">
                         <span class="badge {badge_class}">{badge_text}</span>
-                        <span class="run-meta">Contacto #{contacto_id}</span>
-                        <span class="run-meta">Empresa #{empresa_id}</span>
+                        <span class="run-meta">Contacto #{person_id}</span>
+                        <span class="run-meta">Empresa #{enterprise_id}</span>
                         <span class="run-meta">{total_ms:.0f}ms</span>
             '''
             
@@ -275,7 +275,7 @@ async def analyze_funnel_status(request: FunnelAgentRequest):
     - Métricas de ejecución
     """
     try:
-        logger.info(f"Funnel analysis request - contacto: {request.contacto_id}, empresa: {request.empresa_id}")
+        logger.info(f"Funnel analysis request - contacto: {request.person_id}, empresa: {request.enterprise_id}")
         response = await run_funnel_agent(request)
         logger.info(f"Funnel analysis completed - success: {response.success}, tools_used: {len(response.tools_used)}")
         return response

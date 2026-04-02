@@ -42,8 +42,8 @@ async def _persist_funnel_event(entry: dict[str, Any]) -> None:
                     "tools_used": entry.get("tools_used"),
                     "agent_runs": entry.get("agent_runs"),
                 },
-                "empresa_id": entry.get("empresa_id"),
-                "contacto_id": entry.get("contacto_id"),
+                "enterprise_id": entry.get("enterprise_id"),
+                "person_id": entry.get("person_id"),
             },
         )
     except Exception as exc:
@@ -51,8 +51,8 @@ async def _persist_funnel_event(entry: dict[str, Any]) -> None:
 
 
 def add_funnel_debug_run(
-    contacto_id: int,
-    empresa_id: int,
+    person_id: int,
+    enterprise_id: int,
     agent_runs: list[dict] | None = None,
     timing: dict | None = None,
     tools_used: list[dict] | None = None,
@@ -65,8 +65,8 @@ def add_funnel_debug_run(
     """Registra una ejecución del agente de embudo en el debug."""
     entry = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "contacto_id": contacto_id,
-        "empresa_id": empresa_id,
+        "person_id": person_id,
+        "enterprise_id": enterprise_id,
         "success": success,
         "error": error,
         "respuesta": respuesta,
@@ -78,7 +78,7 @@ def add_funnel_debug_run(
     }
     with _lock:
         _runs.appendleft(entry)
-    logger.debug(f"Funnel debug event added: contacto={contacto_id}, success={success}")
+    logger.debug(f"Funnel debug event added: person={person_id}, success={success}")
 
     # Persistir a Supabase async fire-and-forget
     try:

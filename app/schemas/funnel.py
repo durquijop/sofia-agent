@@ -5,10 +5,10 @@ from app.schemas.chat import TimingInfo, AgentRunTrace, ToolCall
 
 class FunnelContextRequest(BaseModel):
     """Request para cargar contexto del embudo."""
-    contacto_id: int = Field(..., description="ID del contacto")
-    empresa_id: int = Field(..., description="ID de la empresa")
-    agente_id: int = Field(..., description="ID del agente")
-    conversacion_id: Optional[int] = Field(default=None, description="ID de la conversación (opcional)")
+    person_id: int = Field(..., description="ID del contacto")
+    enterprise_id: int = Field(..., description="ID de la empresa")
+    agent_id: int = Field(..., description="ID del agente")
+    conversation_id: Optional[int] = Field(default=None, description="ID de la conversación (opcional)")
     limite_mensajes: int = Field(default=20, description="Límite de mensajes a recuperar")
 
 
@@ -32,11 +32,11 @@ class FunnelCurrentStage(BaseModel):
 
 class ContactInfo(BaseModel):
     """Información básica del contacto."""
-    contacto_id: int
+    person_id: int
     nombre_completo: str
-    nombre: Optional[str] = None
-    apellido: Optional[str] = None
-    telefono: Optional[str] = None
+    canonical_name: Optional[str] = None
+    last_name: Optional[str] = None
+    phone_e164: Optional[str] = None
     email: Optional[str] = None
     origen: Optional[str] = None
     notas: Optional[str] = None
@@ -47,7 +47,7 @@ class ContactInfo(BaseModel):
     etapa_emocional: Optional[str] = None
     timezone: Optional[str] = None
     estado: Optional[str] = None
-    es_calificado: Optional[bool | str] = None
+    is_qualified: Optional[bool | str] = None
     is_active: Optional[bool] = None
     team_humano_id: Optional[int] = None
     url_drive: Optional[str] = None
@@ -70,10 +70,10 @@ class FunnelContextResponse(BaseModel):
 
 class FunnelAgentRequest(BaseModel):
     """Request hacia el agente de embudo."""
-    contacto_id: int = Field(..., description="ID del contacto a analizar")
-    empresa_id: int = Field(..., description="ID de la empresa")
-    agente_id: int = Field(..., description="ID del agente que ejecuta")
-    conversacion_id: Optional[int] = Field(default=None, description="ID de conversación para contexto")
+    person_id: int = Field(..., description="ID del contacto a analizar")
+    enterprise_id: int = Field(..., description="ID de la empresa")
+    agent_id: int = Field(..., description="ID del agente que ejecuta")
+    conversation_id: Optional[int] = Field(default=None, description="ID de conversación para contexto")
     memory_session_id: Optional[str] = Field(default=None, description="ID de memoria persistente para recuperar turnos previos")
     memory_window: Optional[int] = Field(default=20, description="Cantidad de turnos persistentes a cargar")
     model: Optional[str] = Field(default=None, description="Modelo LLM a usar")

@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     SUPABASE_URL: str
     SUPABASE_SERVICE_KEY: str
     SUPABASE_ANON_KEY: str | None = None
-    SUPABASE_EDGE_FUNCTION_URL: str = "https://vecspltvmyopwbjzerow.supabase.co/functions/v1"
+    SUPABASE_EDGE_FUNCTION_URL: str = "https://mkzlcgrqbukwehiulqfn.supabase.co/functions/v1"
     SUPABASE_EDGE_FUNCTION_TOKEN: str | None = None
     KAPSO_INTERNAL_TOKEN: str | None = None
     KAPSO_DEBUG_TOKEN: str | None = None
@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     NYLAS_API_URL: str = "https://api.us.nylas.com"
     # Error webhook
     ERROR_WEBHOOK_URL: str | None = None
-    APP_NAME: str = "URPE AI Lab - Multi-Agent System"
+    APP_NAME: str = "Sofia Agent - Monica Intelligence v2"
     DEBUG: bool = False
 
     model_config = SettingsConfigDict(

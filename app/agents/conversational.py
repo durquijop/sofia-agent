@@ -59,8 +59,8 @@ def send_reaction(emoji: str) -> str:
     return f"reaction:{emoji}"
 
 
-def _create_guardar_nota_tool(contacto_id: int):
-    """Crea un tool guardar_nota con el contacto_id capturado por closure."""
+def _create_guardar_nota_tool(person_id: int):
+    """Crea un tool guardar_nota con el person_id capturado por closure."""
 
     @tool
     async def guardar_nota(nota: str) -> str:
@@ -93,9 +93,9 @@ Args:
 
             # Leer notas existentes para no sobreescribirlas
             existing = await supabase.query(
-                "wp_contactos",
+                "dim_person",
                 select="notas",
-                filters={"id": contacto_id},
+                filters={"id": person_id},
                 single=True,
             )
             existing_notas = ""
@@ -109,23 +109,23 @@ Args:
                 updated_notas = nota
 
             await supabase.update(
-                "wp_contactos",
-                filters={"id": contacto_id},
+                "dim_person",
+                filters={"id": person_id},
                 data={"notas": updated_notas},
             )
-            return f"✅ Nota guardada exitosamente para contacto {contacto_id}."
+            return f"✅ Nota guardada exitosamente para contacto {person_id}."
         except Exception as exc:
-            logger.error("Error guardando nota para contacto %s: %s", contacto_id, exc)
+            logger.error("Error guardando nota para contacto %s: %s", person_id, exc)
             return f"❌ Error al guardar nota: {exc}"
 
     return guardar_nota
 
 
-def _create_marcar_calificado_tool(contacto_id: int):
-    """Crea un tool marcar_prospecto_calificado con el contacto_id capturado por closure."""
+def _create_marcar_calificado_tool(person_id: int):
+    """Crea un tool marcar_prospecto_calificado con el person_id capturado por closure."""
 
     @tool
-    async def marcar_prospecto_calificado(es_calificado: str) -> str:
+    async def marcar_prospecto_calificado(is_qualified: str) -> str:
         """✅ Marcar_Prospecto_Calificado — Actualiza estado de calificación del contacto en base de datos.
 
 PROPÓSITO: Registrar en el sistema cuando un prospecto cumple criterios de calificación.
@@ -159,21 +159,21 @@ NO USAR si no has completado la perfilación, para marcar interés temporal, o s
 FLUJO: Perfilar → Evaluar → Marcar calificación → Si califica: continuar flujo.
 
 Args:
-    es_calificado: "si" o "no" (solo minúsculas)
+    is_qualified: "si" o "no" (solo minúsculas)
 """
-        valor = es_calificado.strip().lower()
+        valor = is_qualified.strip().lower()
         if valor not in ("si", "no"):
-            return f"❌ Valor inválido: '{es_calificado}'. Debe ser 'si' o 'no'."
+            return f"❌ Valor inválido: '{is_qualified}'. Debe ser 'si' o 'no'."
         try:
             supabase = await get_supabase()
             await supabase.update(
-                "wp_contactos",
-                filters={"id": contacto_id},
-                data={"es_calificado": valor},
+                "dim_person",
+                filters={"id": person_id},
+                data={"is_qualified": valor},
             )
-            return f"✅ Contacto {contacto_id} marcado como es_calificado='{valor}'."
+            return f"✅ Contacto {person_id} marcado como is_qualified='{valor}'."
         except Exception as exc:
-            logger.error("Error marcando calificación para contacto %s: %s", contacto_id, exc)
+            logger.error("Error marcando calificación para contacto %s: %s", person_id, exc)
             return f"❌ Error al marcar calificación: {exc}"
 
     return marcar_prospecto_calificado
@@ -184,8 +184,8 @@ EJECUTAR_COMANDO_TOOL_NAME = "ejecutar_comando"
 _VALID_COMMANDS = {"image", "audio", "video", "monica"}
 
 
-def _create_comandos_tool(contacto_id: int):
-    """Crea un tool ejecutar_comando con el contacto_id capturado por closure."""
+def _create_comandos_tool(person_id: int):
+    """Crea un tool ejecutar_comando con el person_id capturado por closure."""
 
     @tool
     async def ejecutar_comando(comando: str, solicitud: str, extra: str = "") -> str:
@@ -231,11 +231,11 @@ Args:
             "comando": cmd,
             "solicitud": solicitud.strip(),
             "extra": extra.strip() if extra else "",
-            "contacto_id": contacto_id,
+            "person_id": person_id,
         }
         logger.info(
-            "ejecutar_comando: cmd=%s contacto_id=%s solicitud=%s",
-            cmd, contacto_id, solicitud[:80],
+            "ejecutar_comando: cmd=%s person_id=%s solicitud=%s",
+            cmd, person_id, solicitud[:80],
         )
         return _json.dumps(result, ensure_ascii=False)
 
@@ -245,7 +245,7 @@ Args:
 DESACTIVAR_SPAM_URL = "https://vecspltvmyopwbjzerow.supabase.co/functions/v1/apagar-contacto-spam-v1"
 
 
-def _create_desactivar_contacto_spam_tool(contacto_id: int, empresa_id: int):
+def _create_desactivar_contacto_spam_tool(person_id: int, enterprise_id: int):
     """Crea un tool para desactivar contacto spam via Edge Function."""
 
     @tool
@@ -267,15 +267,15 @@ No requiere parámetros, se ejecuta automáticamente con los datos del contacto 
             client = _get_http_client()
             resp = await client.post(
                 DESACTIVAR_SPAM_URL,
-                json={"contacto_id": contacto_id, "empresa_id": empresa_id},
+                json={"person_id": person_id, "enterprise_id": enterprise_id},
                 headers={"Content-Type": "application/json"},
             )
             data = resp.json()
             if resp.status_code == 200 and data.get("success"):
-                return f"✅ Contacto {contacto_id} desactivado correctamente. {data.get('message', '')}"
+                return f"✅ Contacto {person_id} desactivado correctamente. {data.get('message', '')}"
             return f"❌ Error al desactivar contacto: {data.get('error', resp.text)}"
         except Exception as exc:
-            logger.error("Error desactivando contacto spam %s: %s", contacto_id, exc)
+            logger.error("Error desactivando contacto spam %s: %s", person_id, exc)
             return f"❌ Error al desactivar contacto: {exc}"
 
     return desactivar_contacto_spam
@@ -890,23 +890,23 @@ async def run_agent(request: ChatRequest) -> ChatResponse:
     elif request.mcp_servers and reaction_only_request:
         logger.info("Omitiendo carga de herramientas MCP para solicitud enfocada en reacción")
 
-    # Agregar tools built-in si hay contacto_id
+    # Agregar tools built-in si hay person_id
     # guardar_nota y marcar_calificado son agnósticas al canal (escriben en BD)
     # ejecutar_comando es exclusiva de WhatsApp/Kapso (multimedia bridge)
-    if request.contacto_id and not reaction_only_request:
-        nota_tool = _create_guardar_nota_tool(request.contacto_id)
-        calificado_tool = _create_marcar_calificado_tool(request.contacto_id)
+    if request.person_id and not reaction_only_request:
+        nota_tool = _create_guardar_nota_tool(request.person_id)
+        calificado_tool = _create_marcar_calificado_tool(request.person_id)
         tools.append(nota_tool)
         tools.append(calificado_tool)
         if is_whatsapp:
             # Tool de multimedia Kapso: genera JSON `{"__comando__": true, ...}`
             # que solo el bridge de WhatsApp sabe interpretar
-            comandos_tool = _create_comandos_tool(request.contacto_id)
+            comandos_tool = _create_comandos_tool(request.person_id)
             tools.append(comandos_tool)
-        if request.empresa_id:
-            spam_tool = _create_desactivar_contacto_spam_tool(request.contacto_id, request.empresa_id)
+        if request.enterprise_id:
+            spam_tool = _create_desactivar_contacto_spam_tool(request.person_id, request.enterprise_id)
             tools.append(spam_tool)
-        logger.info("Tools built-in agregadas para contacto_id=%s channel=%s", request.contacto_id, getattr(request, "channel", "generic"))
+        logger.info("Tools built-in agregadas para person_id=%s channel=%s", request.person_id, getattr(request, "channel", "generic"))
 
     mcp_discovery_ms = (time.perf_counter() - t_mcp) * 1000
     available_tools = _describe_available_tools(tools)

@@ -69,8 +69,8 @@ def _build_conversation_history_payload(mensajes: list[dict] | None) -> list[dic
         history.append(
             {
                 "timestamp": msg.get("timestamp"),
-                "remitente": msg.get("remitente"),
-                "contenido": msg.get("contenido") or msg.get("mensaje", ""),
+                "direction": msg.get("direction"),
+                "content_text": msg.get("content_text") or msg.get("mensaje", ""),
                 "tipo": msg.get("tipo", "text"),
             }
         )
@@ -237,9 +237,9 @@ def _extract_user_highlights(mensajes: list[dict]) -> list[str]:
     highlights: list[str] = []
     seen: set[str] = set()
     for msg in mensajes:
-        if _normalize_conversation_speaker(msg.get("remitente")) != "usuario":
+        if _normalize_conversation_speaker(msg.get("direction")) != "usuario":
             continue
-        text = str(msg.get("mensaje") or msg.get("contenido") or "").strip()
+        text = str(msg.get("mensaje") or msg.get("content_text") or "").strip()
         if not text:
             continue
         normalized = text.casefold()
@@ -278,9 +278,9 @@ def _build_funnel_user_message(
             transcript_lines.append(f"- [{hora}] {speaker}: {content}")
     elif not use_memory_only:
         for msg in mensajes:
-            speaker = _normalize_conversation_speaker(msg.get("remitente"))
+            speaker = _normalize_conversation_speaker(msg.get("direction"))
             hora = str(msg.get("hora") or msg.get("fecha_hora") or msg.get("timestamp") or "?").strip()
-            content = str(msg.get("mensaje") or msg.get("contenido") or "").strip()
+            content = str(msg.get("mensaje") or msg.get("content_text") or "").strip()
             if not content:
                 continue
             transcript_lines.append(f"- [{hora}] {speaker}: {content}")
@@ -289,15 +289,15 @@ def _build_funnel_user_message(
     if memory_turns:
         highlights = _extract_user_highlights(
             [
-                {"remitente": turn.get("speaker"), "mensaje": turn.get("content")}
+                {"direction": turn.get("speaker"), "mensaje": turn.get("content")}
                 for turn in memory_turns
             ]
         ) or highlights
     transcript_block = "\n".join(transcript_lines) if transcript_lines else "- Sin turnos persistentes en agent_memory"
     highlights_block = "\n".join(f"- {item}" for item in highlights) if highlights else "- No se detectaron datos claros en agent_memory"
     summary_payload = {
-        "conversacion_id": conversacion_memoria_payload.get("id"),
-        "contacto_id": conversacion_memoria_payload.get("contacto_id"),
+        "conversation_id": conversacion_memoria_payload.get("id"),
+        "person_id": conversacion_memoria_payload.get("person_id"),
         "canal": conversacion_memoria_payload.get("canal"),
         "total_mensajes": conversacion_memoria_payload.get("total_mensajes"),
         "mensajes_retornados": conversacion_memoria_payload.get("mensajes_retornados"),
@@ -423,7 +423,7 @@ Eres un analista conversacional que identifica etapas del embudo y registra info
 
 El contacto {contacto_nombre} se encuentra en la etapa {etapa_actual_texto}
 
-**Datos actuales del contacto (`wp_contactos`):**
+**Datos actuales del contacto (`dim_person`):**
 ```json
 {_stringify_safe(contacto_payload)}
 ```
@@ -553,7 +553,7 @@ def _format_context_para_prompt(context: FunnelContextResponse) -> str:
     lines = []
     
     # Información del contacto
-    lines.append(f"**Contacto:** {context.contacto.nombre_completo} (+{context.contacto.telefono})")
+    lines.append(f"**Contacto:** {context.contacto.nombre_completo} (+{context.contacto.phone_e164})")
     
     # Etapa actual
     if context.etapa_actual:
@@ -584,8 +584,8 @@ def _format_mensajes_para_contexto(mensajes: list[dict]) -> str:
     
     lines = ["**Historial:**"]
     for msg in mensajes[-5:]:  # Últimos 5 mensajes
-        remitente = msg.get("remitente", "?").upper()
-        contenido = msg.get("contenido", "").strip()[:100]
+        remitente = msg.get("direction", "?").upper()
+        contenido = msg.get("content_text", "").strip()[:100]
         timestamp = msg.get("timestamp", "?")
         lines.append(f"  [{remitente}] {contenido}...")
     
@@ -593,16 +593,16 @@ def _format_mensajes_para_contexto(mensajes: list[dict]) -> str:
 
 
 async def _load_funnel_context(
-    contacto_id: int,
-    empresa_id: int,
-    conversacion_id: int | None = None,
+    person_id: int,
+    enterprise_id: int,
+    conversation_id: int | None = None,
 ) -> FunnelContextResponse:
     """Carga el contexto completo del embudo en paralelo."""
     contexto_local = await db.load_contexto_completo_local(
-        contacto_id=contacto_id,
-        empresa_id=empresa_id,
+        contacto_id=person_id,
+        empresa_id=enterprise_id,
         agente_id=None,
-        conversacion_id=conversacion_id,
+        conversacion_id=conversation_id,
     )
 
     contexto_embudo = contexto_local.get("contexto_embudo") or {}
@@ -616,14 +616,14 @@ async def _load_funnel_context(
     etapas = etapas_data.get("etapas") or []
 
     if not contacto:
-        raise ValueError(f"Contacto {contacto_id} no encontrado")
+        raise ValueError(f"Contacto {person_id} no encontrado")
 
     info_contacto = ContactInfo(
-        contacto_id=contacto["contacto_id"],
+        person_id=contacto["person_id"],
         nombre_completo=contacto.get("nombre_completo") or "",
-        nombre=contacto.get("nombre"),
-        apellido=contacto.get("apellido"),
-        telefono=contacto.get("telefono"),
+        canonical_name=contacto.get("canonical_name"),
+        last_name=contacto.get("last_name"),
+        phone_e164=contacto.get("phone_e164"),
         email=contacto.get("email"),
         origen=contacto.get("origen"),
         notas=contacto.get("notas"),
@@ -634,7 +634,7 @@ async def _load_funnel_context(
         etapa_emocional=contacto.get("etapa_emocional"),
         timezone=contacto.get("timezone"),
         estado=contacto.get("estado"),
-        es_calificado=contacto.get("es_calificado"),
+        is_qualified=contacto.get("is_qualified"),
         is_active=contacto.get("is_active"),
         team_humano_id=contacto.get("team_humano_id"),
         url_drive=contacto.get("url_drive"),
@@ -679,8 +679,8 @@ async def _load_funnel_context(
     ultimos_mensajes = [
         {
             "timestamp": msg.get("timestamp"),
-            "remitente": msg.get("remitente"),
-            "contenido": msg.get("contenido") or msg.get("mensaje", ""),
+            "direction": msg.get("direction"),
+            "content_text": msg.get("content_text") or msg.get("mensaje", ""),
             "tipo": msg.get("tipo", "text"),
         }
         for msg in mensajes_raw
@@ -766,7 +766,7 @@ def _build_graph(llm_with_tools, context: FunnelContextResponse, requestData: Fu
                             razon_etapa=razon_etapa,
                         )
                         contacto_actualizado = await db.actualizar_metadata_contacto(
-                            contacto_id=requestData.contacto_id,
+                            contacto_id=requestData.person_id,
                             nueva_metadata=metadata_json,
                         )
                         if contacto_actualizado:
@@ -874,14 +874,14 @@ async def run_funnel_agent(request: FunnelAgentRequest) -> FunnelAgentResponse:
     max_tokens = request.max_tokens or 512
     temperature = request.temperature if request.temperature is not None else 0.5
     
-    logger.info(f"run_funnel_agent: contacto={request.contacto_id}, empresa={request.empresa_id}, model={model}")
+    logger.info(f"run_funnel_agent: contacto={request.person_id}, empresa={request.enterprise_id}, model={model}")
     
     try:
         # Cargar contexto del embudo en paralelo
         context = await _load_funnel_context(
-            contacto_id=request.contacto_id,
-            empresa_id=request.empresa_id,
-            conversacion_id=request.conversacion_id,
+            person_id=request.person_id,
+            enterprise_id=request.enterprise_id,
+            conversation_id=request.conversation_id,
         )
         
         # Definir herramientas que el LLM puede usar
@@ -920,11 +920,11 @@ async def run_funnel_agent(request: FunnelAgentRequest) -> FunnelAgentResponse:
                 )
 
                 contacto_actualizado = await db.actualizar_metadata_contacto(
-                    contacto_id=request.contacto_id,
+                    contacto_id=request.person_id,
                     nueva_metadata=metadata_json,
                 )
                 if contacto_actualizado:
-                    logger.info(f"Metadata actualizada en BD para contacto {request.contacto_id}")
+                    logger.info(f"Metadata actualizada en BD para contacto {request.person_id}")
                     if etapa_nueva is not None:
                         return "✓ Metadata y etapa del embudo registradas en BD"
                     return f"✓ Metadata registrada en BD: {len(informacion_capturada)} campos capturados"
@@ -945,7 +945,7 @@ async def run_funnel_agent(request: FunnelAgentRequest) -> FunnelAgentResponse:
         graph_build_ms = (time.perf_counter() - t_graph) * 1000
         
         conversacion_memoria_payload = (context.conversacion_memoria or {}).get("data") or {
-            "id": request.conversacion_id,
+            "id": request.conversation_id,
             "total_mensajes": 0,
             "mensajes_retornados": 0,
             "mensajes": [],
@@ -1026,7 +1026,7 @@ async def run_funnel_agent(request: FunnelAgentRequest) -> FunnelAgentResponse:
                 agent_key="funnel_agent",
                 agent_name="Agente de Embudo",
                 agent_kind="analysis",
-                conversation_id=str(request.conversacion_id) if request.conversacion_id else None,
+                conversation_id=str(request.conversation_id) if request.conversation_id else None,
                 memory_session_id=request.memory_session_id,
                 model_used=model,
                 system_prompt=system_prompt,
@@ -1045,8 +1045,8 @@ async def run_funnel_agent(request: FunnelAgentRequest) -> FunnelAgentResponse:
         
         # Registrar en debug
         add_funnel_debug_run(
-            contacto_id=request.contacto_id,
-            empresa_id=request.empresa_id,
+            person_id=request.person_id,
+            enterprise_id=request.enterprise_id,
             agent_runs=[run.model_dump() for run in agent_runs],
             timing=timing.model_dump(),
             tools_used=[t.model_dump() for t in final_state.get("tools_used", [])],
@@ -1091,7 +1091,7 @@ async def run_funnel_agent(request: FunnelAgentRequest) -> FunnelAgentResponse:
             agent_key="funnel_agent",
             agent_name="Agente de Embudo",
             agent_kind="analysis_error",
-            conversation_id=str(request.conversacion_id) if request.conversacion_id else None,
+            conversation_id=str(request.conversation_id) if request.conversation_id else None,
             memory_session_id=None,
             
             model_used=model,
@@ -1108,8 +1108,8 @@ async def run_funnel_agent(request: FunnelAgentRequest) -> FunnelAgentResponse:
             llm_iterations=0,
         )
         add_funnel_debug_run(
-            contacto_id=request.contacto_id,
-            empresa_id=request.empresa_id,
+            person_id=request.person_id,
+            enterprise_id=request.enterprise_id,
             agent_runs=[error_trace.model_dump()],
             timing=timing.model_dump(),
             tools_used=[error_tool.model_dump()],

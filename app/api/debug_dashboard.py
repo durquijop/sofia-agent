@@ -133,7 +133,7 @@ def _build_interactions(events: list[dict]) -> list[dict]:
 
         if stage == "inbound_entities_resolved":
             interaction["contact_name"] = interaction.get("contact_name") or payload.get("contact_name")
-            interaction["conversation_id"] = payload.get("conversacion_id") or payload.get("conversation_db_id")
+            interaction["conversation_id"] = payload.get("conversation_id") or payload.get("conversation_db_id")
             interaction["from_phone"] = interaction.get("from_phone") or payload.get("normalized_from_phone")
 
         if stage == "run_agent_start":

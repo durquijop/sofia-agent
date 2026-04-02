@@ -7,8 +7,8 @@ from typing import Any, Optional
 # ── Requests ───────────────────────────────────────────────
 
 class DisponibilidadRequest(BaseModel):
-    contacto_id: int = Field(..., description="ID del contacto")
-    empresa_id: int = Field(..., description="ID de la empresa")
+    person_id: int = Field(..., description="ID del contacto")
+    enterprise_id: int = Field(..., description="ID de la empresa")
     time_zone_contacto: str = Field(default="America/Bogota", description="Timezone del contacto")
 
 
@@ -17,8 +17,8 @@ class CrearEventoRequest(BaseModel):
     attendeeEmail: str = Field(..., description="Email del participante/contacto")
     summary: str = Field(..., description="Título del evento")
     description: Optional[str] = Field(default=None, description="Descripción del evento")
-    contacto_id: int = Field(..., description="ID del contacto")
-    empresa_id: Optional[int] = Field(default=None, description="ID de la empresa")
+    person_id: int = Field(..., description="ID del contacto")
+    enterprise_id: Optional[int] = Field(default=None, description="ID de la empresa")
     Virtual_presencial: str = Field(default="Virtual", alias="Virtual-presencial", description="Modalidad: Virtual o Presencial")
     time_zone_contacto: str = Field(default="America/Bogota")
 
@@ -31,8 +31,8 @@ class ReagendarEventoRequest(BaseModel):
     attendeeEmail: Optional[str] = Field(default=None, description="Email del participante")
     summary: Optional[str] = Field(default=None, description="Nuevo título")
     description: Optional[str] = Field(default=None)
-    contacto_id: Optional[int] = Field(default=None, description="ID del contacto")
-    empresa_id: Optional[int] = Field(default=None)
+    person_id: Optional[int] = Field(default=None, description="ID del contacto")
+    enterprise_id: Optional[int] = Field(default=None)
     Virtual_presencial: str = Field(default="Virtual", alias="Virtual-presencial")
     time_zone_contacto: str = Field(default="America/Bogota")
     Duracion_minutos: Optional[int] = Field(default=None, description="Duración personalizada en minutos")
@@ -42,7 +42,7 @@ class ReagendarEventoRequest(BaseModel):
 
 class EliminarEventoRequest(BaseModel):
     event_id: str = Field(..., description="ID del evento de Nylas a eliminar")
-    contacto_id: Optional[int] = Field(default=None, description="ID del contacto")
+    person_id: Optional[int] = Field(default=None, description="ID del contacto")
 
 
 # ── Responses ──────────────────────────────────────────────
@@ -82,8 +82,8 @@ class AsesorFijoInfo(BaseModel):
 class DisponibilidadResponse(BaseModel):
     cita_actual: Optional[CitaActual] = None
     asesor_fijo: Optional[AsesorFijoInfo] = None
-    contacto_id: int
-    empresa_id: int
+    person_id: int
+    enterprise_id: int
     time_zone: str
     hora_actual: str
     total_asesores: int
@@ -97,7 +97,7 @@ class DisponibilidadResponse(BaseModel):
 class CrearEventoResponse(BaseModel):
     success: bool = False
     event_id: Optional[str] = None
-    contacto_id: Optional[int] = None
+    person_id: Optional[int] = None
     asesor_id: Optional[int] = None
     asesor: Optional[str] = None
     asesor_email: Optional[str] = None
@@ -116,7 +116,7 @@ class ReagendarEventoResponse(BaseModel):
     success: bool = False
     event_id: Optional[str] = None
     event_id_anterior: Optional[str] = None
-    contacto_id: Optional[int] = None
+    person_id: Optional[int] = None
     asesor_anterior: Optional[str] = None
     asesor_id: Optional[int] = None
     asesor: Optional[str] = None
@@ -134,7 +134,7 @@ class ReagendarEventoResponse(BaseModel):
 class EliminarEventoResponse(BaseModel):
     success: bool = False
     event_id: Optional[str] = None
-    contacto_id: Optional[int] = None
+    person_id: Optional[int] = None
     asesor: Optional[str] = None
     asesor_email: Optional[str] = None
     eliminado_en_nylas: bool = False

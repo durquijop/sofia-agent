@@ -17,8 +17,8 @@ class ChatRequest(BaseModel):
     temperature: Optional[float] = Field(default=0.7, description="Temperatura del modelo (0-2). Default: 0.7")
     memory_session_id: Optional[str] = None
     memory_window: Optional[int] = 8
-    contacto_id: Optional[int] = None
-    empresa_id: Optional[int] = None
+    person_id: Optional[int] = None
+    enterprise_id: Optional[int] = None
     channel: str = Field(
         default="generic",
         description=(

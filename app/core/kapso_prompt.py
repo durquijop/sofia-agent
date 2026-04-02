@@ -374,10 +374,10 @@ def _build_recent_history(messages: list[dict], company_timezone: str) -> list[d
                 timestamp_local = str(timestamp)
         data.append(
             {
-                "remitente": message.get("remitente") or "desconocido",
+                "direction": message.get("direction") or "desconocido",
                 "tipo": message.get("tipo") or "text",
                 "timestamp": timestamp_local,
-                "contenido": message.get("contenido") or "",
+                "content_text": message.get("content_text") or "",
             }
         )
     return data
@@ -565,12 +565,12 @@ def build_kapso_context_payload(
 
     contacto_payload = {
         "id": contacto.get("id") if contacto else None,
-        "telefono": contacto.get("telefono") if contacto else inbound.from_phone,
-        "nombre": contacto.get("nombre") if contacto else inbound.contact_name,
-        "apellido": contacto.get("apellido") if contacto else None,
+        "phone_e164": contacto.get("phone_e164") if contacto else inbound.from_phone,
+        "canonical_name": contacto.get("canonical_name") if contacto else inbound.contact_name,
+        "last_name": contacto.get("last_name") if contacto else None,
         "nombre_completo": (
-            f"{(contacto.get('nombre') or '').strip()} {(contacto.get('apellido') or '').strip()}".strip()
-            if contacto and (contacto.get("nombre") or contacto.get("apellido"))
+            f"{(contacto.get('canonical_name') or '').strip()} {(contacto.get('last_name') or '').strip()}".strip()
+            if contacto and (contacto.get("canonical_name") or contacto.get("last_name"))
             else (inbound.contact_name or "sin registrar")
         ),
         "email": contacto.get("email") if contacto else None,
@@ -584,11 +584,11 @@ def build_kapso_context_payload(
         "subscriber_id": contacto.get("subscriber_id") if contacto else None,
         "avatar_url": contacto.get("avatar_url") if contacto else None,
         "metadata": _safe_json(contacto.get("metadata")) if contacto else None,
-        "empresa_id": contacto.get("empresa_id") if contacto else None,
+        "enterprise_id": contacto.get("enterprise_id") if contacto else None,
         "etapa_emocional": contacto.get("etapa_emocional") if contacto else None,
         "team_humano_id": contacto.get("team_humano_id") if contacto else None,
         "timezone": contacto.get("timezone") if contacto else None,
-        "es_calificado": contacto.get("es_calificado") if contacto else None,
+        "is_qualified": contacto.get("is_qualified") if contacto else None,
         "estado": contacto.get("estado") if contacto else None,
         "url_drive": contacto.get("url_drive") if contacto else None,
         "dias_desde_registro": dias_desde_registro,
@@ -602,7 +602,7 @@ def build_kapso_context_payload(
         contacto_payload["hora_local"] = hora_local_contacto
 
     agent_payload = {
-        "nombre": agent.get("nombre_agente"),
+        "nombre": agent.get("agent_name"),
         "id_rol": agent.get("id_rol"),
         "datos_rol": (
             {
@@ -677,9 +677,9 @@ def build_kapso_context_payload(
                 "conversacion_memoria": conversacion_memoria_snapshot or "No disponible",
             },
             "📊 METADATA": {
-                "contacto_id": contacto.get("id") if contacto else None,
-                "empresa_id": contacto.get("empresa_id") if contacto else empresa.get("id") if empresa else None,
-                "agente_id": agent.get("id"),
+                "person_id": contacto.get("id") if contacto else None,
+                "enterprise_id": contacto.get("enterprise_id") if contacto else empresa.get("id") if empresa else None,
+                "agent_id": agent.get("id"),
                 "total_citas": len(citas) if isinstance(citas, list) else 0,
                 "total_notificaciones": len(notificaciones) if isinstance(notificaciones, list) else 0,
                 "tiene_asesor_asignado": bool(team_humano),
@@ -765,7 +765,7 @@ def build_kapso_system_prompt(
     temporal_info = ((context_payload.get("contexto_completo") or {}).get("🔍 INFORMACIÓN DEL SISTEMA") or {}).get("contexto_temporal_operativo") or {}
 
     sections = [
-        f"# SYSTEM MESSAGE - AGENT\nEres {agent.get('nombre_agente') or 'el agente asignado'} y operas por WhatsApp via Kapso.",
+        f"# SYSTEM MESSAGE - AGENT\nEres {agent.get('agent_name') or 'el agente asignado'} y operas por WhatsApp via Kapso.",
         _build_internal_tools_section(bool(extras.get("es_usuario_interno"))),
         (
             "# CURRENT FUNNEL STAGE\n"

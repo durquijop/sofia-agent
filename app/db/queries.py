@@ -28,25 +28,25 @@ def _safe_json_loads(value: Any) -> Any:
 def _contacto_base(contacto: dict[str, Any]) -> dict[str, Any]:
     return {
         "contacto_id": contacto.get("id"),
-        "nombre": contacto.get("nombre") or None,
-        "apellido": contacto.get("apellido") or None,
-        "nombre_completo": f"{contacto.get('nombre') or ''} {contacto.get('apellido') or ''}".strip(),
-        "telefono": contacto.get("telefono") or None,
+        "nombre": contacto.get("first_name") or None,
+        "apellido": contacto.get("last_name") or None,
+        "nombre_completo": contacto.get("canonical_name") or f"{contacto.get('first_name') or ''} {contacto.get('last_name') or ''}".strip(),
+        "telefono": contacto.get("_phone_e164") or None,
         "email": contacto.get("email") or None,
-        "origen": contacto.get("origen") or None,
-        "notas": contacto.get("notas") or None,
-        "fecha_registro": contacto.get("fecha_registro") or None,
-        "ultima_interaccion": contacto.get("ultima_interaccion") or None,
+        "origen": contacto.get("origin") or None,
+        "notas": contacto.get("notes") or None,
+        "fecha_registro": contacto.get("created_at") or None,
+        "ultima_interaccion": contacto.get("last_interaction_at") or None,
         "subscriber_id": contacto.get("subscriber_id") or None,
         "avatar_url": contacto.get("avatar_url") or None,
-        "etapa_emocional": contacto.get("etapa_emocional") or None,
+        "etapa_emocional": contacto.get("emotional_stage") or None,
         "timezone": contacto.get("timezone") or None,
-        "estado": contacto.get("estado") or None,
-        "es_calificado": contacto.get("es_calificado"),
+        "estado": contacto.get("crm_stage") or None,
+        "es_calificado": contacto.get("is_qualified"),
         "is_active": contacto.get("is_active"),
-        "team_humano_id": contacto.get("team_humano_id"),
+        "team_humano_id": contacto.get("team_member_id"),
         "url_drive": contacto.get("url_drive") or None,
-        "metadata": _safe_json_loads(contacto.get("metadata")) or {},
+        "metadata": {},
     }
 
 
@@ -178,6 +178,27 @@ def _resolved_stage_order(contacto_stage_value: Any, etapas: list[dict[str, Any]
     return contacto_stage_value
 
 
+def _map_direction(remitente: str) -> str:
+    """Map old remitente values to new direction values."""
+    mapping = {"usuario": "inbound", "agente": "outbound", "system": "outbound"}
+    return mapping.get(remitente, "inbound")
+
+
+def _map_sender_type(remitente: str) -> str:
+    """Map old remitente values to new sender_type values."""
+    mapping = {"usuario": "contact", "agente": "ai_agent", "system": "system"}
+    return mapping.get(remitente, "contact")
+
+
+def _map_direction_to_remitente(direction: str, sender_type: str | None = None) -> str:
+    """Map new direction/sender_type back to old remitente for compatibility."""
+    if direction == "inbound":
+        return "usuario"
+    if sender_type == "system":
+        return "system"
+    return "agente"
+
+
 def _organizar_mensajes_para_contexto(mensajes: list[dict[str, Any]], limite: int) -> list[dict[str, Any]]:
     if not mensajes:
         return []
@@ -185,29 +206,30 @@ def _organizar_mensajes_para_contexto(mensajes: list[dict[str, Any]], limite: in
     mensajes_filtrados = [
         msg
         for msg in mensajes
-        if (msg.get("contenido") or "").strip() and "❌" not in str(msg.get("contenido") or "")
+        if (msg.get("content_text") or "").strip() and "❌" not in str(msg.get("content_text") or "")
     ]
-    mensajes_filtrados.sort(key=lambda msg: _parse_timestamp(msg.get("timestamp")) or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+    mensajes_filtrados.sort(key=lambda msg: _parse_timestamp(msg.get("created_at")) or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
     mensajes_filtrados = mensajes_filtrados[:limite]
     mensajes_filtrados.reverse()
 
     mensajes_procesados: list[dict[str, Any]] = []
     for index, msg in enumerate(mensajes_filtrados):
         mensaje_anterior = mensajes_filtrados[index - 1] if index > 0 else None
+        remitente = _map_direction_to_remitente(msg.get("direction", ""), msg.get("sender_type"))
         mensajes_procesados.append(
             {
-                "fecha_hora": _format_fecha_hora(msg.get("timestamp")),
-                "hora": _format_hora(msg.get("timestamp")),
-                "timestamp": msg.get("timestamp"),
-                "remitente": msg.get("remitente") or "desconocido",
-                "mensaje": (msg.get("contenido") or "").strip(),
-                "uso_herramientas": _procesar_uso_herramientas(msg.get("uso_herramientas")),
+                "fecha_hora": _format_fecha_hora(msg.get("created_at")),
+                "hora": _format_hora(msg.get("created_at")),
+                "timestamp": msg.get("created_at"),
+                "remitente": remitente,
+                "mensaje": (msg.get("content_text") or "").strip(),
+                "uso_herramientas": _procesar_uso_herramientas(msg.get("tool_calls")),
                 "tiempo_respuesta": _calcular_tiempo_respuesta(
-                    msg.get("timestamp"),
-                    mensaje_anterior.get("timestamp") if mensaje_anterior else None,
+                    msg.get("created_at"),
+                    mensaje_anterior.get("created_at") if mensaje_anterior else None,
                 ),
-                "tipo": msg.get("tipo"),
-                "modelo_llm": msg.get("modelo_llm"),
+                "tipo": msg.get("content_type"),
+                "modelo_llm": msg.get("model_id"),
             }
         )
     return mensajes_procesados
@@ -277,18 +299,19 @@ async def _safe_optional_delete(table: str, filters: dict[str, Any]) -> list[dic
 async def get_empresa(empresa_id: int) -> dict | None:
     """Obtiene el perfil completo de una empresa."""
     sb = await get_supabase()
-    return await sb.query("wp_empresa_perfil", filters={"id": empresa_id}, single=True)
+    return await sb.query("dim_enterprise", filters={"id": empresa_id}, single=True)
 
 
 async def get_empresa_embudo(empresa_id: int) -> list[dict]:
-    """Obtiene las etapas del embudo de una empresa ordenadas."""
-    sb = await get_supabase()
-    return await sb.query(
-        "wp_empresa_embudo",
-        select="id,nombre_etapa,orden_etapa,descripcion",
-        filters={"empresa_id": empresa_id},
-        order="orden_etapa",
-    ) or []
+    """Obtiene las etapas del embudo de una empresa.
+
+    NOTE: In Monica Intelligence v2, the funnel (embudo) is no longer a separate
+    table.  CRM stage lives on dim_person.crm_stage.  This function is kept for
+    backward compatibility but returns an empty list.  Callers that need stage
+    information should read dim_person.crm_stage directly.
+    """
+    logger.warning("get_empresa_embudo: wp_empresa_embudo removed in v2 schema; crm_stage is now on dim_person. Returning empty list.")
+    return []
 
 
 # ─── Agentes ─────────────────────────────────────────────────────────────────
@@ -296,27 +319,34 @@ async def get_empresa_embudo(empresa_id: int) -> list[dict]:
 async def get_agente(agente_id: int) -> dict | None:
     """Obtiene la configuración completa de un agente."""
     sb = await get_supabase()
-    return await sb.query("wp_agentes", filters={"id": agente_id, "archivado": False}, single=True)
+    return await sb.query("dim_agent", filters={"id": agente_id, "is_active": True}, single=True)
 
 
 async def get_agente_tools(agente_id: int) -> list[dict]:
-    """Obtiene las herramientas MCP asignadas a un agente."""
+    """Obtiene las herramientas asignadas a un agente.
+
+    In v2, tools are stored as a tools_enabled array on dim_agent.
+    Returns a list of dicts with tool names for backward compat.
+    """
     sb = await get_supabase()
-    return await sb.query(
-        "wp_agente_tools",
-        select="*,wp_mcp_tools_catalog(*)",
-        filters={"agente_id": agente_id, "activo": True},
-        order="prioridad",
-    ) or []
+    agent = await sb.query("dim_agent", select="tools_enabled", filters={"id": agente_id, "is_active": True}, single=True)
+    if not agent or not agent.get("tools_enabled"):
+        return []
+    tools = agent["tools_enabled"]
+    if isinstance(tools, str):
+        tools = _safe_json_loads(tools) or []
+    if isinstance(tools, list):
+        return [{"tool_name": t} if isinstance(t, str) else t for t in tools]
+    return []
 
 
 async def get_agentes_por_empresa(empresa_id: int) -> list[dict]:
     """Lista agentes activos de una empresa."""
     sb = await get_supabase()
     return await sb.query(
-        "wp_agentes",
-        select="id,nombre_agente,rol,llm,mcp_url",
-        filters={"empresa_id": empresa_id, "archivado": False},
+        "dim_agent",
+        select="id,name,agent_type,model_id,slug",
+        filters={"enterprise_id": empresa_id, "is_active": True},
     ) or []
 
 
@@ -325,28 +355,33 @@ async def get_agentes_por_empresa(empresa_id: int) -> list[dict]:
 async def get_contacto(contacto_id: int) -> dict | None:
     """Obtiene un contacto por ID."""
     sb = await get_supabase()
-    return await sb.query("wp_contactos", filters={"id": contacto_id}, single=True)
+    return await sb.query("dim_person", filters={"id": contacto_id}, single=True)
 
 
 async def get_contacto_empresa(contacto_id: int, empresa_id: int) -> dict | None:
     """Obtiene un contacto validando que pertenezca a la empresa."""
     sb = await get_supabase()
     return await sb.query(
-        "wp_contactos",
-        select="id,nombre,apellido,etapa_embudo,empresa_id,metadata,telefono,email,fecha_registro,ultima_interaccion,origen,notas,is_active,created_at,updated_at,subscriber_id,avatar_url,etapa_emocional,team_humano_id,timezone,es_calificado,estado,url_drive",
-        filters={"id": contacto_id, "empresa_id": empresa_id},
+        "dim_person",
+        select="id,canonical_name,first_name,last_name,crm_stage,enterprise_id,email,created_at,updated_at,origin,notes,is_active,subscriber_id,avatar_url,emotional_stage,team_member_id,timezone,is_qualified,url_drive",
+        filters={"id": contacto_id, "enterprise_id": empresa_id},
         single=True,
     )
 
 
 async def get_contacto_por_telefono(telefono: str, empresa_id: int) -> dict | None:
-    """Busca un contacto por teléfono dentro de una empresa."""
+    """Busca un contacto por teléfono dentro de una empresa (via dim_person_phone join)."""
     sb = await get_supabase()
-    return await sb.query(
-        "wp_contactos",
-        filters={"telefono": telefono, "empresa_id": empresa_id},
+    # Look up the phone in dim_person_phone first
+    phone_row = await sb.query(
+        "dim_person_phone",
+        select="person_id",
+        filters={"phone_e164": telefono, "enterprise_id": empresa_id},
         single=True,
     )
+    if not phone_row or not phone_row.get("person_id"):
+        return None
+    return await sb.query("dim_person", filters={"id": phone_row["person_id"]}, single=True)
 
 
 async def upsert_contacto_canal(telefono: str, empresa_id: int, canal: str = "whatsapp") -> tuple[dict, bool]:
@@ -361,23 +396,32 @@ async def upsert_contacto_canal(telefono: str, empresa_id: int, canal: str = "wh
 
     if existente and existente.get("id") is not None:
         updated = await sb.update(
-            "wp_contactos",
+            "dim_person",
             {"id": existente["id"]},
-            {"ultima_interaccion": timestamp},
+            {"last_interaction_at": timestamp},
         )
         return ((updated[0] if updated else existente), False)
 
     creado = await sb.insert(
-        "wp_contactos",
+        "dim_person",
         {
-            "telefono": telefono,
-            "empresa_id": empresa_id,
-            "origen": origen_label,
-            "notas": "",
-            "fecha_registro": timestamp,
-            "ultima_interaccion": timestamp,
+            "enterprise_id": empresa_id,
+            "origin": origen_label,
+            "notes": "",
+            "created_at": timestamp,
+            "last_interaction_at": timestamp,
         },
     )
+    # Also create the phone record in dim_person_phone
+    if creado and creado.get("id"):
+        await sb.insert(
+            "dim_person_phone",
+            {
+                "person_id": creado["id"],
+                "phone_e164": telefono,
+                "enterprise_id": empresa_id,
+            },
+        )
     return (creado, True)
 
 
@@ -387,23 +431,27 @@ async def upsert_contacto_whatsapp(telefono: str, empresa_id: int) -> tuple[dict
 
 
 async def get_contacto_notas(contacto_id: int, limit: int = 10) -> list[dict]:
-    """Obtiene las notas visibles para IA de un contacto."""
+    """Obtiene las notas visibles para IA de un contacto.
+
+    In v2, notes may be stored as a field on dim_person or in dim_person_attribute.
+    This queries dim_person_attribute with attribute_key = 'note'.
+    """
     sb = await get_supabase()
     return await sb.query(
-        "wp_contactos_nota",
-        select="id,titulo,descripcion,etiquetas,es_fijado,created_at",
-        filters={"contacto_id": contacto_id, "visible_ia": True},
+        "dim_person_attribute",
+        select="id,attribute_key,attribute_value,created_at",
+        filters={"person_id": contacto_id, "attribute_key": "note"},
         order="created_at", order_desc=True,
         limit=limit,
     ) or []
 
 
 async def get_contacto_contextos(contacto_id: int) -> list[dict]:
-    """Obtiene contextos adicionales asociados al contacto."""
+    """Obtiene contextos adicionales asociados al contacto (dim_person_attribute)."""
     return await _safe_optional_query(
-        "wp_contextos",
-        select="clave,valor",
-        filters={"contacto_id": contacto_id},
+        "dim_person_attribute",
+        select="attribute_key,attribute_value",
+        filters={"person_id": contacto_id},
     ) or []
 
 
@@ -427,26 +475,26 @@ async def get_contacto_con_contexto(contacto_id: int) -> dict | None:
 async def get_conversacion(conversacion_id: int) -> dict | None:
     """Obtiene una conversación por ID."""
     sb = await get_supabase()
-    return await sb.query("wp_conversaciones", filters={"id": conversacion_id}, single=True)
+    return await sb.query("fact_conversation", filters={"id": conversacion_id}, single=True)
 
 
 async def get_conversacion_contexto(conversacion_id: int, empresa_id: int, contacto_id: int) -> dict | None:
     """Obtiene la conversación usada por el contexto normalizado del agente."""
     sb = await get_supabase()
     return await sb.query(
-        "wp_conversaciones",
-        select="id,empresa_id,agente_id,contacto_id,fecha_inicio,canal,resumen,seguimiento,evaluacion",
-        filters={"id": conversacion_id, "empresa_id": empresa_id, "contacto_id": contacto_id},
+        "fact_conversation",
+        select="id,enterprise_id,agent_id,person_id,started_at,channel_id,status,message_count",
+        filters={"id": conversacion_id, "enterprise_id": empresa_id, "person_id": contacto_id},
         single=True,
     )
 
 
 async def get_conversacion_activa(contacto_id: int, numero_id: int) -> dict | None:
-    """Busca la conversación más reciente entre un contacto y un número."""
+    """Busca la conversación más reciente entre un contacto y un canal."""
     sb = await get_supabase()
     results = await sb.query(
-        "wp_conversaciones",
-        filters={"contacto_id": contacto_id, "numero_id": numero_id},
+        "fact_conversation",
+        filters={"person_id": contacto_id, "channel_id": numero_id},
         order="created_at", order_desc=True,
         limit=1,
     )
@@ -457,9 +505,9 @@ async def get_conversaciones_contacto(contacto_id: int) -> list[dict]:
     """Lista conversaciones de un contacto."""
     sb = await get_supabase()
     return await sb.query(
-        "wp_conversaciones",
-        select="id,numero_id,agente_id",
-        filters={"contacto_id": contacto_id},
+        "fact_conversation",
+        select="id,channel_id,agent_id",
+        filters={"person_id": contacto_id},
         order="created_at",
         order_desc=True,
     ) or []
@@ -476,24 +524,25 @@ async def insertar_conversacion(
     """Inserta una nueva conversación."""
     sb = await get_supabase()
     payload: dict[str, Any] = {
-        "contacto_id": contacto_id,
-        "agente_id": agente_id,
-        "empresa_id": empresa_id,
-        "numero_id": numero_id,
-        "canal": canal,
+        "person_id": contacto_id,
+        "agent_id": agente_id,
+        "enterprise_id": empresa_id,
+        "channel_id": numero_id,
+        "status": "active",
+        "started_at": datetime.now(timezone.utc).isoformat(),
         "metadata": metadata,
     }
-    return await sb.insert("wp_conversaciones", payload)
+    return await sb.insert("fact_conversation", payload)
 
 
 async def get_mensajes_recientes(conversacion_id: int, limit: int = 20) -> list[dict]:
     """Obtiene los últimos mensajes de una conversación (orden cronológico)."""
     sb = await get_supabase()
     data = await sb.query(
-        "wp_mensajes",
-        select="id,contenido,tipo,remitente,timestamp,modelo_llm,uso_herramientas",
-        filters={"conversacion_id": conversacion_id},
-        order="timestamp", order_desc=True,
+        "fact_interaction",
+        select="id,content_text,content_type,direction,sender_type,created_at,model_id,tool_calls",
+        filters={"conversation_id": conversacion_id},
+        order="created_at", order_desc=True,
         limit=limit,
     ) or []
     data.reverse()
@@ -514,30 +563,50 @@ async def insertar_mensaje(
     """Inserta un mensaje en una conversación."""
     sb = await get_supabase()
     payload: dict[str, Any] = {
-        "conversacion_id": conversacion_id,
-        "contenido": contenido,
-        "remitente": remitente,
-        "tipo": tipo,
+        "conversation_id": conversacion_id,
+        "content_text": contenido,
+        "direction": _map_direction(remitente),
+        "sender_type": _map_sender_type(remitente),
+        "content_type": tipo,
         "status": status,
     }
     if modelo_llm:
-        payload["modelo_llm"] = modelo_llm
+        payload["model_id"] = modelo_llm
     if uso_herramientas:
-        payload["uso_herramientas"] = uso_herramientas
+        payload["tool_calls"] = uso_herramientas
     if metadata is not None:
         payload["metadata"] = metadata
     if empresa_id:
-        payload["empresa_id"] = empresa_id
-    return await sb.insert("wp_mensajes", payload)
+        payload["enterprise_id"] = empresa_id
+    return await sb.insert("fact_interaction", payload)
 
 
 async def actualizar_mensaje(mensaje_id: int, data: dict[str, Any]) -> dict | None:
     """Actualiza un mensaje existente por ID."""
     sb = await get_supabase()
-    updated = await sb.update("wp_mensajes", {"id": mensaje_id}, data)
+    # Translate known old column names to new ones
+    translated: dict[str, Any] = {}
+    column_map = {
+        "contenido": "content_text",
+        "remitente": None,  # handled separately
+        "tipo": "content_type",
+        "timestamp": "created_at",
+        "modelo_llm": "model_id",
+        "uso_herramientas": "tool_calls",
+        "conversacion_id": "conversation_id",
+    }
+    for key, value in data.items():
+        new_key = column_map.get(key, key)
+        if key == "remitente":
+            translated["direction"] = _map_direction(value)
+            translated["sender_type"] = _map_sender_type(value)
+        elif new_key is not None:
+            translated[new_key] = value
+
+    updated = await sb.update("fact_interaction", {"id": mensaje_id}, translated)
     if updated:
         return updated[0]
-    return await sb.query("wp_mensajes", filters={"id": mensaje_id}, single=True)
+    return await sb.query("fact_interaction", filters={"id": mensaje_id}, single=True)
 
 
 async def get_stuck_messages(minutes_old: int = 5, limit: int = 20) -> list[dict]:
@@ -546,14 +615,14 @@ async def get_stuck_messages(minutes_old: int = 5, limit: int = 20) -> list[dict
     sb = await get_supabase()
     cutoff = (datetime.now(timezone.utc) - timedelta(minutes=minutes_old)).isoformat()
     return await sb.query(
-        "wp_mensajes",
-        select="id,conversacion_id,contenido,tipo,remitente,status,metadata,timestamp,empresa_id",
+        "fact_interaction",
+        select="id,conversation_id,content_text,content_type,direction,sender_type,status,metadata,created_at,enterprise_id",
         raw_filters={
             "status": "in.(buffer,procesando)",
-            "remitente": "eq.usuario",
-            "timestamp": f"lt.{cutoff}",
+            "direction": "eq.inbound",
+            "created_at": f"lt.{cutoff}",
         },
-        order="timestamp",
+        order="created_at",
         limit=limit,
     ) or []
 
@@ -562,10 +631,10 @@ async def has_agent_response_after(conversacion_id: int, after_timestamp: str) -
     """Verifica si ya existe una respuesta del agente después de cierto timestamp."""
     sb = await get_supabase()
     rows = await sb.query(
-        "wp_mensajes",
+        "fact_interaction",
         select="id",
-        filters={"conversacion_id": conversacion_id, "remitente": "agente"},
-        raw_filters={"timestamp": f"gt.{after_timestamp}"},
+        filters={"conversation_id": conversacion_id, "direction": "outbound", "sender_type": "ai_agent"},
+        raw_filters={"created_at": f"gt.{after_timestamp}"},
         limit=1,
     )
     return bool(rows)
@@ -611,61 +680,59 @@ async def reset_contacto_data(contacto_id: int) -> dict[str, int]:
     mensajes_deleted = 0
     if conversation_ids:
         deleted_messages = await asyncio.gather(
-            *[sb.delete("wp_mensajes", {"conversacion_id": conversation_id}) for conversation_id in conversation_ids]
+            *[sb.delete("fact_interaction", {"conversation_id": conversation_id}) for conversation_id in conversation_ids]
         )
         mensajes_deleted = sum(len(items or []) for items in deleted_messages)
 
     (
         conversaciones_deleted,
-        notas_deleted,
-        contextos_deleted,
+        attributes_deleted,
         citas_deleted,
-        notificaciones_deleted,
-        actividades_deleted,
     ) = await asyncio.gather(
-        sb.delete("wp_conversaciones", {"contacto_id": contacto_id}),
-        sb.delete("wp_contactos_nota", {"contacto_id": contacto_id}),
-        _safe_optional_delete("wp_contextos", {"contacto_id": contacto_id}),
-        sb.delete("wp_citas", {"contacto_id": contacto_id}),
-        _safe_optional_delete("wp_notificaciones_team", {"contacto_id": contacto_id}),
-        _safe_optional_delete("wp_actividades_log", {"contacto_id": contacto_id}),
+        sb.delete("fact_conversation", {"person_id": contacto_id}),
+        _safe_optional_delete("dim_person_attribute", {"person_id": contacto_id}),
+        sb.delete("fact_appointment", {"person_id": contacto_id}),
     )
+
+    # Also delete phone records
+    phones_deleted = await _safe_optional_delete("dim_person_phone", {"person_id": contacto_id})
+
     try:
-        contactos_deleted = await sb.delete("wp_contactos", {"id": contacto_id})
+        contactos_deleted = await sb.delete("dim_person", {"id": contacto_id})
     except Exception as exc:
-        logger.warning("No se pudo eliminar wp_contactos id=%s (posible FK): %s — reseteando campos", contacto_id, exc)
+        logger.warning("No se pudo eliminar dim_person id=%s (posible FK): %s — reseteando campos", contacto_id, exc)
         contactos_deleted = []
         # Cannot delete row (FK constraints) → reset all user-specific fields to NULL
         reset_payload = {
-            "nombre": None,
-            "apellido": None,
+            "canonical_name": None,
+            "first_name": None,
+            "last_name": None,
             "email": None,
-            "etapa_embudo": None,
-            "metadata": None,
-            "origen": None,
-            "notas": None,
+            "crm_stage": None,
+            "origin": None,
+            "notes": None,
             "avatar_url": None,
-            "etapa_emocional": None,
+            "emotional_stage": None,
             "timezone": None,
-            "es_calificado": None,
-            "estado": None,
+            "is_qualified": None,
             "url_drive": None,
         }
         try:
-            await sb.update("wp_contactos", {"id": contacto_id}, reset_payload)
-            logger.info("Campos de wp_contactos id=%s reseteados a NULL", contacto_id)
+            await sb.update("dim_person", {"id": contacto_id}, reset_payload)
+            logger.info("Campos de dim_person id=%s reseteados a NULL", contacto_id)
         except Exception as reset_exc:
-            logger.error("Error reseteando campos de wp_contactos id=%s: %s", contacto_id, reset_exc)
+            logger.error("Error reseteando campos de dim_person id=%s: %s", contacto_id, reset_exc)
 
     return {
         "mensajes": mensajes_deleted,
         "conversaciones": len(conversaciones_deleted or []),
-        "notas": len(notas_deleted or []),
-        "contextos": len(contextos_deleted or []),
+        "notas": 0,
+        "contextos": len(attributes_deleted or []),
         "citas": len(citas_deleted or []),
-        "notificaciones": len(notificaciones_deleted or []),
-        "actividades": len(actividades_deleted or []),
+        "notificaciones": 0,
+        "actividades": 0,
         "contactos": len(contactos_deleted or []),
+        "phones": len(phones_deleted or []),
     }
 
 
@@ -675,40 +742,37 @@ async def get_citas_contacto(contacto_id: int, limit: int = 5) -> list[dict]:
     """Obtiene las citas más recientes de un contacto."""
     sb = await get_supabase()
     return await sb.query(
-        "wp_citas",
-        select="id,titulo,fecha_hora,duracion,estado,ubicacion,team_humano_id",
-        filters={"contacto_id": contacto_id},
-        order="fecha_hora", order_desc=True,
+        "fact_appointment",
+        select="id,title,scheduled_at,duration,status,location,team_member_id",
+        filters={"person_id": contacto_id},
+        order="scheduled_at", order_desc=True,
         limit=limit,
     ) or []
 
 
 async def get_citas_contacto_detalladas(contacto_id: int, limit: int = 10) -> list[dict]:
-    """Obtiene citas recientes con campos extendidos para el prompt de Kapso."""
+    """Obtiene citas recientes con campos extendidos."""
     sb = await get_supabase()
     return await sb.query(
-        "wp_citas",
+        "fact_appointment",
         select=(
-            "id,fecha_hora,duracion,titulo,ubicacion,estado,descripcion,event_id,"
-            "cuestionario_asesor,evaluacion_asesor,team_humano_id,timezone_cliente,preguntas_calendario"
+            "id,scheduled_at,duration,title,location,status,description,event_id,"
+            "questionnaire,evaluation,team_member_id,timezone_client,calendar_questions"
         ),
-        filters={"contacto_id": contacto_id},
-        order="fecha_hora",
+        filters={"person_id": contacto_id},
+        order="scheduled_at",
         order_desc=True,
         limit=limit,
     ) or []
 
 
 async def get_notificaciones_contacto(contacto_id: int, limit: int = 20) -> list[dict]:
-    """Obtiene notificaciones del team relacionadas con el contacto."""
-    return await _safe_optional_query(
-        "wp_notificaciones_team",
-        select="id,tipo,mensaje,fecha_envio,estado,respuesta,fecha_respuesta,asesor_id,agente_id",
-        filters={"contacto_id": contacto_id},
-        order="fecha_envio",
-        order_desc=True,
-        limit=limit,
-    ) or []
+    """Obtiene notificaciones del team relacionadas con el contacto.
+
+    NOTE: wp_notificaciones_team has been removed in v2. This is now a no-op.
+    """
+    logger.warning("get_notificaciones_contacto: wp_notificaciones_team removed in v2 schema. Returning empty list.")
+    return []
 
 
 # ─── Team Humano ─────────────────────────────────────────────────────────────
@@ -717,10 +781,10 @@ async def get_team_member(team_id: int) -> dict | None:
     """Obtiene un miembro del equipo."""
     sb = await get_supabase()
     return await sb.query(
-        "wp_team_humano",
+        "dim_team_member",
         select=(
-            "id,nombre,apellido,email,telefono,rol,especialidad,is_active,disponibilidad,"
-            "calendly,acepta_citas,grupo_whatsapp,webinar,timezone"
+            "id,first_name,last_name,email,phone,role,specialty,is_active,availability,"
+            "calendly,accepts_appointments,whatsapp_group,webinar,timezone"
         ),
         filters={"id": team_id},
         single=True,
@@ -728,14 +792,25 @@ async def get_team_member(team_id: int) -> dict | None:
 
 
 async def get_agente_rol(rol_id: int) -> dict | None:
-    """Obtiene la configuración del rol asignado a un agente."""
+    """Obtiene la configuración del rol asignado a un agente.
+
+    NOTE: In v2, wp_agente_roles is merged into dim_agent.system_prompt.
+    This returns the agent's system_prompt as the role instructions.
+    """
     sb = await get_supabase()
-    return await sb.query(
-        "wp_agente_roles",
-        select="id,nombre_rol,instrucciones_rol",
+    agent = await sb.query(
+        "dim_agent",
+        select="id,name,system_prompt",
         filters={"id": rol_id},
         single=True,
     )
+    if not agent:
+        return None
+    return {
+        "id": agent.get("id"),
+        "nombre_rol": agent.get("name"),
+        "instrucciones_rol": agent.get("system_prompt"),
+    }
 
 
 async def _resolved_value(value: Any) -> Any:
@@ -841,9 +916,8 @@ async def load_contexto_completo_local(
     todas_las_etapas: list[dict[str, Any]] = []
     etapa_actual_completa: dict[str, Any] | None = None
     tiene_embudo = bool(etapas)
-    contacto_stage_value = _metadata_stage_value(contacto.get("metadata"))
-    if contacto_stage_value is None:
-        contacto_stage_value = contacto.get("etapa_embudo")
+    # In v2, crm_stage is directly on dim_person
+    contacto_stage_value = contacto.get("crm_stage")
     contacto_stage_order = _resolved_stage_order(contacto_stage_value, etapas or [])
 
     for etapa in etapas or []:
@@ -883,15 +957,15 @@ async def load_contexto_completo_local(
     if conversacion:
         conversacion_data = {
             "id": conversacion.get("id"),
-            "empresa_id": conversacion.get("empresa_id"),
-            "agente_id": conversacion.get("agente_id"),
-            "contacto_id": conversacion.get("contacto_id"),
-            "fecha_inicio": conversacion.get("fecha_inicio"),
-            "canal": conversacion.get("canal"),
-            "resumen": conversacion.get("resumen"),
-            "seguimiento": conversacion.get("seguimiento"),
-            "evaluacion": conversacion.get("evaluacion"),
-            "total_mensajes": len(mensajes or []),
+            "empresa_id": conversacion.get("enterprise_id"),
+            "agente_id": conversacion.get("agent_id"),
+            "contacto_id": conversacion.get("person_id"),
+            "fecha_inicio": conversacion.get("started_at"),
+            "canal": conversacion.get("channel_id"),
+            "resumen": conversacion.get("status"),
+            "seguimiento": None,
+            "evaluacion": None,
+            "total_mensajes": conversacion.get("message_count") or len(mensajes or []),
             "mensajes_retornados": len(mensajes_organizados),
             "mensajes": mensajes_organizados,
         }
@@ -926,8 +1000,8 @@ async def load_contexto_completo_local(
         "data": {
             "contacto": {
                 "id": contacto.get("id"),
-                "nombre": contacto.get("nombre") or None,
-                "apellido": contacto.get("apellido") or None,
+                "nombre": contacto.get("first_name") or None,
+                "apellido": contacto.get("last_name") or None,
                 "nombre_completo": info_contacto.get("nombre_completo"),
                 "telefono": info_contacto.get("telefono"),
                 "email": info_contacto.get("email"),
@@ -966,9 +1040,9 @@ async def get_team_disponible(empresa_id: int) -> list[dict]:
     """Lista miembros activos del equipo de una empresa."""
     sb = await get_supabase()
     return await sb.query(
-        "wp_team_humano",
-        select="id,nombre,apellido,rol,especialidad,is_active,acepta_citas",
-        filters={"empresa_id": empresa_id, "is_active": True},
+        "dim_team_member",
+        select="id,first_name,last_name,role,specialty,is_active,accepts_appointments",
+        filters={"enterprise_id": empresa_id, "is_active": True},
     ) or []
 
 
@@ -977,25 +1051,25 @@ async def get_team_disponible(empresa_id: int) -> list[dict]:
 async def get_numero(numero_id: int) -> dict | None:
     """Obtiene la config de un número/canal."""
     sb = await get_supabase()
-    return await sb.query("wp_numeros", filters={"id": numero_id}, single=True)
+    return await sb.query("dim_channel", filters={"id": numero_id}, single=True)
 
 
 async def get_numero_por_id_kapso(id_kapso: str) -> dict | None:
-    """Busca un número/canal por el phone_number_id de Kapso."""
+    """Busca un número/canal por el external_id (antes phone_number_id de Kapso)."""
     sb = await get_supabase()
     return await sb.query(
-        "wp_numeros",
-        filters={"id_kapso": id_kapso, "activo": True},
+        "dim_channel",
+        filters={"external_id": id_kapso, "is_active": True},
         single=True,
     )
 
 
 async def get_numero_por_telefono(telefono: str) -> dict | None:
-    """Busca un número por teléfono."""
+    """Busca un canal por teléfono."""
     sb = await get_supabase()
     return await sb.query(
-        "wp_numeros",
-        filters={"telefono": telefono, "activo": True},
+        "dim_channel",
+        filters={"external_phone": telefono, "is_active": True},
         single=True,
     )
 
@@ -1003,12 +1077,13 @@ async def get_numero_por_telefono(telefono: str) -> dict | None:
 # ─── MCP Tools Catalog ──────────────────────────────────────────────────────
 
 async def get_mcp_tools_catalog(empresa_id: int | None = None) -> list[dict]:
-    """Obtiene el catálogo de herramientas MCP disponibles."""
-    sb = await get_supabase()
-    filters: dict[str, Any] = {"activo": True}
-    if empresa_id:
-        filters["empresa_id"] = empresa_id
-    return await sb.query("wp_mcp_tools_catalog", filters=filters) or []
+    """Obtiene el catálogo de herramientas MCP disponibles.
+
+    NOTE: In v2, wp_mcp_tools_catalog has been removed. Tools are stored in
+    dim_agent.tools_enabled. This is now a no-op that returns an empty list.
+    """
+    logger.warning("get_mcp_tools_catalog: wp_mcp_tools_catalog removed in v2 schema. Tools are in dim_agent.tools_enabled. Returning empty list.")
+    return []
 
 
 # ─── Actividades Log ────────────────────────────────────────────────────────
@@ -1023,88 +1098,117 @@ async def registrar_actividad(
     datos_antes: dict | None = None,
     datos_despues: dict | None = None,
 ) -> dict:
-    """Registra una actividad en el log del sistema."""
-    sb = await get_supabase()
-    payload: dict[str, Any] = {
-        "tipo": tipo,
-        "accion": accion,
-        "descripcion": descripcion,
-        "empresa_id": empresa_id,
-    }
-    if agente_id:
-        payload["agente_id"] = agente_id
-    if contacto_id:
-        payload["contacto_id"] = contacto_id
-    if datos_antes:
-        payload["datos_antes"] = datos_antes
-    if datos_despues:
-        payload["datos_despues"] = datos_despues
-    return await sb.insert("wp_actividades_log", payload)
+    """Registra una actividad en el log del sistema.
+
+    NOTE: In v2, wp_actividades_log has been removed. This logs a warning and returns
+    an empty dict. If sys_webhook_log is available, activities could be routed there.
+    """
+    logger.warning(
+        "registrar_actividad: wp_actividades_log removed in v2 schema. Activity not persisted: tipo=%s accion=%s desc=%s enterprise_id=%s",
+        tipo, accion, descripcion, empresa_id,
+    )
+    return {}
 
 
 # ─── Embudo (Funnel) ────────────────────────────────────────────────────────
 
 async def actualizar_etapa_contacto(contacto_id: int, nueva_etapa_id: int) -> dict | None:
-    """Actualiza la etapa del embudo de un contacto usando el id de la etapa."""
+    """Actualiza la etapa CRM de un contacto."""
     sb = await get_supabase()
     await sb.update(
-        "wp_contactos",
+        "dim_person",
         {"id": contacto_id},
-        {"etapa_embudo": nueva_etapa_id},
+        {"crm_stage": nueva_etapa_id},
     )
     return await get_contacto(contacto_id)
 
 
 async def actualizar_metadata_contacto(contacto_id: int, nueva_metadata: dict[str, Any]) -> dict | None:
-    """Actualiza la metadata del contacto (merge con datos existentes)."""
+    """Actualiza atributos del contacto (EAV pattern via dim_person_attribute).
+
+    In v2, metadata is stored as key-value pairs in dim_person_attribute.
+    This upserts each key from nueva_metadata as a separate attribute row.
+    """
     sb = await get_supabase()
     contacto_actual = await get_contacto(contacto_id)
     if not contacto_actual:
         return None
-    
-    metadata_existente = _safe_json_loads(contacto_actual.get("metadata")) or {}
-    metadata_merged = _deep_merge_dicts(metadata_existente, nueva_metadata)
-    
-    await sb.update(
-        "wp_contactos",
-        {"id": contacto_id},
-        {"metadata": metadata_merged},
-    )
+
+    for key, value in nueva_metadata.items():
+        serialized_value = json.dumps(value) if not isinstance(value, str) else value
+        # Try to update existing attribute first
+        existing = await sb.query(
+            "dim_person_attribute",
+            select="id",
+            filters={"person_id": contacto_id, "attribute_key": key},
+            single=True,
+        )
+        if existing and existing.get("id"):
+            await sb.update(
+                "dim_person_attribute",
+                {"id": existing["id"]},
+                {"attribute_value": serialized_value},
+            )
+        else:
+            await sb.insert(
+                "dim_person_attribute",
+                {
+                    "person_id": contacto_id,
+                    "attribute_key": key,
+                    "attribute_value": serialized_value,
+                },
+            )
+
     return await get_contacto(contacto_id)
 
 
 async def actualizar_campos_contacto(contacto_id: int, cambios: dict[str, Any]) -> dict | None:
-    """Actualiza columnas permitidas de wp_contactos preservando el resto del registro."""
+    """Actualiza columnas permitidas de dim_person preservando el resto del registro."""
     sb = await get_supabase()
     contacto_actual = await get_contacto(contacto_id)
     if not contacto_actual:
         return None
 
-    campos_permitidos = {
-        "nombre",
-        "apellido",
-        "email",
-        "telefono",
-        "etapa_emocional",
-        "timezone",
-        "es_calificado",
-        "estado",
+    # Map old field names to new field names
+    field_map = {
+        "nombre": "first_name",
+        "apellido": "last_name",
+        "email": "email",
+        "telefono": None,  # phone is now in dim_person_phone, handled separately
+        "etapa_emocional": "emotional_stage",
+        "timezone": "timezone",
+        "es_calificado": "is_qualified",
+        "estado": "crm_stage",
+        # Also accept new field names directly
+        "first_name": "first_name",
+        "last_name": "last_name",
+        "emotional_stage": "emotional_stage",
+        "is_qualified": "is_qualified",
+        "crm_stage": "crm_stage",
     }
+    campos_permitidos = set(field_map.keys())
+
     payload: dict[str, Any] = {}
     for key, value in cambios.items():
         if key not in campos_permitidos or value is None:
+            continue
+        if key == "telefono":
+            # Phone updates go to dim_person_phone, skip for dim_person update
+            logger.info("actualizar_campos_contacto: phone update for person_id=%s should go through dim_person_phone", contacto_id)
             continue
         if isinstance(value, str):
             value = " ".join(value.strip().split())
             if not value:
                 continue
-        payload[key] = value
+        new_key = field_map.get(key, key)
+        if new_key:
+            payload[new_key] = value
 
     if not payload:
         return contacto_actual
 
     await sb.update(
-        "wp_contactos",
+        "dim_person",
         {"id": contacto_id},
         payload,
     )
@@ -1116,7 +1220,7 @@ async def get_conversacion_con_mensajes(conversacion_id: int, limite_mensajes: i
     conversacion = await get_conversacion(conversacion_id)
     if not conversacion:
         return None, []
-    
+
     mensajes = await get_mensajes_recientes(conversacion_id, limit=limite_mensajes)
     return conversacion, mensajes
 
@@ -1131,21 +1235,21 @@ async def load_funnel_context(
     Carga contexto del embudo en paralelo:
     - Contacto + Etapas del embudo
     - Conversación + Mensajes (si se proporciona conversacion_id)
-    
+
     Retorna: (contacto, etapas, (conversacion, mensajes))
     """
     # Query 1: Contacto
     contacto_task = get_contacto(contacto_id)
-    
+
     # Query 2: Etapas del embudo
     etapas_task = get_empresa_embudo(empresa_id)
-    
+
     # Query 3: Conversación y mensajes (si existe)
     if conversacion_id:
         conv_msg_task = get_conversacion_con_mensajes(conversacion_id, limite_mensajes)
     else:
         conv_msg_task = None
-    
+
     # Ejecutar en paralelo
     if conv_msg_task:
         contacto, etapas, (conversacion, mensajes) = await asyncio.gather(
