@@ -396,20 +396,26 @@ async def upsert_contacto_canal(telefono: str, empresa_id: int, canal: str = "wh
         )
         return ((updated[0] if updated else existente), False)
 
+    # canonical_name is NOT NULL — use phone as temporary name until we learn real name
     creado = await sb.insert(
         "dim_person",
         {
             "enterprise_id": empresa_id,
+            "canonical_name": telefono,
             "lead_source": origen_label,
+            "person_type": "prospect",
         },
     )
     # Also create the phone record in dim_person_phone
     if creado and creado.get("id"):
+        # phone_normalized: digits only, no + prefix
+        normalized = "".join(c for c in telefono if c.isdigit())
         await sb.insert(
             "dim_person_phone",
             {
                 "person_id": creado["id"],
                 "phone_e164": telefono,
+                "phone_normalized": normalized,
                 "enterprise_id": empresa_id,
             },
         )
