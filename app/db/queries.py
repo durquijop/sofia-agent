@@ -578,7 +578,7 @@ async def insertar_mensaje(
         "content_type": tipo,
     }
     # NOT NULL fields
-    if enterprise_id:
+    if empresa_id:
         payload["enterprise_id"] = empresa_id
     if channel_id:
         payload["channel_id"] = channel_id
