@@ -269,7 +269,7 @@ async def _upload_audio_to_storage(audio_url: str, filename: str) -> str | None:
 async def _multimedia_pipeline(person_id: int, archivo_url: str, transcript: str | None) -> None:
     """Async fire-and-forget pipeline: crear-multimedia → guardar-multimedia.
 
-    Step 1: Call crear-multimedia-inicial-v1 to register in wp_multimedia.
+    Step 1: Call crear-multimedia-inicial-v1 to register in fact_media.
     Step 2: Call guardar-multimedia-v4 with the multimedia_id + transcript.
     """
     settings = get_settings()
@@ -2163,7 +2163,7 @@ async def _retry_single_stuck_message(msg: dict) -> bool:
                 "agent_id": int(agent_id),
                 "kapso_send_suppressed": suppress_send,
             },
-            enterprise_id=int(enterprise_id) if enterprise_id else None,
+            empresa_id=int(enterprise_id) if enterprise_id else None,
         )
 
         # Mark original inbound message as enviado

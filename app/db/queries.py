@@ -33,19 +33,13 @@ def _contacto_base(contacto: dict[str, Any]) -> dict[str, Any]:
         "nombre_completo": contacto.get("canonical_name") or f"{contacto.get('first_name') or ''} {contacto.get('last_name') or ''}".strip(),
         "telefono": contacto.get("_phone_e164") or None,
         "email": contacto.get("email") or None,
-        "origen": contacto.get("origin") or None,
-        "notas": contacto.get("notes") or None,
+        "origen": contacto.get("lead_source") or None,
+        "notas": contacto.get("_notas") or None,  # populated via separate dim_person_attribute query
         "fecha_registro": contacto.get("created_at") or None,
-        "ultima_interaccion": contacto.get("last_interaction_at") or None,
-        "subscriber_id": contacto.get("subscriber_id") or None,
-        "avatar_url": contacto.get("avatar_url") or None,
-        "etapa_emocional": contacto.get("emotional_stage") or None,
-        "timezone": contacto.get("timezone") or None,
+        "ultima_interaccion": contacto.get("updated_at") or None,
         "estado": contacto.get("crm_stage") or None,
         "es_calificado": contacto.get("is_qualified"),
-        "is_active": contacto.get("is_active"),
-        "team_humano_id": contacto.get("team_member_id"),
-        "url_drive": contacto.get("url_drive") or None,
+        "team_humano_id": contacto.get("assigned_team_member_id"),
         "metadata": {},
     }
 
@@ -229,7 +223,7 @@ def _organizar_mensajes_para_contexto(mensajes: list[dict[str, Any]], limite: in
                     mensaje_anterior.get("created_at") if mensaje_anterior else None,
                 ),
                 "tipo": msg.get("content_type"),
-                "modelo_llm": msg.get("model_id"),
+                "modelo_llm": (msg.get("metadata") or {}).get("model_id") if isinstance(msg.get("metadata"), dict) else None,
             }
         )
     return mensajes_procesados
@@ -363,7 +357,7 @@ async def get_contacto_empresa(contacto_id: int, empresa_id: int) -> dict | None
     sb = await get_supabase()
     return await sb.query(
         "dim_person",
-        select="id,canonical_name,first_name,last_name,crm_stage,enterprise_id,email,created_at,updated_at,origin,notes,is_active,subscriber_id,avatar_url,emotional_stage,team_member_id,timezone,is_qualified,url_drive",
+        select="id,canonical_name,first_name,last_name,crm_stage,enterprise_id,email,created_at,updated_at,lead_source,is_qualified,assigned_team_member_id,person_type,lead_source_detail",
         filters={"id": contacto_id, "enterprise_id": empresa_id},
         single=True,
     )
@@ -398,7 +392,7 @@ async def upsert_contacto_canal(telefono: str, empresa_id: int, canal: str = "wh
         updated = await sb.update(
             "dim_person",
             {"id": existente["id"]},
-            {"last_interaction_at": timestamp},
+            {"updated_at": timestamp},
         )
         return ((updated[0] if updated else existente), False)
 
@@ -406,10 +400,7 @@ async def upsert_contacto_canal(telefono: str, empresa_id: int, canal: str = "wh
         "dim_person",
         {
             "enterprise_id": empresa_id,
-            "origin": origen_label,
-            "notes": "",
-            "created_at": timestamp,
-            "last_interaction_at": timestamp,
+            "lead_source": origen_label,
         },
     )
     # Also create the phone record in dim_person_phone
@@ -530,7 +521,6 @@ async def insertar_conversacion(
         "channel_id": numero_id,
         "status": "active",
         "started_at": datetime.now(timezone.utc).isoformat(),
-        "metadata": metadata,
     }
     return await sb.insert("fact_conversation", payload)
 
@@ -540,7 +530,7 @@ async def get_mensajes_recientes(conversacion_id: int, limit: int = 20) -> list[
     sb = await get_supabase()
     data = await sb.query(
         "fact_interaction",
-        select="id,content_text,content_type,direction,sender_type,created_at,model_id,tool_calls",
+        select="id,content_text,content_type,direction,sender_type,created_at,tool_calls,metadata",
         filters={"conversation_id": conversacion_id},
         order="created_at", order_desc=True,
         limit=limit,
@@ -568,14 +558,17 @@ async def insertar_mensaje(
         "direction": _map_direction(remitente),
         "sender_type": _map_sender_type(remitente),
         "content_type": tipo,
-        "status": status,
     }
+    # model_id and status don't exist on fact_interaction; store in metadata
+    merged_metadata = dict(metadata or {})
     if modelo_llm:
-        payload["model_id"] = modelo_llm
+        merged_metadata["model_id"] = modelo_llm
+    if status and status != "sent":
+        merged_metadata["status"] = status
+    if merged_metadata:
+        payload["metadata"] = merged_metadata
     if uso_herramientas:
         payload["tool_calls"] = uso_herramientas
-    if metadata is not None:
-        payload["metadata"] = metadata
     if empresa_id:
         payload["enterprise_id"] = empresa_id
     return await sb.insert("fact_interaction", payload)
@@ -591,17 +584,25 @@ async def actualizar_mensaje(mensaje_id: int, data: dict[str, Any]) -> dict | No
         "remitente": None,  # handled separately
         "tipo": "content_type",
         "timestamp": "created_at",
-        "modelo_llm": "model_id",
+        "modelo_llm": None,  # model_id doesn't exist on fact_interaction; goes in metadata
         "uso_herramientas": "tool_calls",
         "conversacion_id": "conversation_id",
+        "status": None,  # status doesn't exist on fact_interaction; goes in metadata
     }
+    meta_updates: dict[str, Any] = {}
     for key, value in data.items():
         new_key = column_map.get(key, key)
         if key == "remitente":
             translated["direction"] = _map_direction(value)
             translated["sender_type"] = _map_sender_type(value)
+        elif key in ("modelo_llm", "model_id"):
+            meta_updates["model_id"] = value
+        elif key == "status":
+            meta_updates["status"] = value
         elif new_key is not None:
             translated[new_key] = value
+    if meta_updates:
+        translated["metadata"] = meta_updates
 
     updated = await sb.update("fact_interaction", {"id": mensaje_id}, translated)
     if updated:
@@ -616,9 +617,9 @@ async def get_stuck_messages(minutes_old: int = 5, limit: int = 20) -> list[dict
     cutoff = (datetime.now(timezone.utc) - timedelta(minutes=minutes_old)).isoformat()
     return await sb.query(
         "fact_interaction",
-        select="id,conversation_id,content_text,content_type,direction,sender_type,status,metadata,created_at,enterprise_id",
+        select="id,conversation_id,content_text,content_type,direction,sender_type,metadata,created_at,enterprise_id",
         raw_filters={
-            "status": "in.(buffer,procesando)",
+            "metadata->>status": "in.(buffer,procesando)",
             "direction": "eq.inbound",
             "created_at": f"lt.{cutoff}",
         },
@@ -709,13 +710,10 @@ async def reset_contacto_data(contacto_id: int) -> dict[str, int]:
             "last_name": None,
             "email": None,
             "crm_stage": None,
-            "origin": None,
-            "notes": None,
-            "avatar_url": None,
-            "emotional_stage": None,
-            "timezone": None,
+            "lead_source": None,
+            "lead_source_detail": None,
             "is_qualified": None,
-            "url_drive": None,
+            "assigned_team_member_id": None,
         }
         try:
             await sb.update("dim_person", {"id": contacto_id}, reset_payload)
@@ -743,7 +741,7 @@ async def get_citas_contacto(contacto_id: int, limit: int = 5) -> list[dict]:
     sb = await get_supabase()
     return await sb.query(
         "fact_appointment",
-        select="id,title,scheduled_at,duration,status,location,team_member_id",
+        select="id,appointment_type,scheduled_at,duration_minutes,status,location,team_member_id,outcome",
         filters={"person_id": contacto_id},
         order="scheduled_at", order_desc=True,
         limit=limit,
@@ -756,8 +754,8 @@ async def get_citas_contacto_detalladas(contacto_id: int, limit: int = 10) -> li
     return await sb.query(
         "fact_appointment",
         select=(
-            "id,scheduled_at,duration,title,location,status,description,event_id,"
-            "questionnaire,evaluation,team_member_id,timezone_client,calendar_questions"
+            "id,scheduled_at,duration_minutes,appointment_type,location,status,"
+            "outcome,calendar_event_id,team_member_id,agent_id,conversation_id"
         ),
         filters={"person_id": contacto_id},
         order="scheduled_at",
@@ -782,10 +780,7 @@ async def get_team_member(team_id: int) -> dict | None:
     sb = await get_supabase()
     return await sb.query(
         "dim_team_member",
-        select=(
-            "id,first_name,last_name,email,phone,role,specialty,is_active,availability,"
-            "calendly,accepts_appointments,whatsapp_group,webinar,timezone"
-        ),
+        select="id,person_id,enterprise_id,auth_user_id,role,permissions,is_active,hired_at,created_at",
         filters={"id": team_id},
         single=True,
     )
@@ -1041,7 +1036,7 @@ async def get_team_disponible(empresa_id: int) -> list[dict]:
     sb = await get_supabase()
     return await sb.query(
         "dim_team_member",
-        select="id,first_name,last_name,role,specialty,is_active,accepts_appointments",
+        select="id,person_id,role,permissions,is_active",
         filters={"enterprise_id": empresa_id, "is_active": True},
     ) or []
 
@@ -1154,6 +1149,7 @@ async def actualizar_metadata_contacto(contacto_id: int, nueva_metadata: dict[st
                 "dim_person_attribute",
                 {
                     "person_id": contacto_id,
+                    "enterprise_id": contacto_actual.get("enterprise_id"),
                     "attribute_key": key,
                     "attribute_value": serialized_value,
                 },
@@ -1175,16 +1171,19 @@ async def actualizar_campos_contacto(contacto_id: int, cambios: dict[str, Any]) 
         "apellido": "last_name",
         "email": "email",
         "telefono": None,  # phone is now in dim_person_phone, handled separately
-        "etapa_emocional": "emotional_stage",
-        "timezone": "timezone",
         "es_calificado": "is_qualified",
         "estado": "crm_stage",
+        "origen": "lead_source",
         # Also accept new field names directly
         "first_name": "first_name",
         "last_name": "last_name",
-        "emotional_stage": "emotional_stage",
+        "canonical_name": "canonical_name",
         "is_qualified": "is_qualified",
         "crm_stage": "crm_stage",
+        "lead_source": "lead_source",
+        "lead_source_detail": "lead_source_detail",
+        "preferred_language": "preferred_language",
+        "assigned_team_member_id": "assigned_team_member_id",
     }
     campos_permitidos = set(field_map.keys())
 
