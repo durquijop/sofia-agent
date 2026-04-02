@@ -555,9 +555,21 @@ async def insertar_mensaje(
     uso_herramientas: dict | None = None,
     metadata: dict[str, Any] | None = None,
     empresa_id: int | None = None,
+    channel_id: int | None = None,
+    person_id: int | None = None,
+    agent_id: int | None = None,
 ) -> dict:
     """Inserta un mensaje en una conversación."""
     sb = await get_supabase()
+
+    # If channel_id not provided, try to get it from the conversation
+    if not channel_id or not empresa_id:
+        conv = await get_conversacion(conversacion_id)
+        if conv:
+            channel_id = channel_id or conv.get("channel_id")
+            empresa_id = empresa_id or conv.get("enterprise_id")
+            person_id = person_id or conv.get("person_id")
+
     payload: dict[str, Any] = {
         "conversation_id": conversacion_id,
         "content_text": contenido,
@@ -565,6 +577,15 @@ async def insertar_mensaje(
         "sender_type": _map_sender_type(remitente),
         "content_type": tipo,
     }
+    # NOT NULL fields
+    if enterprise_id:
+        payload["enterprise_id"] = empresa_id
+    if channel_id:
+        payload["channel_id"] = channel_id
+    if person_id:
+        payload["person_id"] = person_id
+    if agent_id:
+        payload["agent_id"] = agent_id
     # model_id and status don't exist on fact_interaction; store in metadata
     merged_metadata = dict(metadata or {})
     if modelo_llm:
@@ -575,8 +596,6 @@ async def insertar_mensaje(
         payload["metadata"] = merged_metadata
     if uso_herramientas:
         payload["tool_calls"] = uso_herramientas
-    if empresa_id:
-        payload["enterprise_id"] = empresa_id
     return await sb.insert("fact_interaction", payload)
 
 
