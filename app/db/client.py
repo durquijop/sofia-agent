@@ -83,7 +83,8 @@ class SupabaseClient:
         """Inserta un registro."""
         r = await self._http.post(f"/{table}", json=data)
         if r.status_code >= 400:
-            logger.error("INSERT %s FAILED (%s): %s | payload keys: %s", table, r.status_code, r.text[:500], list(data.keys()))
+            import json as _json
+            logger.error("INSERT %s FAILED (%s): response=%s | payload=%s", table, r.status_code, r.text[:300], _json.dumps(data, default=str)[:500])
         r.raise_for_status()
         result = r.json()
         return result[0] if isinstance(result, list) and result else result
