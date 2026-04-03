@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import logging
 import re
 import time
@@ -695,12 +696,23 @@ def _memory_to_message(payload: dict | None):
     return None
 
 
-async def _load_memory_messages(session_id: str, memory_window: int) -> list:
+async def _load_memory_messages(session_id: str, memory_window: int, current_prompt_hash: str | None = None) -> list:
     try:
         rows = await db.get_agent_memory(session_id, limit=max(memory_window * 2, 2))
     except Exception as exc:
         logger.warning("No se pudo cargar agent_memory session_id=%s: %s", session_id, exc)
         return []
+
+    # If we have a current prompt hash, discard memory from different prompt versions
+    if current_prompt_hash and rows:
+        msg_data = rows[0].get("message") or {}
+        stored_hash = msg_data.get("prompt_hash") if isinstance(msg_data, dict) else None
+        if stored_hash and stored_hash != current_prompt_hash:
+            logger.info(
+                "Prompt hash changed (%s -> %s) for session_id=%s — discarding %d stale memory messages",
+                stored_hash, current_prompt_hash, session_id, len(rows),
+            )
+            return []
 
     messages: list = []
     for row in rows:
@@ -710,15 +722,23 @@ async def _load_memory_messages(session_id: str, memory_window: int) -> list:
     return messages
 
 
-async def _persist_memory_turn(session_id: str, user_message: str, assistant_message: str, conversation_id: str, model: str) -> None:
+def _compute_prompt_hash(system_prompt: str) -> str:
+    """Genera un hash corto del system prompt para detectar cambios de instrucciones."""
+    return hashlib.sha256(system_prompt.encode()).hexdigest()[:12]
+
+
+async def _persist_memory_turn(session_id: str, user_message: str, assistant_message: str, conversation_id: str, model: str, prompt_hash: str | None = None) -> None:
     try:
+        meta = {"conversation_id": conversation_id}
+        if prompt_hash:
+            meta["prompt_hash"] = prompt_hash
         await asyncio.gather(
             db.insert_agent_memory(
                 session_id,
                 {
                     "role": "user",
                     "content": user_message,
-                    "conversation_id": conversation_id,
+                    **meta,
                 },
             ),
             db.insert_agent_memory(
@@ -726,8 +746,8 @@ async def _persist_memory_turn(session_id: str, user_message: str, assistant_mes
                 {
                     "role": "assistant",
                     "content": assistant_message,
-                    "conversation_id": conversation_id,
                     "model": model,
+                    **meta,
                 },
             ),
         )
@@ -913,6 +933,7 @@ async def run_agent(request: ChatRequest) -> ChatResponse:
 
     # Enrich system prompt with explicit tool descriptions so the LLM knows what it can do
     system_prompt = request.system_prompt
+    prompt_hash = _compute_prompt_hash(system_prompt) if system_prompt else None
     if tools:
         tool_lines = []
         for t in tools:
@@ -947,7 +968,7 @@ async def run_agent(request: ChatRequest) -> ChatResponse:
     # Preparar mensajes iniciales
     messages = [SystemMessage(content=system_prompt)]
     if memory_session_id and not reaction_only_request:
-        memory_messages = await _load_memory_messages(memory_session_id, memory_window)
+        memory_messages = await _load_memory_messages(memory_session_id, memory_window, current_prompt_hash=prompt_hash)
         messages.extend(memory_messages)
     messages.append(HumanMessage(content=request.message))
 
@@ -995,7 +1016,7 @@ async def run_agent(request: ChatRequest) -> ChatResponse:
 
     # Guardar en cache (solo sin MCP tools)
     if memory_session_id:
-        await _persist_memory_turn(memory_session_id, request.message, response_text, conversation_id, model)
+        await _persist_memory_turn(memory_session_id, request.message, response_text, conversation_id, model, prompt_hash=prompt_hash)
 
     if not request.mcp_servers and not memory_session_id:
         response_cache.set(request.system_prompt, request.message, model, response_text)
