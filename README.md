@@ -1,16 +1,21 @@
-# URPE AI Lab - Sistema Multi-Agente
+# Sofia Agent — Monica Intelligence v2
 
-Sistema de inteligencia artificial multi-agente basado en **LangGraph** con soporte para **MCP servers** y **OpenRouter**. Integrado con **Kapso (WhatsApp)** para automatización comercial.
+Sistema de inteligencia artificial multi-agente para **Urpe AI Lab**. Agente de ventas de **Monica Intelligence** (Ecosistemas Comerciales Inteligentes) desplegado en Railway con WhatsApp via Kapso.
+
+**Produccion:** sofia-agent-production-44b2.up.railway.app
+**WhatsApp:** +1 205-701-0979
+**Supabase:** mkzlcgrqbukwehiulqfn (schema v2 dimensional)
 
 ## Stack principal
 
-- **API**: `FastAPI`
-- **Orquestación de agentes**: `LangGraph`
-- **Provider LLM**: `OpenRouter`
-- **Herramientas dinámicas**: `MCP servers`
-- **Base de datos**: `Supabase`
-- **Canal de mensajería**: `Kapso (WhatsApp)`
+- **API**: `FastAPI` (Python 3.11)
+- **Orquestacion de agentes**: `LangGraph`
+- **Provider LLM**: `OpenRouter` (x-ai/grok-4.1-fast)
+- **Herramientas dinamicas**: `MCP servers`
+- **Base de datos**: `Supabase` (schema v2: dim_*/fact_*/analytics_*)
+- **Canal de mensajeria**: `Kapso (WhatsApp)`
 - **Email**: `Nylas`
+- **Deploy**: `Railway` (auto-deploy desde main)
 
 ## Contexto recomendado antes de desarrollar
 
@@ -21,6 +26,29 @@ Leer primero:
 3. **`docs/API_ENDPOINTS.md`** — referencia de endpoints HTTP
 4. **`app/agents/conversational.py`** — agente principal
 5. **`app/api/kapso_routes.py`** — flujo de mensajes WhatsApp
+6. **`app/db/queries.py`** — queries con mappers v2 (get_empresa, get_agente)
+7. **`app/core/kapso_prompt.py`** — construccion del system prompt
+
+## Cambios recientes (3 abril 2026)
+
+### Bugs corregidos
+- **`is_whatsapp` UnboundLocalError** — Variable usada antes de definirse en `conversational.py:749`. Crasheaba todos los mensajes inbound.
+- **401 OpenRouter** — `OPENROUTER_API_KEY` en Railway tenia valor invalido. Actualizada con key correcta `sk-or-v1-...`.
+- **`agent_memory` tabla inexistente** — `/borrar` y `/borrar2` crasheaban con 500 porque la tabla no existe en schema v2. `delete_agent_memory()` ahora maneja el error gracefully.
+
+### Mappers schema v2
+- **`get_empresa()`** — Aplana `dim_enterprise.settings` JSON a campos planos esperados por `kapso_prompt.py` (informacion_empresarial, servicios_generales, preguntas_frecuentes, embudo_ventas, reglas_negocio).
+- **`get_agente()`** — Extrae config de `dim_agent.system_prompt` JSON a campos planos (instrucciones, comportamiento, restricciones, formato_respuesta, etc.).
+
+### Sistema de prompt hash
+- Calcula SHA-256 del system prompt en cada mensaje.
+- Guarda hash junto a cada turno de memoria.
+- Si las instrucciones cambian, descarta la memoria vieja automaticamente.
+- Sofia arranca fresco con instrucciones actualizadas sin necesidad de `/borrar2`.
+
+### Datos comerciales
+- `dim_enterprise.settings` poblado con info completa de Monica Intelligence: 5 dimensiones, catalogo de servicios con pricing, FAQs, embudo de ventas, reglas de negocio.
+- `dim_agent.system_prompt` actualizado con restricciones, battle cards, manejo de objeciones, resultados reales de clientes.
 
 ## Arquitectura
 
