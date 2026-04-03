@@ -575,7 +575,7 @@ async def insertar_mensaje(
         "content_text": contenido,
         "direction": _map_direction(remitente),
         "sender_type": _map_sender_type(remitente),
-        "content_type": tipo,
+        "content_type": {"texto": "text", "imagen": "image", "audio": "audio", "video": "video", "documento": "document", "ubicacion": "location"}.get(tipo, tipo),
     }
     # NOT NULL fields
     if empresa_id:
