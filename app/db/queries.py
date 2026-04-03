@@ -291,9 +291,33 @@ async def _safe_optional_delete(table: str, filters: dict[str, Any]) -> list[dic
 # ─── Empresa ─────────────────────────────────────────────────────────────────
 
 async def get_empresa(empresa_id: int) -> dict | None:
-    """Obtiene el perfil completo de una empresa."""
+    """Obtiene el perfil completo de una empresa.
+
+    Maps dim_enterprise (v2 schema) fields to the flat dict format
+    expected by kapso_prompt.py (which was designed for wp_empresa_perfil).
+    Rich content fields live inside ``settings`` JSON.
+    """
     sb = await get_supabase()
-    return await sb.query("dim_enterprise", filters={"id": empresa_id}, single=True)
+    row = await sb.query("dim_enterprise", filters={"id": empresa_id}, single=True)
+    if not row:
+        return None
+    settings = row.get("settings") or {}
+    return {
+        **row,
+        # Aliases expected by kapso_prompt.py
+        "nombre": row.get("name") or settings.get("nombre"),
+        "ciudad": settings.get("ciudad"),
+        "pais": row.get("country_code"),
+        "rubro": settings.get("rubro"),
+        "sitio_web": settings.get("sitio_web"),
+        "email": settings.get("email"),
+        "direccion": settings.get("direccion"),
+        "informacion_empresarial": settings.get("informacion_empresarial"),
+        "preguntas_frecuentes": settings.get("preguntas_frecuentes"),
+        "servicios_generales": settings.get("servicios_generales"),
+        "embudo_ventas": settings.get("embudo_ventas"),
+        "reglas_negocio": settings.get("reglas_negocio"),
+    }
 
 
 async def get_empresa_embudo(empresa_id: int) -> list[dict]:
@@ -311,9 +335,41 @@ async def get_empresa_embudo(empresa_id: int) -> list[dict]:
 # ─── Agentes ─────────────────────────────────────────────────────────────────
 
 async def get_agente(agente_id: int) -> dict | None:
-    """Obtiene la configuración completa de un agente."""
+    """Obtiene la configuración completa de un agente.
+
+    Maps dim_agent (v2) to the flat dict expected by kapso_prompt.py
+    (designed for wp_agentes).  Rich config fields are stored inside
+    the ``system_prompt`` JSON column.
+    """
     sb = await get_supabase()
-    return await sb.query("dim_agent", filters={"id": agente_id, "is_active": True}, single=True)
+    row = await sb.query("dim_agent", filters={"id": agente_id, "is_active": True}, single=True)
+    if not row:
+        return None
+    sp = row.get("system_prompt") or {}
+    if isinstance(sp, str):
+        sp = _safe_json_loads(sp) or {}
+    return {
+        **row,
+        # Aliases expected by kapso_prompt.py
+        "agent_name": row.get("name"),
+        "nombre_agente": row.get("name"),
+        "empresa_id": row.get("enterprise_id"),
+        "llm": row.get("model_id"),
+        "idioma": sp.get("idioma", "es"),
+        "instrucciones": sp.get("instrucciones"),
+        "comportamiento": sp.get("comportamiento"),
+        "restricciones": sp.get("restricciones"),
+        "formato_respuesta": sp.get("formato_respuesta"),
+        "areas_de_expertise": sp.get("areas_de_expertise"),
+        "uso_de_emojis": sp.get("uso_de_emojis"),
+        "prompt_personalizado": sp.get("prompt_personalizado"),
+        "manejo_herramientas": sp.get("manejo_herramientas"),
+        "instrucciones_mensajes": sp.get("instrucciones_mensajes"),
+        "instrucciones_multimedia": sp.get("instrucciones_multimedia"),
+        "mcp_url": sp.get("mcp_url"),
+        "id_rol": sp.get("id_rol"),
+        "rol": sp.get("rol"),
+    }
 
 
 async def get_agente_tools(agente_id: int) -> list[dict]:
