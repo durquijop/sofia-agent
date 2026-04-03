@@ -749,8 +749,12 @@ async def insert_agent_memory(session_id: str, message: dict[str, Any]) -> dict:
 async def delete_agent_memory(session_id: str) -> int:
     """Elimina toda la memoria conversacional de una sesión."""
     sb = await get_supabase()
-    deleted = await sb.delete("agent_memory", {"session_id": session_id})
-    return len(deleted or [])
+    try:
+        deleted = await sb.delete("agent_memory", {"session_id": session_id})
+        return len(deleted or [])
+    except Exception as exc:
+        logger.warning("delete_agent_memory session_id=%s failed (table may not exist): %s", session_id, exc)
+        return 0
 
 
 async def reset_contacto_data(contacto_id: int) -> dict[str, int]:
