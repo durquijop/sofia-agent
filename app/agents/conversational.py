@@ -745,11 +745,11 @@ async def run_agent(request: ChatRequest) -> ChatResponse:
     conversation_id = request.conversation_id or str(uuid.uuid4())
     memory_session_id = request.memory_session_id.strip() if request.memory_session_id else None
     memory_window = max(1, request.memory_window or 8)
-    # Fast-paths de reacción solo aplican en WhatsApp (send_reaction es Kapso-específico)
-    reaction_only_request = is_whatsapp and _is_reaction_only_request(request.message)
-
     # Canal del request — determina qué tools built-in se inyectan
     is_whatsapp = getattr(request, "channel", "generic") == "whatsapp"
+
+    # Fast-paths de reacción solo aplican en WhatsApp (send_reaction es Kapso-específico)
+    reaction_only_request = is_whatsapp and _is_reaction_only_request(request.message)
     logger.info(f"run_agent: model={model}, max_tokens={max_tokens}, channel={getattr(request, 'channel', 'generic')}")
 
     if reaction_only_request:
